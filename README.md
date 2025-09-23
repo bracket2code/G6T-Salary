@@ -1,2 +1,1 @@
-# G6T-Salary
-Salary Calculator
+g6t-tasker

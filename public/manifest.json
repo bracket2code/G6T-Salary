@@ -1,0 +1,64 @@
+{
+  "name": "G6T-Tasker",
+  "short_name": "G6T-Tasker",
+  "description": "Sistema de gestión de tareas de mantenimiento",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#2563eb",
+  "background_color": "#f9fafb",
+  "scope": "/",
+  "prefer_related_applications": false,
+  "related_applications": [],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#2563eb",
+  "background_color": "#ffffff",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "categories": ["productivity", "business"],
+  "lang": "es",
+  "dir": "ltr",
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+  "shortcuts": [
+    {
+      "name": "Nueva Tarea",
+      "short_name": "Nueva",
+      "description": "Crear una nueva tarea",
+      "url": "/?action=new-task",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Mis Tareas",
+      "short_name": "Tareas",
+      "description": "Ver mis tareas asignadas",
+      "url": "/tasks",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
