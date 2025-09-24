@@ -1,17 +1,13 @@
 import React, { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
-import { Menu, CheckSquare as SquareCheckBig, Plus as PlusIcon } from 'lucide-react';
+import { Menu, Landmark } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { useSidebarStore } from '../../store/sidebarStore';
 import { Button } from '../ui/Button';
 
 const isMobile = () => window.innerWidth < 768;
 
-interface LayoutProps {
-  onNewTaskClick?: () => void;
-}
-
-export const Layout: React.FC<LayoutProps> = ({ onNewTaskClick }) => {
+export const Layout: React.FC = () => {
   const { isOpen, toggle, setInitialState } = useSidebarStore();
   const [clickCount, setClickCount] = React.useState(0);
   const [showClickProgress, setShowClickProgress] = React.useState(false);
@@ -136,44 +132,19 @@ export const Layout: React.FC<LayoutProps> = ({ onNewTaskClick }) => {
             <Menu size={20} className="text-gray-600 dark:text-gray-300" />
           </Button>
           
-          {/* Mobile New Task Button */}
-          {onNewTaskClick && (
-            <Button
-              aria-label="Nueva tarea"
-              size="sm"
-              onClick={onNewTaskClick}
-              className="sm:hidden absolute right-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-10 h-10 p-0 flex items-center justify-center shadow-md hover:shadow-lg"
-            >
-              <PlusIcon size={18} />
-            </Button>
-          )}
-          
-          {/* Desktop New Task Button */}
-          {onNewTaskClick && (
-            <Button
-              aria-label="Nueva tarea"
-              size="sm"
-              onClick={onNewTaskClick}
-              className="hidden sm:flex absolute right-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 items-center justify-center shadow-sm hover:shadow-md transition-all duration-200"
-            >
-              <PlusIcon size={18} className="mr-2" />
-              <span className="whitespace-nowrap">Nueva tarea</span>
-            </Button>
-          )}
-          
           <div className="flex flex-col items-center justify-center">
             <div 
               className="flex items-center space-x-2 justify-center cursor-pointer select-none"
               onClick={handleLogoClick}
             >
-              <SquareCheckBig 
+              <Landmark 
                 size={20} 
                 className={`text-blue-600 dark:text-blue-400 transition-transform duration-200 ${
                   isReloading ? 'animate-spin' : ''
                 }`} 
               />
               <h1 className="font-semibold text-gray-900 dark:text-white text-xl">
-                G6T-Tasker
+                G6T-Salary
               </h1>
             </div>
             

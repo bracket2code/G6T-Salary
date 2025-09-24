@@ -1,35 +1,62 @@
 import React, { useState, useEffect } from 'react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Card, CardContent } from '../components/ui/Card';
-import { UserPlus, Search, Settings } from 'lucide-react';
+import { UserPlus, Search, Settings, DollarSign, Phone, Mail } from 'lucide-react';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Avatar } from '../components/ui/Avatar';
 import { CreateUserModal } from '../components/users/CreateUserModal';
 import { UserDetailsModal } from '../components/users/UserDetailsModal';
-import { supabase } from '../lib/supabase';
-import { Worker } from '../types';
+import { Worker } from '../types/salary';
 
-// Translation maps for display names
-const skillDisplayNames: Record<string, string> = {
-  electricidad: 'Electricidad',
-  electronica: 'Electrónica',
-  general: 'General',
-  fontaneria: 'Fontanería',
-  construccion: 'Construcción',
-  tecnologia: 'Tecnología',
-  cerrajeria: 'Cerrajería',
-  cristaleria: 'Cristalería',
-  limpieza: 'Limpieza',
-  sonido: 'Sonido',
-  luces: 'Luces'
-};
-
-const skillLevelDisplayNames: Record<string, string> = {
-  principiante: 'Principiante',
-  intermedio: 'Intermedio',
-  experto: 'Experto'
-};
+// Mock workers data
+const mockWorkers: Worker[] = [
+  {
+    id: '1',
+    name: 'Juan Pérez',
+    email: 'juan@example.com',
+    role: 'tecnico',
+    phone: '+34 600 123 456',
+    createdAt: new Date().toISOString(),
+    updatedAt: null,
+    avatarUrl: null,
+    baseSalary: 1800,
+    hourlyRate: 12,
+    contractType: 'full_time',
+    department: 'Mantenimiento',
+    position: 'Técnico Senior'
+  },
+  {
+    id: '2',
+    name: 'María García',
+    email: 'maria@example.com',
+    role: 'supervisor',
+    phone: '+34 600 789 012',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: null,
+    avatarUrl: null,
+    baseSalary: 2200,
+    hourlyRate: 15,
+    contractType: 'full_time',
+    department: 'Recursos Humanos',
+    position: 'Supervisora'
+  },
+  {
+    id: '3',
+    name: 'Carlos López',
+    email: 'carlos@example.com',
+    role: 'admin',
+    phone: '+34 600 345 678',
+    createdAt: new Date(Date.now() - 172800000).toISOString(),
+    updatedAt: null,
+    avatarUrl: null,
+    baseSalary: 2800,
+    hourlyRate: 18,
+    contractType: 'full_time',
+    department: 'Administración',
+    position: 'Administrador'
+  }
+];
 
 export const WorkersPage: React.FC = () => {
   const [users, setUsers] = useState<Worker[]>([]);
@@ -41,34 +68,19 @@ export const WorkersPage: React.FC = () => {
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .rpc('get_users_with_skills');
-
-      if (error) throw error;
-
-      let filteredUsers = data;
-
-      // Apply search filter
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Filter workers based on search query
+      let filteredWorkers = mockWorkers;
       if (searchQuery) {
-        filteredUsers = filteredUsers.filter(user =>
-          user.user_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          user.user_email.toLowerCase().includes(searchQuery.toLowerCase())
+        filteredWorkers = mockWorkers.filter(worker =>
+          worker.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          worker.email.toLowerCase().includes(searchQuery.toLowerCase())
         );
       }
-
-      const formattedUsers: Worker[] = filteredUsers.map((user) => ({
-        id: user.user_id,
-        name: user.user_name,
-        email: user.user_email,
-        role: user.user_role,
-        phone: user.user_phone,
-        avatarUrl: user.user_avatar_url,
-        createdAt: user.user_created_at,
-        updatedAt: user.user_updated_at,
-        skills: user.skills || [],
-      }));
-
-      setUsers(formattedUsers);
+      
+      setUsers(filteredWorkers);
     } catch (error) {
       console.error('Error fetching users:', error);
     } finally {
@@ -79,6 +91,13 @@ export const WorkersPage: React.FC = () => {
   useEffect(() => {
     fetchUsers();
   }, [searchQuery]);
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency: 'EUR'
+    }).format(amount);
+  };
 
   return (
     <div className="w-full max-w-full min-w-0">
@@ -140,11 +159,6 @@ export const WorkersPage: React.FC = () => {
                         {user.role === 'admin' ? 'Administrador' :
                          user.role === 'supervisor' ? 'Supervisor' : 'Usuario'}
                       </p>
-                      {user.phone && (
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                          {user.phone}
-                        </p>
-                      )}
                     </div>
                   </div>
                   <Button
@@ -160,63 +174,29 @@ export const WorkersPage: React.FC = () => {
                   </Button>
                 </div>
                 
-                {/* Mostrar especialidades */}
-                {user.skills && user.skills.length > 0 && (
-                  <div className="space-y-2 w-full max-w-full">
-                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Especialidades:
-                    </h4>
-                    <div className="flex flex-wrap gap-1">
-                      {user.skills.slice(0, 3).map((skill) => (
-                        <span
-                          key={skill.id}
-                          className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-full text-xs"
-                        >
-                          {skill.skill_type ? skillDisplayNames[skill.skill_type] || skill.skill_type : 'Sin definir'}
-                        </span>
-                      ))}
-                      {user.skills.length > 3 && (
-                        <span className="px-2 py-1 bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 rounded-full text-xs">
-                          +{user.skills.length - 3} más
-                        </span>
-                      )}
+                {/* Contact Information */}
+                <div className="space-y-2 w-full max-w-full">
+                  <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
+                    <Mail size={12} />
+                    <span className="truncate">{user.email}</span>
+                  </div>
+                  
+                  {user.phone && (
+                    <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
+                      <Phone size={12} />
+                      <span className="truncate">{user.phone}</span>
                     </div>
-                  </div>
-                )}
-                
-                {/* Mostrar locales asignados */}
-                {user.locations && user.locations.length > 0 && (
-                  <div className="space-y-2 mt-3 w-full max-w-full">
-                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Locales:
-                    </h4>
-                    <div className="flex flex-wrap gap-1">
-                      {user.locations.slice(0, 2).map((location) => (
-                        <span
-                          key={location.id}
-                          className="px-2 py-1 bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 rounded-full text-xs"
-                        >
-                          {location.location_name}
-                        </span>
-                      ))}
-                      {user.locations.length > 2 && (
-                        <span className="px-2 py-1 bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 rounded-full text-xs">
-                          +{user.locations.length - 2} más
-                        </span>
-                      )}
+                  )}
+                  
+                  {user.baseSalary && (
+                    <div className="flex items-center space-x-2 text-xs text-green-600 dark:text-green-400">
+                      <DollarSign size={12} />
+                      <span>
+                        {formatCurrency(user.baseSalary)}
+                      </span>
                     </div>
-                  </div>
-                )}
-                
-                {(!user.skills || user.skills.length === 0) && (
-                  (!user.locations || user.locations.length === 0) && (
-                  <div className="text-center py-2">
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Sin especialidades ni locales definidos
-                    </p>
-                  </div>
-                  )
-                )}
+                  )}
+                </div>
               </CardContent>
             </Card>
           ))}

@@ -1,6 +1,6 @@
 {
-  "name": "G6T-Tasker",
-  "short_name": "G6T-Tasker",
+  "name": "G6T-Salary",
+  "short_name": "G6T-Salary",
   "description": "Sistema de gestión de tareas de mantenimiento",
   "start_url": "/",
   "display": "standalone",

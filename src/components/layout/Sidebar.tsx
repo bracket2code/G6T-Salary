@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Calendar, CheckSquare as SquareCheckBig, BarChart2, Users, Settings, LogOut, Bell } from 'lucide-react';
+import { LayoutGrid, Calculator, Users, Clock, LogOut, Landmark, BarChart2, Search } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import { useAuthStore } from '../../store/authStore';
 import { useSidebarStore } from '../../store/sidebarStore';
@@ -32,10 +32,11 @@ export const Sidebar: React.FC = () => {
   
   const navigationItems = [
     { path: '/', icon: LayoutGrid, label: 'Dashboard' },
-    { path: '/tasks', icon: SquareCheckBig, label: 'Tareas' },
-    { path: '/calendar', icon: Calendar, label: 'Calendario' },
+    { path: '/calculator', icon: Calculator, label: 'Cálculo Individual' },
+    { path: '/multiple', icon: Users, label: 'Cálculo Múltiple' },
+    { path: '/hours', icon: Clock, label: 'Registro de Horas' },
+    { path: '/queries', icon: Search, label: 'Consultas' },
     { path: '/reports', icon: BarChart2, label: 'Informes' },
-    { path: '/settings', icon: Settings, label: 'Configuración' },
   ];
   
   return (
@@ -43,9 +44,9 @@ export const Sidebar: React.FC = () => {
       {/* Header */}
       <div className="h-16 flex items-center px-4 border-b border-gray-200 dark:border-dark-600">
         <div className={`${isOpen ? 'flex items-center' : 'w-full flex items-center justify-center'}`}>
-          <SquareCheckBig size={24} className="text-blue-600 dark:text-blue-400" />
+          <Landmark size={24} className="text-blue-600 dark:text-blue-400" />
           <span className={`font-semibold text-gray-900 dark:text-white transition-all duration-200 ${isOpen ? 'ml-3 opacity-100' : 'opacity-0 w-0 overflow-hidden ml-0'}`}>
-            G6T-Tasker
+            G6T-Salary
           </span>
         </div>
       </div>
@@ -75,17 +76,15 @@ export const Sidebar: React.FC = () => {
       <div className="mt-auto border-t border-gray-200 dark:border-dark-600">
         {/* Icons row */}
         <div className={`p-3 ${isOpen ? 'flex justify-between items-center' : 'flex flex-col items-center space-y-3'}`}>
-          <Link
-            to="/notifications"
-            onClick={handleNavigation}
+          <button
+            onClick={handleLogout}
             className={`p-2 rounded-lg transition-all duration-200 ${
-              isActive('/notifications')
-                ? 'bg-blue-100 text-blue-900 dark:bg-blue-900 dark:text-blue-100'
-                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-dark-700 dark:hover:text-white'
+              'text-gray-600 hover:bg-red-50 hover:text-red-600 dark:text-gray-300 dark:hover:bg-red-900/20 dark:hover:text-red-400'
             }`}
+            title="Cerrar sesión"
           >
-            <Bell size={18} />
-          </Link>
+            <LogOut size={18} />
+          </button>
           
           <div className="flex items-center justify-center">
             <div 

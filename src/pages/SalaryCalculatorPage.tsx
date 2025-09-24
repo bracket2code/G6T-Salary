@@ -4,12 +4,14 @@ import {
   Search,
   User,
   DollarSign,
-  Clock,
   FileText,
   RefreshCw,
   ChevronDown,
   X,
   Check,
+  Mail,
+  Phone,
+  MessageCircle,
 } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
@@ -19,6 +21,60 @@ import { Select } from "../components/ui/Select";
 import { Worker, SalaryCalculation } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
+
+const sanitizeTelHref = (phone: string) => {
+  const sanitized = phone.replace(/[^+\d]/g, "");
+  return sanitized.length > 0 ? `tel:${sanitized}` : null;
+};
+
+const buildWhatsAppLink = (phone: string) => {
+  const digitsOnly = phone.replace(/\D/g, "");
+  return digitsOnly ? `https://wa.me/${digitsOnly}` : null;
+};
+
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return false;
+  }
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (error) {
+    console.error("Clipboard API write failed:", error);
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+
+    const selection = document.getSelection();
+    const selectedRange = selection && selection.rangeCount > 0
+      ? selection.getRangeAt(0)
+      : null;
+
+    textarea.select();
+    const copied = document.execCommand("copy");
+
+    document.body.removeChild(textarea);
+
+    if (selectedRange && selection) {
+      selection.removeAllRanges();
+      selection.addRange(selectedRange);
+    }
+
+    return copied;
+  } catch (error) {
+    console.error("Fallback clipboard copy failed:", error);
+    return false;
+  }
+};
 
 // Combined Search and Select Component
 interface WorkerSearchSelectProps {
@@ -263,6 +319,7 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
+  const [companyLookup, setCompanyLookup] = useState<Record<string, string>>({});
 
   // Calculation form data
   const [calculationData, setCalculationData] = useState({
@@ -282,6 +339,12 @@ export const SalaryCalculatorPage: React.FC = () => {
     taxes: number;
     socialSecurity: number;
   } | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<
+    { type: "email" | "phone"; message: string } | null
+  >(null);
+  const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   useEffect(() => {
     fetchAllWorkers();
@@ -304,6 +367,48 @@ export const SalaryCalculatorPage: React.FC = () => {
     }
   }, [selectedWorkerId, workers]);
 
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimeoutRef.current) {
+        clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const showCopyFeedback = (type: "email" | "phone", message: string) => {
+    if (copyFeedbackTimeoutRef.current) {
+      clearTimeout(copyFeedbackTimeoutRef.current);
+    }
+    setCopyFeedback({ type, message });
+    copyFeedbackTimeoutRef.current = setTimeout(() => {
+      setCopyFeedback(null);
+      copyFeedbackTimeoutRef.current = null;
+    }, 2000);
+  };
+
+  const handleEmailCopy = async () => {
+    if (!selectedWorker?.email) {
+      return;
+    }
+
+    const copied = await copyTextToClipboard(selectedWorker.email);
+    if (copied) {
+      showCopyFeedback("email", "Email copiado");
+    }
+  };
+
+  const handlePhoneCopy = async () => {
+    if (!selectedWorker?.phone) {
+      return;
+    }
+
+    const copied = await copyTextToClipboard(selectedWorker.phone);
+    if (copied) {
+      showCopyFeedback("phone", "Teléfono copiado");
+    }
+  };
+
+
   const fetchAllWorkers = async () => {
     setIsLoading(true);
     try {
@@ -318,64 +423,158 @@ export const SalaryCalculatorPage: React.FC = () => {
         return;
       }
 
-      console.log("Fetching all workers from API...");
+      const pickString = (
+        ...values: Array<string | null | undefined>
+      ): string | null => {
+        for (const value of values) {
+          if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (trimmed.length > 0) {
+              return trimmed;
+            }
+          }
+        }
+        return null;
+      };
 
-      const response = await fetch(
+      const commonHeaders = {
+        Authorization: `Bearer ${externalJwt}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      };
+
+      let companyLookupFromApi: Record<string, string> = {};
+
+      try {
+        console.log("Fetching company catalog from API...");
+        const companiesResponse = await fetch(
+          `${apiUrl}/parameter/list?types=1`,
+          {
+            method: "GET",
+            headers: commonHeaders,
+          }
+        );
+
+        if (!companiesResponse.ok) {
+          throw new Error(
+            `Error fetching companies: ${companiesResponse.status} - ${companiesResponse.statusText}`
+          );
+        }
+
+        const companiesData = await companiesResponse.json();
+        if (Array.isArray(companiesData)) {
+          companyLookupFromApi = companiesData.reduce(
+            (acc: Record<string, string>, company: any) => {
+              const companyId =
+                company.id ||
+                company.parameterId ||
+                company.companyId ||
+                null;
+              const companyName =
+                pickString(
+                  company.name,
+                  company.commercialName,
+                  company.businessName,
+                  company.alias,
+                  company.description
+                ) || "";
+
+              if (companyId && companyName) {
+                acc[companyId] = companyName;
+              }
+
+              return acc;
+            },
+            {} as Record<string, string>
+          );
+        }
+
+        setCompanyLookup(companyLookupFromApi);
+      } catch (companyError) {
+        console.error("Error fetching companies from API:", companyError);
+      }
+
+      console.log("Fetching all workers from API...");
+      const workersResponse = await fetch(
         `${apiUrl}/parameter/list?types[0]=5&types[1]=4&situation=0`,
         {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${externalJwt}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
+          headers: commonHeaders,
         }
       );
 
-      if (!response.ok) {
+      if (!workersResponse.ok) {
         throw new Error(
-          `Error fetching workers: ${response.status} - ${response.statusText}`
+          `Error fetching workers: ${workersResponse.status} - ${workersResponse.statusText}`
         );
       }
 
-      const workersData = await response.json();
+      const workersData = await workersResponse.json();
       console.log(`Fetched ${workersData.length} workers from API`);
 
       // Transform API data to match our Worker interface
-      const transformedWorkers: Worker[] = workersData.map(
-        (apiWorker: any) => ({
+      const transformedWorkers: Worker[] = workersData.map((apiWorker: any) => {
+        const companyNames = Array.isArray(apiWorker.parameterRelations)
+          ? apiWorker.parameterRelations
+              .map((relation: any) =>
+                pickString(
+                  companyLookupFromApi[relation.parameterRelationId],
+                  relation.companyName,
+                  relation.name
+                )
+              )
+              .filter((name): name is string => Boolean(name && name.trim().length > 0))
+          : [];
+        const uniqueCompanyNames = Array.from(new Set(companyNames)).sort((a, b) =>
+          a.localeCompare(b, "es", { sensitivity: "base" })
+        );
+
+        return {
           id:
             apiWorker.id ||
             apiWorker.workerId ||
             Math.random().toString(36).substr(2, 9),
-          name: apiWorker.name || apiWorker.fullName || "Nombre no disponible",
-          email: apiWorker.email || "email@example.com",
-          role: apiWorker.role || "tecnico",
-          phone: apiWorker.phone || apiWorker.phoneNumber || null,
+          name:
+            pickString(
+              apiWorker.name,
+              apiWorker.fullName,
+              apiWorker.commercialName
+            ) || "Nombre no disponible",
+          email:
+            pickString(
+              apiWorker.email,
+              apiWorker.providerEmail,
+              apiWorker.contactEmail,
+              apiWorker.userEmail,
+              apiWorker?.user?.email
+            ) || "Email no disponible",
+          role:
+            (pickString(apiWorker.role, apiWorker.userRole) as Worker["role"]) ||
+            "tecnico",
+          phone: pickString(
+            apiWorker.phone,
+            apiWorker.phoneNumber,
+            apiWorker.contactPhone,
+            apiWorker.providerPhone
+          ),
           createdAt:
-            apiWorker.createdAt ||
-            apiWorker.dateCreated ||
+            pickString(apiWorker.createdAt, apiWorker.dateCreated) ||
             new Date().toISOString(),
-          updatedAt: apiWorker.updatedAt || apiWorker.dateModified || null,
-          avatarUrl: apiWorker.avatarUrl || apiWorker.profileImage || null,
+          updatedAt: pickString(apiWorker.updatedAt, apiWorker.dateModified),
+          avatarUrl: pickString(
+            apiWorker.avatarUrl,
+            apiWorker.profileImage,
+            apiWorker?.user?.avatarUrl
+          ),
           baseSalary: apiWorker.baseSalary || apiWorker.salary || 0,
           hourlyRate: apiWorker.hourlyRate || apiWorker.hourRate || 0,
           contractType: apiWorker.contractType || "full_time",
-          department: apiWorker.department || apiWorker.area || "",
-          position: apiWorker.position || apiWorker.jobTitle || "",
-          companies: Array.isArray(apiWorker.parameterRelations)
-            ? apiWorker.parameterRelations
-                .map(
-                  (relation: any) => relation.companyName || relation.name || ""
-                )
-                .filter(
-                  (name: string) =>
-                    typeof name === "string" && name.trim().length > 0
-                )
-                .join(", ") || null
-            : null,
-        })
-      );
+          department: pickString(apiWorker.department, apiWorker.area) || "",
+          position: pickString(apiWorker.position, apiWorker.jobTitle) || "",
+          companies: uniqueCompanyNames.length ? uniqueCompanyNames.join(", ") : null,
+          companyNames: uniqueCompanyNames,
+        };
+      });
 
       setAllWorkers(transformedWorkers);
       setWorkers(
@@ -390,6 +589,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         "cached_workers",
         JSON.stringify({
           data: transformedWorkers,
+          companyLookup: companyLookupFromApi,
           timestamp: new Date().toISOString(),
         })
       );
@@ -406,7 +606,12 @@ export const SalaryCalculatorPage: React.FC = () => {
           );
           setAllWorkers(sortedData);
           setWorkers(sortedData);
-          setLastFetchTime(new Date(parsed.timestamp));
+          if (parsed.companyLookup) {
+            setCompanyLookup(parsed.companyLookup);
+          }
+          if (parsed.timestamp) {
+            setLastFetchTime(new Date(parsed.timestamp));
+          }
           console.log("Loaded workers from cache");
         } catch (cacheError) {
           console.error("Error loading cached workers:", cacheError);
@@ -491,6 +696,36 @@ export const SalaryCalculatorPage: React.FC = () => {
     }).format(amount);
   };
 
+  const canLinkEmail =
+    selectedWorker?.email && selectedWorker.email !== "Email no disponible";
+  const selectedWorkerTelHref = selectedWorker?.phone
+    ? sanitizeTelHref(selectedWorker.phone)
+    : null;
+  const selectedWorkerWhatsappHref = selectedWorker?.phone
+    ? buildWhatsAppLink(selectedWorker.phone)
+    : null;
+
+  const openEmailClient = () => {
+    if (!selectedWorker?.email) {
+      return;
+    }
+    window.location.href = `mailto:${selectedWorker.email}`;
+  };
+
+  const openPhoneDialer = () => {
+    if (!selectedWorkerTelHref) {
+      return;
+    }
+    window.location.href = selectedWorkerTelHref;
+  };
+
+  const openWhatsAppConversation = () => {
+    if (!selectedWorkerWhatsappHref) {
+      return;
+    }
+    window.open(selectedWorkerWhatsappHref, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div className="space-y-6 w-full max-w-full min-w-0">
       <PageHeader
@@ -560,26 +795,116 @@ export const SalaryCalculatorPage: React.FC = () => {
                 <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
                   {selectedWorker.name}
                 </h3>
-                <div className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                  <p>Email: {selectedWorker.email}</p>
-                  {selectedWorker.phone && (
-                    <p>Teléfono: {selectedWorker.phone}</p>
-                  )}
-                  {selectedWorker.department && (
-                    <p>Departamento: {selectedWorker.department}</p>
-                  )}
-                  {selectedWorker.position && (
-                    <p>Posición: {selectedWorker.position}</p>
-                  )}
-                  {selectedWorker.companies && (
-                    <p>Empresas: {selectedWorker.companies}</p>
-                  )}
-                  {selectedWorker.baseSalary && (
-                    <p>
-                      Sueldo Base: {formatCurrency(selectedWorker.baseSalary)}
-                    </p>
-                  )}
+                <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <span className="mr-1">Email:</span>
+                      {selectedWorker.email ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleEmailCopy();
+                          }}
+                          className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                        >
+                          {selectedWorker.email}
+                        </button>
+                      ) : (
+                        "No disponible"
+                      )}
+                      {copyFeedback?.type === "email" && (
+                        <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                          {copyFeedback.message}
+                        </span>
+                      )}
+                    </div>
+                    {canLinkEmail && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        leftIcon={<Mail size={14} />}
+                        onClick={openEmailClient}
+                      >
+                        Abrir email
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <span className="mr-1">Teléfono:</span>
+                      {selectedWorker.phone ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handlePhoneCopy();
+                          }}
+                          className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                        >
+                          {selectedWorker.phone}
+                        </button>
+                      ) : (
+                        "No disponible"
+                      )}
+                      {copyFeedback?.type === "phone" && (
+                        <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                          {copyFeedback.message}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedWorkerTelHref && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          leftIcon={<Phone size={14} />}
+                          onClick={openPhoneDialer}
+                        >
+                          Llamar
+                        </Button>
+                      )}
+                      {selectedWorkerWhatsappHref && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          leftIcon={<MessageCircle size={14} />}
+                          onClick={openWhatsAppConversation}
+                        >
+                          WhatsApp
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {selectedWorker.companyNames &&
+                  selectedWorker.companyNames.length > 0 && (
+                    <div className="mt-2">
+                      <span className="text-xs font-semibold text-blue-800 dark:text-blue-200">
+                        Empresas asignadas
+                      </span>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {selectedWorker.companyNames.map((companyName) => (
+                          <span
+                            key={companyName}
+                            className="text-xs rounded-full bg-blue-100 text-blue-800 px-2 py-1 dark:bg-blue-900/40 dark:text-blue-200"
+                          >
+                            {companyName}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                {selectedWorker.department && (
+                  <p>Departamento: {selectedWorker.department}</p>
+                )}
+                {selectedWorker.position && (
+                  <p>Posición: {selectedWorker.position}</p>
+                )}
               </div>
             )}
 

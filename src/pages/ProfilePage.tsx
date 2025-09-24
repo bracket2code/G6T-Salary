@@ -4,34 +4,7 @@ import { ArrowLeft, Building2, Phone, Mail, MapPin, User, Calendar, Clock, FileT
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
 import { useAuthStore } from '../store/authStore';
-import { supabase } from '../lib/supabase';
 import { formatDate } from '../lib/utils';
-
-interface WorkerData {
-  id: string;
-  name: string;
-  commercialName: string;
-  email: string;
-  providerEmail: string;
-  dni: string;
-  direccion: string;
-  phone: string;
-  empresas: string;
-  category: string;
-  subcategory: string;
-  tipoEmpleado: string;
-  fechaNacimiento: string;
-  fechaAlta: string;
-  notes: string;
-  estado: string;
-  tag: string;
-}
-
-interface CompanyData {
-  id: string;
-  name: string;
-  organizationId: string;
-}
 
 interface UserProfileData {
   id: string;
@@ -40,7 +13,7 @@ interface UserProfileData {
   phone?: string | null;
   role: string;
   avatarUrl?: string | null;
-  // Datos adicionales de la API externa
+  // Additional data
   empresas?: string;
   direccion?: string;
   dni?: string;
@@ -59,7 +32,6 @@ export const ProfilePage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  // Sync local attachments with props
   useEffect(() => {
     if (user) {
       fetchUserProfile();
@@ -91,140 +63,32 @@ export const ProfilePage: React.FC = () => {
     setIsLoading(true);
     
     try {
-      // Obtener datos del usuario directamente desde las tablas
-      const { data: workerData, error: workerError } = await supabase
-        .from('workers')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle();
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 500));
       
-      if (workerError || !workerData) {
-        // Usar datos básicos del store como fallback
-        setProfileData({
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          phone: null,
-          role: user.role,
-          avatarUrl: null,
-          source: 'fallback'
-        });
-        setIsLoading(false);
-        return;
-      }
-
-      console.log('[ProfilePage] Worker data from Supabase', workerData);
-      
-      // Datos externos no disponibles hasta que se apliquen las migraciones
-      let finalExternalData = null;
-      
-      try {
-        // Intentar obtener datos externos usando la nueva función
-        const { data, error } = await supabase
-          .rpc('get_user_complete_profile', { p_user_id: user.id });
-
-        if (!error && data && data.length > 0) {
-          const userData = data[0];
-          if (userData.has_external_data) {
-            finalExternalData = userData;
-          }
-          console.log('[ProfilePage] External profile RPC payload', data[0]);
-        } else {
-          console.warn('[ProfilePage] get_user_complete_profile returned no external data', { error, data });
-        }
-      } catch (error: any) {
-        // Si la función no existe o hay error, intentar consulta directa
-        try {
-          const { data: externalData, error: externalError } = await supabase
-            .from('user_external_data')
-            .select('*')
-            .eq('user_id', user.id)
-            .single();
-
-          if (!externalError) {
-            finalExternalData = externalData;
-          }
-          console.log('[ProfilePage] Direct external data fallback', { externalData, externalError });
-        } catch (directError: any) {
-          // Ignorar mientras la tabla user_external_data no exista
-          console.error('[ProfilePage] Error fetching external data directly', directError);
-        }
-      }
-      
-      const externalMetadata = finalExternalData && typeof finalExternalData.metadata === 'object'
-        ? finalExternalData.metadata as Record<string, any>
-        : {};
-
-      const resolveEmpresasDisplay = (value: unknown): string | undefined => {
-        if (!value) return undefined;
-        if (typeof value === 'string') return value;
-        if (Array.isArray(value)) {
-          return value
-            .map((item: any) => {
-              if (typeof item === 'string' || typeof item === 'number') {
-                return item.toString();
-              }
-              if (item && typeof item === 'object') {
-                return item.name || item.nombre || item.location_name || item.id || '';
-              }
-              return '';
-            })
-            .filter(Boolean)
-            .join(' • ');
-        }
-        return undefined;
+      // Use mock data based on current user
+      const mockProfileData: UserProfileData = {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: '+34 600 123 456',
+        role: user.role,
+        avatarUrl: user.avatarUrl,
+        empresas: 'Empresa Demo • Oficina Central',
+        direccion: 'Calle Ejemplo 123, Madrid',
+        dni: '12345678A',
+        nombreCompleto: user.name,
+        tipoEmpleado: 'Empleado a tiempo completo',
+        fechaNacimiento: '1990-01-15',
+        fechaAlta: user.created_at,
+        estado: 'Activo',
+        source: 'local'
       };
-
-      const empresasDisplay = resolveEmpresasDisplay(finalExternalData?.empresas)
-        || resolveEmpresasDisplay(externalMetadata.empresasNombres)
-        || resolveEmpresasDisplay(externalMetadata.empresas);
       
-      // Formatear datos para la interfaz
-      const finalProfileData: UserProfileData = {
-        id: workerData.id,
-        name: workerData.name,
-        email: workerData.email,
-        phone: workerData.phone || finalExternalData?.phone,
-        role: workerData.role,
-        avatarUrl: workerData.avatar_url,
-        // Datos externos si están disponibles
-        empresas: empresasDisplay || 'Sin empresas asignadas',
-        direccion: finalExternalData?.direccion || externalMetadata.rawWorker?.direccion,
-        dni: finalExternalData?.dni || externalMetadata.rawWorker?.dni,
-        nombreCompleto: finalExternalData?.commercial_name
-          || finalExternalData?.external_name
-          || externalMetadata.rawWorker?.name
-          || workerData.name,
-        tipoEmpleado: finalExternalData?.movement_type
-          || externalMetadata.tipoEmpleado
-          || externalMetadata.rawWorker?.tipoEmpleado,
-        fechaNacimiento: finalExternalData?.birth_date
-          ? formatDate(finalExternalData.birth_date)
-          : externalMetadata.rawWorker?.fechaNacimiento
-            ? formatDate(externalMetadata.rawWorker.fechaNacimiento)
-            : undefined,
-        fechaAlta: finalExternalData?.created_at
-          ? formatDate(finalExternalData.created_at)
-          : externalMetadata.rawWorker?.fechaAlta
-            ? formatDate(externalMetadata.rawWorker.fechaAlta)
-            : undefined,
-        estado: finalExternalData?.situation !== undefined
-          ? (finalExternalData.situation === 0 ? 'Activo' : 'Inactivo')
-          : externalMetadata.estado,
-        source: finalExternalData ? 'supabase_with_external' : 'supabase_only'
-      };
-
-      console.log('[ProfilePage] Computed profile data', {
-        empresasResolved: finalProfileData.empresas,
-        metadata: externalMetadata,
-        externalSource: finalExternalData?.source,
-      });
-
-      setProfileData(finalProfileData);
-
+      setProfileData(mockProfileData);
     } catch (error) {
-      console.error('[ProfilePage] Error building profile data', error);
-      // Como último recurso, usar datos básicos del store
+      console.error('Error building profile data:', error);
+      // Fallback to basic user data
       if (user) {
         setProfileData({
           id: user.id,
@@ -232,7 +96,7 @@ export const ProfilePage: React.FC = () => {
           email: user.email,
           phone: null,
           role: user.role,
-          avatarUrl: null,
+          avatarUrl: user.avatarUrl,
           source: 'fallback'
         });
       }
@@ -387,17 +251,6 @@ export const ProfilePage: React.FC = () => {
               </div>
             )}
 
-            {/* Nombre Fiscal */}
-            {profileData.nombreCompleto && profileData.nombreCompleto !== profileData.name && (
-              <div className="flex items-center gap-4 p-4 bg-white dark:bg-gray-700 rounded-lg">
-                <div className="h-6 w-6 text-blue-500 flex items-center justify-center font-bold">F</div>
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Nombre Fiscal</p>
-                  <p className="font-medium text-gray-900 dark:text-white">{profileData.nombreCompleto}</p>
-                </div>
-              </div>
-            )}
-
             {/* Tipo de Empleado */}
             {profileData.tipoEmpleado && (
               <div className="flex items-center gap-4 p-4 bg-white dark:bg-gray-700 rounded-lg">
@@ -415,7 +268,7 @@ export const ProfilePage: React.FC = () => {
                 <Calendar className="h-6 w-6 text-blue-500" />
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">Fecha de Nacimiento</p>
-                  <p className="font-medium text-gray-900 dark:text-white">{profileData.fechaNacimiento}</p>
+                  <p className="font-medium text-gray-900 dark:text-white">{formatDate(profileData.fechaNacimiento)}</p>
                 </div>
               </div>
             )}
@@ -426,7 +279,7 @@ export const ProfilePage: React.FC = () => {
                 <Clock className="h-6 w-6 text-blue-500" />
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">Fecha de Alta</p>
-                  <p className="font-medium text-gray-900 dark:text-white">{profileData.fechaAlta}</p>
+                  <p className="font-medium text-gray-900 dark:text-white">{formatDate(profileData.fechaAlta)}</p>
                 </div>
               </div>
             )}

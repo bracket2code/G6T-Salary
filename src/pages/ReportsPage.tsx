@@ -1,7 +1,7 @@
 import React from 'react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Card, CardContent } from '../components/ui/Card';
-import { BarChart2, Download } from 'lucide-react';
+import { BarChart2, Download, DollarSign, Users, Clock } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export const ReportsPage: React.FC = () => {
@@ -9,7 +9,7 @@ export const ReportsPage: React.FC = () => {
     <div>
       <PageHeader
         title="Informes"
-        description="Análisis y reportes de mantenimiento"
+        description="Análisis y reportes de sueldos y horas"
         actionLabel="Exportar"
         onAction={() => {}}
         actionIcon={<Download size={18} />}
@@ -20,12 +20,12 @@ export const ReportsPage: React.FC = () => {
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Tareas por Estado
+                Sueldos por Departamento
               </h3>
-              <BarChart2 className="text-blue-500" size={24} />
+              <DollarSign className="text-blue-500" size={24} />
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Próximamente: Gráfico de distribución de tareas por estado
+              Próximamente: Gráfico de distribución de sueldos por departamento
             </p>
           </CardContent>
         </Card>
@@ -34,12 +34,12 @@ export const ReportsPage: React.FC = () => {
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Tiempo Promedio
+                Horas Trabajadas
               </h3>
-              <BarChart2 className="text-green-500" size={24} />
+              <Clock className="text-green-500" size={24} />
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Próximamente: Tiempo promedio de resolución por tipo de tarea
+              Próximamente: Análisis de horas trabajadas por período
             </p>
           </CardContent>
         </Card>
@@ -48,12 +48,12 @@ export const ReportsPage: React.FC = () => {
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Carga de Trabajo
+                Análisis Salarial
               </h3>
-              <BarChart2 className="text-purple-500" size={24} />
+              <Users className="text-purple-500" size={24} />
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Próximamente: Distribución de carga de trabajo por técnico
+              Próximamente: Análisis comparativo de sueldos por trabajador
             </p>
           </CardContent>
         </Card>

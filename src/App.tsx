@@ -4,15 +4,13 @@ import { useAuthStore } from './store/authStore';
 import { useNotifications } from './hooks/useNotifications';
 import { LoginPage } from './pages/LoginPage';
 import { Dashboard } from './pages/Dashboard';
-import { CalendarPage } from './pages/CalendarPage';
-import { TasksPage } from './pages/TasksPage';
-import { NotificationsPage } from './pages/NotificationsPage';
+import { SalaryCalculatorPage } from './pages/SalaryCalculatorPage';
+import { MultipleCalculatorPage } from './pages/MultipleCalculatorPage';
+import { HoursRegistryPage } from './pages/HoursRegistryPage';
+import { WorkerQueriesPage } from './pages/WorkerQueriesPage';
 import { ReportsPage } from './pages/ReportsPage';
-import { WorkersPage } from './pages/WorkersPage';
-import { SettingsPage } from './pages/SettingsPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { Layout } from './components/layout/Layout';
-import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 
 // Route guard component
 interface ProtectedRouteProps {
@@ -39,17 +37,10 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
 
 function App() {
   const { checkSession, refreshSession } = useAuthStore();
-  const { requestPermission } = useNotifications();
-  const [showCreateModal, setShowCreateModal] = React.useState(false);
   const [refreshDashboard, setRefreshDashboard] = React.useState(0);
   
   useEffect(() => {
     checkSession();
-    
-    // Solicitar permisos de notificación después de un breve delay
-    setTimeout(() => {
-      requestPermission();
-    }, 2000);
     
     // Configurar refresh automático del token cada 50 minutos
     const refreshInterval = setInterval(() => {
@@ -68,31 +59,21 @@ function App() {
           path="/"
           element={
             <ProtectedRoute>
-              <Layout onNewTaskClick={() => setShowCreateModal(true)} />
+              <Layout />
             </ProtectedRoute>
           }
         >
           <Route index element={<Dashboard key={refreshDashboard} />} />
-          <Route path="calendar" element={<CalendarPage />} />
-          <Route path="tasks" element={<TasksPage />} />
-          <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="tasks/:id" element={<div>Detalles de Tarea (Próximamente)</div>} />
+          <Route path="calculator" element={<SalaryCalculatorPage />} />
+          <Route path="multiple" element={<MultipleCalculatorPage />} />
+          <Route path="hours" element={<HoursRegistryPage />} />
+          <Route path="queries" element={<WorkerQueriesPage />} />
           <Route path="reports" element={<ReportsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>
         
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      
-      <CreateTaskModal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
-          setShowCreateModal(false);
-          setRefreshDashboard(prev => prev + 1);
-        }}
-      />
     </BrowserRouter>
   );
 }

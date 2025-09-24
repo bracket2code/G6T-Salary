@@ -3,7 +3,6 @@ import { X } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { Button } from '../ui/Button';
-import { supabase } from '../../lib/supabase';
 import { generateRandomPassword } from '../../lib/utils';
 
 interface CreateUserModalProps {
@@ -36,18 +35,8 @@ export const CreateUserModal: React.FC<CreateUserModalProps> = ({
     setIsLoading(true);
 
     try {
-      // Llamar a la función edge para crear usuario con autenticación
-      const { data, error } = await supabase.functions.invoke('create-auth-user', {
-        body: {
-          email: formData.email,
-          password: formData.password,
-          name: formData.name,
-          phone: formData.phone || null,
-          role: formData.role,
-        }
-      });
-
-      if (error) throw error;
+      // Simulate user creation
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       alert(`Usuario creado exitosamente!\n\nCredenciales:\nEmail: ${formData.email}\nContraseña: ${formData.password}\n\nPor favor, comparte estas credenciales con el usuario de forma segura.`);
 

@@ -1,5 +1,5 @@
 // Service Worker para notificaciones push
-const CACHE_NAME = 'g6t-tasker-v1';
+const CACHE_NAME = 'g6t-salary-v1';
 const urlsToCache = [
   '/',
   '/static/js/bundle.js',
@@ -47,7 +47,7 @@ self.addEventListener('fetch', (event) => {
 // Manejar notificaciones push
 self.addEventListener('push', (event) => {
   const options = {
-    body: event.data ? event.data.text() : 'Nueva notificación de G6T-Tasker',
+    body: event.data ? event.data.text() : 'Nueva notificación de G6T-Salary',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     vibrate: [100, 50, 100],
@@ -70,7 +70,7 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification('G6T-Tasker', options)
+    self.registration.showNotification('G6T-Salary', options)
   );
 });
 
