@@ -1478,65 +1478,66 @@ export const SalaryCalculatorPage: React.FC = () => {
       />
 
       <div className="space-y-6">
-        {/* Worker Selection and Input Form */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-                <User
-                  size={20}
-                  className="mr-2 text-blue-600 dark:text-blue-400"
-                />
-                Selección de Trabajador
-              </h2>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={refreshWorkers}
-                disabled={isRefreshing}
-                leftIcon={
-                  <RefreshCw
-                    size={16}
-                    className={isRefreshing ? "animate-spin" : ""}
+        <div className="grid gap-6 items-start xl:grid-cols-[minmax(0,1fr)_minmax(540px,1.3fr)] xl:[&>*]:min-w-0">
+          {/* Worker Selection and Input Form */}
+          <Card className="h-full">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <User
+                    size={20}
+                    className="mr-2 text-blue-600 dark:text-blue-400"
                   />
-                }
-              >
-                Actualizar
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Data Status */}
-            {lastFetchTime && (
-              <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                Datos actualizados: {lastFetchTime.toLocaleString("es-ES")}
+                  Selección de Trabajador
+                </h2>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={refreshWorkers}
+                  disabled={isRefreshing}
+                  leftIcon={
+                    <RefreshCw
+                      size={16}
+                      className={isRefreshing ? "animate-spin" : ""}
+                    />
+                  }
+                >
+                  Actualizar
+                </Button>
               </div>
-            )}
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Data Status */}
+              {lastFetchTime && (
+                <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 p-2 rounded">
+                  Datos actualizados: {lastFetchTime.toLocaleString("es-ES")}
+                </div>
+              )}
 
-            {/* Combined Search and Select */}
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-                <span className="ml-2 text-gray-600 dark:text-gray-400">
-                  Cargando trabajadores...
-                </span>
-              </div>
-            ) : (
-              <WorkerSearchSelect
-                workers={allWorkers}
-                selectedWorkerId={selectedWorkerId}
-                onWorkerSelect={setSelectedWorkerId}
-                placeholder="Buscar y seleccionar trabajador..."
-              />
-            )}
+              {/* Combined Search and Select */}
+              {isLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+                  <span className="ml-2 text-gray-600 dark:text-gray-400">
+                    Cargando trabajadores...
+                  </span>
+                </div>
+              ) : (
+                <WorkerSearchSelect
+                  workers={allWorkers}
+                  selectedWorkerId={selectedWorkerId}
+                  onWorkerSelect={setSelectedWorkerId}
+                  placeholder="Buscar y seleccionar trabajador..."
+                />
+              )}
 
-            {/* Selected Worker Info */}
-            {selectedWorker && (
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
-                <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
-                  {selectedWorker.name}
-                </h3>
-                <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
+              {/* Selected Worker Info */}
+              {selectedWorker && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
+                  <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                    {selectedWorker.name}
+                  </h3>
+                  <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
                       <span className="mr-1">Email:</span>
@@ -1937,16 +1938,19 @@ export const SalaryCalculatorPage: React.FC = () => {
                 Calcular Sueldo
               </Button>
             </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <WorkerHoursCalendar
-          worker={selectedWorker}
-          selectedMonth={calendarMonth}
-          hoursByDate={calendarHours}
-          onMonthChange={handleCalendarMonthChange}
-          isLoading={isCalendarLoading}
-        />
+          <div className="min-w-0 h-full">
+            <WorkerHoursCalendar
+              worker={selectedWorker}
+              selectedMonth={calendarMonth}
+              hoursByDate={calendarHours}
+              onMonthChange={handleCalendarMonthChange}
+              isLoading={isCalendarLoading}
+            />
+          </div>
+        </div>
 
         {/* Results */}
         <Card>
