@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
 import {
   Calculator,
   Search,
@@ -434,7 +440,9 @@ export const SalaryCalculatorPage: React.FC = () => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
-  const [calendarHours, setCalendarHours] = useState<Record<string, DayHoursSummary>>({});
+  const [calendarHours, setCalendarHours] = useState<
+    Record<string, DayHoursSummary>
+  >({});
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
 
@@ -501,7 +509,10 @@ export const SalaryCalculatorPage: React.FC = () => {
   }, []);
 
   const formatDateKey = useCallback((date: Date) => {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(date.getDate()).padStart(2, "0")}`;
   }, []);
 
   const fetchWorkerHoursForMonth = useCallback(
@@ -516,21 +527,21 @@ export const SalaryCalculatorPage: React.FC = () => {
         return;
       }
 
-      const fromDate = new Date(Date.UTC(month.getFullYear(), month.getMonth(), 1, 0, 0, 0, 0));
-      const toDate = new Date(Date.UTC(month.getFullYear(), month.getMonth() + 1, 0, 3, 59, 59, 999));
+      const fromDate = new Date(
+        Date.UTC(month.getFullYear(), month.getMonth(), 1, 0, 0, 0, 0)
+      );
+      const toDate = new Date(
+        Date.UTC(month.getFullYear(), month.getMonth() + 1, 0, 3, 59, 59, 999)
+      );
 
-      const body = {
+      const baseRequestPayload = {
         from: fromDate.toISOString(),
         to: toDate.toISOString(),
-        types: [1],
         parametersId: [workerId],
         companiesId: [],
       };
 
-      setIsCalendarLoading(true);
-      setCalendarError(null);
-
-      try {
+      const fetchScheduleEntries = async (types: number[]) => {
         const response = await fetch(`${apiUrl}/ControlSchedule/List`, {
           method: "POST",
           headers: {
@@ -538,12 +549,17 @@ export const SalaryCalculatorPage: React.FC = () => {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            ...baseRequestPayload,
+            types,
+          }),
         });
 
         if (!response.ok) {
           throw new Error(
-            `Error fetching schedule control: ${response.status} - ${response.statusText}`
+            `Error fetching schedule control (types: ${types.join(",")}): ${
+              response.status
+            } - ${response.statusText}`
           );
         }
 
@@ -553,6 +569,21 @@ export const SalaryCalculatorPage: React.FC = () => {
           : Array.isArray(rawData?.entries)
           ? rawData.entries
           : [];
+
+        return entries as any[];
+      };
+
+      setIsCalendarLoading(true);
+      setCalendarError(null);
+
+      try {
+        const hourEntries = await fetchScheduleEntries([1]);
+        let noteEntries: any[] = [];
+        try {
+          noteEntries = await fetchScheduleEntries([7]);
+        } catch (notesError) {
+          console.error("Error fetching worker notes:", notesError);
+        }
 
         type MutableDailyAggregate = {
           totalHours: number;
@@ -587,7 +618,18 @@ export const SalaryCalculatorPage: React.FC = () => {
           }
         };
 
-        entries.forEach((entry: any) => {
+        const ensureAggregate = (key: string) => {
+          if (!dailyAggregates[key]) {
+            dailyAggregates[key] = {
+              totalHours: 0,
+              notes: new Set<string>(),
+              companies: {},
+            };
+          }
+          return dailyAggregates[key];
+        };
+
+        hourEntries.forEach((entry: any) => {
           if (!entry) {
             return;
           }
@@ -601,18 +643,7 @@ export const SalaryCalculatorPage: React.FC = () => {
           date.setHours(date.getHours() + 2);
           const key = formatDateKey(date);
 
-          const ensureAggregate = () => {
-            if (!dailyAggregates[key]) {
-              dailyAggregates[key] = {
-                totalHours: 0,
-                notes: new Set<string>(),
-                companies: {},
-              };
-            }
-            return dailyAggregates[key];
-          };
-
-          const aggregateForNotes = ensureAggregate();
+          const aggregateForNotes = ensureAggregate(key);
           registerNote(aggregateForNotes.notes, entry?.notes);
           registerNote(aggregateForNotes.notes, entry?.note);
           registerNote(aggregateForNotes.notes, entry?.comment);
@@ -642,8 +673,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                 ) {
                   return acc;
                 }
-                let diff =
-                  (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+                let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
                 if (diff < 0) {
                   diff = 0;
                 }
@@ -661,7 +691,7 @@ export const SalaryCalculatorPage: React.FC = () => {
           }
 
           if (hours > 0) {
-            const aggregate = ensureAggregate();
+            const aggregate = ensureAggregate(key);
             aggregate.totalHours += hours;
 
             const companyId =
@@ -710,10 +740,40 @@ export const SalaryCalculatorPage: React.FC = () => {
                 (companyEntry.companyId
                   ? companyLookup[companyEntry.companyId]
                   : undefined) ??
-                (companyEntry.companyId ?? "Sin empresa");
+                companyEntry.companyId ??
+                "Sin empresa";
             }
             companyEntry.hours += hours;
           }
+        });
+
+        noteEntries.forEach((entry: any) => {
+          if (!entry) {
+            return;
+          }
+
+          const date = entry?.dateTime
+            ? new Date(entry.dateTime)
+            : entry?.date
+            ? new Date(entry.date)
+            : null;
+
+          if (!date || Number.isNaN(date.getTime())) {
+            return;
+          }
+
+          date.setHours(date.getHours() + 2);
+          const key = formatDateKey(date);
+
+          const aggregate = ensureAggregate(key);
+          registerNote(aggregate.notes, entry?.notes);
+          registerNote(aggregate.notes, entry?.note);
+          registerNote(aggregate.notes, entry?.comment);
+          registerNote(aggregate.notes, entry?.comments);
+          registerNote(aggregate.notes, entry?.observation);
+          registerNote(aggregate.notes, entry?.observations);
+          registerNote(aggregate.notes, entry?.description);
+          registerNote(aggregate.notes, entry?.value);
         });
 
         const formattedTotals: Record<string, DayHoursSummary> = {};
@@ -771,7 +831,12 @@ export const SalaryCalculatorPage: React.FC = () => {
     }
 
     void fetchWorkerHoursForMonth(selectedWorker.id, calendarMonth);
-  }, [selectedWorker?.id, calendarMonth, fetchWorkerHoursForMonth, selectedWorker]);
+  }, [
+    selectedWorker?.id,
+    calendarMonth,
+    fetchWorkerHoursForMonth,
+    selectedWorker,
+  ]);
 
   const handleCalendarMonthChange = useCallback((next: Date) => {
     setCalendarMonth(new Date(next.getFullYear(), next.getMonth(), 1));
@@ -1169,7 +1234,8 @@ export const SalaryCalculatorPage: React.FC = () => {
               const hasContract = relationType === 1;
 
               const workerIdentifier =
-                (typeof apiWorker?.id === "string" && apiWorker.id.trim().length > 0
+                (typeof apiWorker?.id === "string" &&
+                apiWorker.id.trim().length > 0
                   ? apiWorker.id
                   : undefined) ??
                 (typeof apiWorker?.workerId === "string" &&
@@ -1213,7 +1279,10 @@ export const SalaryCalculatorPage: React.FC = () => {
                 ) ||
                 "Empresa sin nombre";
 
-              if (relationCompanyId && resolvedCompanyName === "Empresa sin nombre") {
+              if (
+                relationCompanyId &&
+                resolvedCompanyName === "Empresa sin nombre"
+              ) {
                 const existingEntry = Object.entries(companyStatsMap).find(
                   ([, stats]) => stats.companyId === relationCompanyId
                 );
@@ -1247,7 +1316,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                 relationCompanyId &&
                 !companyStatsMap[resolvedCompanyName].companyId
               ) {
-                companyStatsMap[resolvedCompanyName].companyId = relationCompanyId;
+                companyStatsMap[resolvedCompanyName].companyId =
+                  relationCompanyId;
               }
 
               const companyStatsEntry = companyStatsMap[resolvedCompanyName];
@@ -1392,10 +1462,18 @@ export const SalaryCalculatorPage: React.FC = () => {
         const lookedUpSecondary = workerRelationKey
           ? workerSecondaryEmailLookup[workerRelationKey]
           : undefined;
-        const normalizedPrimary = typeof primaryEmail === "string" ? primaryEmail.trim().toLowerCase() : "";
-        const normalizedSecondary = typeof lookedUpSecondary === "string" ? lookedUpSecondary.trim().toLowerCase() : "";
+        const normalizedPrimary =
+          typeof primaryEmail === "string"
+            ? primaryEmail.trim().toLowerCase()
+            : "";
+        const normalizedSecondary =
+          typeof lookedUpSecondary === "string"
+            ? lookedUpSecondary.trim().toLowerCase()
+            : "";
         const secondaryEmailFinal =
-          lookedUpSecondary && normalizedSecondary && normalizedSecondary !== normalizedPrimary
+          lookedUpSecondary &&
+          normalizedSecondary &&
+          normalizedSecondary !== normalizedPrimary
             ? lookedUpSecondary
             : null;
 
@@ -1446,7 +1524,9 @@ export const SalaryCalculatorPage: React.FC = () => {
               ? companyContractsMap
               : undefined,
           companyStats:
-            Object.keys(companyStatsMap).length > 0 ? companyStatsMap : undefined,
+            Object.keys(companyStatsMap).length > 0
+              ? companyStatsMap
+              : undefined,
         };
       });
 
@@ -1485,54 +1565,52 @@ export const SalaryCalculatorPage: React.FC = () => {
               return worker;
             }
 
-            const normalizedContracts = Object.entries(worker.companyContracts).reduce(
-              (acc, [companyName, contracts]) => {
-                acc[companyName] = contracts.map((contract) => {
-                  if (
-                    typeof contract.hourlyRate === "number" ||
-                    typeof (contract as any).hoursPerWeek !== "number"
-                  ) {
-                    return contract;
-                  }
+            const normalizedContracts = Object.entries(
+              worker.companyContracts
+            ).reduce((acc, [companyName, contracts]) => {
+              acc[companyName] = contracts.map((contract) => {
+                if (
+                  typeof contract.hourlyRate === "number" ||
+                  typeof (contract as any).hoursPerWeek !== "number"
+                ) {
+                  return contract;
+                }
 
-                  const legacyRate = (contract as any).hoursPerWeek;
-                  return {
-                    ...contract,
-                    hourlyRate: legacyRate,
-                  };
-                });
-                return acc;
-              },
-              {} as Record<string, WorkerCompanyContract[]>
-            );
-
-            const statsFromContracts = Object.entries(normalizedContracts).reduce(
-              (acc, [companyName, contracts]) => {
-                const baseStats: WorkerCompanyStats = {
-                  companyId:
-                    contracts.find((contract) => contract.companyId)?.companyId ??
-                    worker.companyStats?.[companyName]?.companyId,
-                  contractCount: 0,
-                  assignmentCount: 0,
+                const legacyRate = (contract as any).hoursPerWeek;
+                return {
+                  ...contract,
+                  hourlyRate: legacyRate,
                 };
+              });
+              return acc;
+            }, {} as Record<string, WorkerCompanyContract[]>);
 
-                contracts.forEach((contract) => {
-                  if (contract.hasContract) {
-                    baseStats.contractCount += 1;
-                  } else {
-                    baseStats.assignmentCount += 1;
-                  }
+            const statsFromContracts = Object.entries(
+              normalizedContracts
+            ).reduce((acc, [companyName, contracts]) => {
+              const baseStats: WorkerCompanyStats = {
+                companyId:
+                  contracts.find((contract) => contract.companyId)?.companyId ??
+                  worker.companyStats?.[companyName]?.companyId,
+                contractCount: 0,
+                assignmentCount: 0,
+              };
 
-                  if (!baseStats.companyId && contract.companyId) {
-                    baseStats.companyId = contract.companyId;
-                  }
-                });
+              contracts.forEach((contract) => {
+                if (contract.hasContract) {
+                  baseStats.contractCount += 1;
+                } else {
+                  baseStats.assignmentCount += 1;
+                }
 
-                acc[companyName] = baseStats;
-                return acc;
-              },
-              {} as Record<string, WorkerCompanyStats>
-            );
+                if (!baseStats.companyId && contract.companyId) {
+                  baseStats.companyId = contract.companyId;
+                }
+              });
+
+              acc[companyName] = baseStats;
+              return acc;
+            }, {} as Record<string, WorkerCompanyStats>);
 
             return {
               ...worker,
@@ -1654,8 +1732,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     expandedCompanyStats?.assignmentCount ??
     expandedAssignmentsWithoutContract.length;
   const expandedContractCount =
-    expandedCompanyStats?.contractCount ??
-    expandedContractsWithContract.length;
+    expandedCompanyStats?.contractCount ?? expandedContractsWithContract.length;
 
   const formatMaybeDate = (value?: string | null) => {
     if (!value) {
@@ -1715,38 +1792,38 @@ export const SalaryCalculatorPage: React.FC = () => {
           {/* Worker Selection and Input Form */}
           <Card className="h-full">
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-                  <User
-                    size={20}
-                    className="mr-2 text-blue-600 dark:text-blue-400"
-                  />
-                  Selección de Trabajador
-                </h2>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={refreshWorkers}
-                  disabled={isRefreshing}
-                  leftIcon={
-                    <RefreshCw
-                      size={16}
-                      className={isRefreshing ? "animate-spin" : ""}
+              <div className="flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                    <User
+                      size={20}
+                      className="mr-2 text-blue-600 dark:text-blue-400"
                     />
-                  }
-                >
-                  Actualizar
-                </Button>
+                    Selección de Trabajador
+                  </h2>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={refreshWorkers}
+                    disabled={isRefreshing}
+                    leftIcon={
+                      <RefreshCw
+                        size={16}
+                        className={isRefreshing ? "animate-spin" : ""}
+                      />
+                    }
+                  >
+                    Actualizar
+                  </Button>
+                </div>
+                {lastFetchTime && (
+                  <div className="inline-flex items-center gap-2 max-w-full text-sm text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 px-3 py-1.5 rounded-lg">
+                    Actualizado: {lastFetchTime.toLocaleString("es-ES")}
+                  </div>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Data Status */}
-              {lastFetchTime && (
-                <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                  Datos actualizados: {lastFetchTime.toLocaleString("es-ES")}
-                </div>
-              )}
-
               {/* Combined Search and Select */}
               {isLoading ? (
                 <div className="flex items-center justify-center py-8">
@@ -1771,423 +1848,431 @@ export const SalaryCalculatorPage: React.FC = () => {
                     {selectedWorker.name}
                   </h3>
                   <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div className="space-y-1">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div className="space-y-1">
+                        <div>
+                          <span className="mr-1">Email:</span>
+                          {selectedWorker.email ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleEmailCopy(selectedWorker.email);
+                              }}
+                              className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                            >
+                              {selectedWorker.email}
+                            </button>
+                          ) : (
+                            "No disponible"
+                          )}
+                        </div>
+                        {selectedWorker.secondaryEmail && (
+                          <div>
+                            <span className="mr-1">Email 2:</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleEmailCopy(
+                                  selectedWorker.secondaryEmail
+                                );
+                              }}
+                              className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                            >
+                              {selectedWorker.secondaryEmail}
+                            </button>
+                          </div>
+                        )}
+                        {copyFeedback?.type === "email" && (
+                          <span className="ml-2 text-xs text-green-600 dark:text-green-300 inline-block">
+                            {copyFeedback.message}
+                            {copyFeedback.target
+                              ? ` (${copyFeedback.target})`
+                              : ""}
+                          </span>
+                        )}
+                      </div>
+                      {canLinkEmail && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          leftIcon={<Mail size={14} />}
+                          onClick={openEmailClient}
+                        >
+                          Enviar email
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <div>
-                        <span className="mr-1">Email:</span>
-                        {selectedWorker.email ? (
+                        <span className="mr-1">Teléfono:</span>
+                        {selectedWorker.phone ? (
                           <button
                             type="button"
                             onClick={() => {
-                              void handleEmailCopy(selectedWorker.email);
+                              void handlePhoneCopy();
                             }}
                             className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
                           >
-                            {selectedWorker.email}
+                            {selectedWorker.phone}
                           </button>
                         ) : (
                           "No disponible"
                         )}
+                        {copyFeedback?.type === "phone" && (
+                          <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                            {copyFeedback.message}
+                          </span>
+                        )}
                       </div>
-                      {selectedWorker.secondaryEmail && (
-                        <div>
-                          <span className="mr-1">Email 2:</span>
-                          <button
+                      <div className="flex flex-wrap gap-2">
+                        {selectedWorkerTelHref && (
+                          <Button
                             type="button"
-                            onClick={() => {
-                              void handleEmailCopy(selectedWorker.secondaryEmail);
-                            }}
-                            className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                            variant="outline"
+                            size="sm"
+                            leftIcon={<Phone size={14} />}
+                            onClick={openPhoneDialer}
                           >
-                            {selectedWorker.secondaryEmail}
-                          </button>
-                        </div>
-                      )}
-                      {copyFeedback?.type === "email" && (
-                        <span className="ml-2 text-xs text-green-600 dark:text-green-300 inline-block">
-                          {copyFeedback.message}
-                          {copyFeedback.target ? ` (${copyFeedback.target})` : ""}
-                        </span>
-                      )}
+                            Llamar
+                          </Button>
+                        )}
+                        {selectedWorkerWhatsappHref && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            leftIcon={<MessageCircle size={14} />}
+                            onClick={openWhatsAppConversation}
+                          >
+                            WhatsApp
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                    {canLinkEmail && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        leftIcon={<Mail size={14} />}
-                        onClick={openEmailClient}
-                      >
-                        Enviar email
-                      </Button>
-                    )}
                   </div>
 
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div>
-                      <span className="mr-1">Teléfono:</span>
-                      {selectedWorker.phone ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handlePhoneCopy();
-                          }}
-                          className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
-                        >
-                          {selectedWorker.phone}
-                        </button>
-                      ) : (
-                        "No disponible"
-                      )}
-                      {copyFeedback?.type === "phone" && (
-                        <span className="ml-2 text-xs text-green-600 dark:text-green-300">
-                          {copyFeedback.message}
+                  {selectedWorker.companyNames &&
+                    selectedWorker.companyNames.length > 0 && (
+                      <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
+                        <span className="mr-1 text-blue-900 dark:text-blue-100">
+                          Empresas asignadas:
                         </span>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedWorkerTelHref && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          leftIcon={<Phone size={14} />}
-                          onClick={openPhoneDialer}
-                        >
-                          Llamar
-                        </Button>
-                      )}
-                      {selectedWorkerWhatsappHref && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          leftIcon={<MessageCircle size={14} />}
-                          onClick={openWhatsAppConversation}
-                        >
-                          WhatsApp
-                        </Button>
-                      )}
-                    </div>
-                  </div>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {selectedWorker.companyNames.map((companyName) => {
+                            const isActive = expandedCompany === companyName;
+                            const companyStats =
+                              selectedWorker.companyStats?.[companyName];
+                            const contractCount =
+                              companyStats?.contractCount ?? 0;
+                            const assignmentCount =
+                              companyStats?.assignmentCount ?? 0;
+                            const hasContracts = contractCount > 0;
+                            const isAssignmentOnly =
+                              !hasContracts && assignmentCount > 0;
+
+                            const inactiveClass = isAssignmentOnly
+                              ? "border-amber-200 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:border-amber-500/60 dark:bg-amber-900/30 dark:text-amber-200"
+                              : "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-200 dark:hover:bg-blue-900/60";
+                            const activeClass = isAssignmentOnly
+                              ? "border-amber-500 bg-amber-500 text-white shadow-sm dark:border-amber-400 dark:bg-amber-500/80"
+                              : "border-blue-600 bg-blue-600 text-white shadow-sm dark:border-blue-500 dark:bg-blue-500";
+
+                            return (
+                              <button
+                                key={companyName}
+                                type="button"
+                                onClick={() =>
+                                  setExpandedCompany((current) =>
+                                    current === companyName ? null : companyName
+                                  )
+                                }
+                                aria-pressed={isActive}
+                                aria-expanded={isActive}
+                                className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 ${
+                                  isActive ? activeClass : inactiveClass
+                                }`}
+                              >
+                                <span>{companyName}</span>
+                                {hasContracts && (
+                                  <span
+                                    title={
+                                      contractCount === 1
+                                        ? "1 contrato"
+                                        : `${contractCount} contratos`
+                                    }
+                                    className={`ml-1 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                      isActive
+                                        ? "bg-white/20 text-white"
+                                        : "bg-blue-200 text-blue-800 dark:bg-blue-900/70 dark:text-blue-100"
+                                    }`}
+                                  >
+                                    {contractCount}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {expandedCompany && (
+                          <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 p-3 text-sm text-blue-900 shadow-sm dark:border-blue-700/80 dark:bg-blue-900/20 dark:text-blue-100">
+                            <div className="mb-2 flex items-center justify-between">
+                              <span className="font-semibold">
+                                Contratos en {expandedCompany}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedCompany(null)}
+                                className="text-xs text-blue-500 underline transition hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
+                              >
+                                Cerrar
+                              </button>
+                            </div>
+                            {expandedCompanyContracts.length === 0 ? (
+                              <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                No hay información de contratos para esta
+                                empresa.
+                              </div>
+                            ) : (
+                              <>
+                                {expandedContractsWithContract.length > 0 && (
+                                  <div className="space-y-3">
+                                    {expandedContractsWithContract.map(
+                                      (contract, index) => {
+                                        const startDateText = formatMaybeDate(
+                                          contract.startDate
+                                        );
+                                        const endDateText = formatMaybeDate(
+                                          contract.endDate
+                                        );
+                                        const contractLabel = `Contrato ${
+                                          index + 1
+                                        }`;
+                                        const contractTypeText =
+                                          contract.position || contract.label;
+
+                                        return (
+                                          <div
+                                            key={`${expandedCompany}-${contract.id}`}
+                                            className="rounded-md border border-blue-100 bg-white/80 p-3 text-xs shadow-sm dark:border-blue-700/60 dark:bg-blue-900/40"
+                                          >
+                                            <div className="flex items-center justify-between">
+                                              <span className="font-semibold">
+                                                {contractLabel}
+                                              </span>
+                                              {contract.status && (
+                                                <span className="ml-2 rounded-full bg-blue-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:bg-blue-800/70 dark:text-blue-200">
+                                                  {contract.status}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="mt-2 space-y-1 text-blue-800 dark:text-blue-100">
+                                              <div>
+                                                <span className="font-medium">
+                                                  Precio por hora:
+                                                </span>{" "}
+                                                {typeof contract.hourlyRate ===
+                                                "number"
+                                                  ? formatCurrency(
+                                                      contract.hourlyRate
+                                                    )
+                                                  : "No especificado"}
+                                              </div>
+                                              {contractTypeText && (
+                                                <div>
+                                                  <span className="font-medium">
+                                                    Contrato:
+                                                  </span>{" "}
+                                                  {contractTypeText}
+                                                </div>
+                                              )}
+                                              {startDateText && (
+                                                <div>
+                                                  <span className="font-medium">
+                                                    Inicio:
+                                                  </span>{" "}
+                                                  {startDateText}
+                                                </div>
+                                              )}
+                                              {endDateText && (
+                                                <div>
+                                                  <span className="font-medium">
+                                                    Fin:
+                                                  </span>{" "}
+                                                  {endDateText}
+                                                </div>
+                                              )}
+                                              {contract.description && (
+                                                <div>
+                                                  <span className="font-medium">
+                                                    Descripción:
+                                                  </span>{" "}
+                                                  {contract.description}
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                    )}
+                                  </div>
+                                )}
+
+                                {expandedContractCount === 0 &&
+                                  expandedAssignmentCount > 0 && (
+                                    <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                      Esta empresa está asignada pero no tiene
+                                      contrato asociado.
+                                    </div>
+                                  )}
+
+                                {expandedContractCount > 0 &&
+                                  expandedAssignmentCount > 0 && (
+                                    <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                      Además, hay {expandedAssignmentCount}{" "}
+                                      {expandedAssignmentCount === 1
+                                        ? "asignación"
+                                        : "asignaciones"}{" "}
+                                      sin contrato asociado.
+                                    </div>
+                                  )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                  {selectedWorker.department && (
+                    <p>Departamento: {selectedWorker.department}</p>
+                  )}
+                  {selectedWorker.position && (
+                    <p>Posición: {selectedWorker.position}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Calculation Form */}
+              <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <h3 className="font-medium text-gray-900 dark:text-white">
+                  Datos para Cálculo
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    type="number"
+                    label="Sueldo Base (€)"
+                    value={calculationData.baseSalary}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        baseSalary: e.target.value,
+                      }))
+                    }
+                    placeholder="1500"
+                    fullWidth
+                  />
+
+                  <Select
+                    label="Período"
+                    value={calculationData.period}
+                    onChange={(value) =>
+                      setCalculationData((prev) => ({ ...prev, period: value }))
+                    }
+                    options={[
+                      { value: "monthly", label: "Mensual" },
+                      { value: "weekly", label: "Semanal" },
+                      { value: "daily", label: "Diario" },
+                    ]}
+                    fullWidth
+                  />
                 </div>
 
-                {selectedWorker.companyNames &&
-                  selectedWorker.companyNames.length > 0 && (
-                    <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
-                      <span className="mr-1 text-blue-900 dark:text-blue-100">
-                        Empresas asignadas:
-                      </span>
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        {selectedWorker.companyNames.map((companyName) => {
-                          const isActive = expandedCompany === companyName;
-                          const companyStats =
-                            selectedWorker.companyStats?.[companyName];
-                          const contractCount =
-                            companyStats?.contractCount ?? 0;
-                          const assignmentCount =
-                            companyStats?.assignmentCount ?? 0;
-                          const hasContracts = contractCount > 0;
-                          const isAssignmentOnly =
-                            !hasContracts && assignmentCount > 0;
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    type="number"
+                    label="Horas Trabajadas"
+                    value={calculationData.hoursWorked}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        hoursWorked: e.target.value,
+                      }))
+                    }
+                    placeholder="160"
+                    fullWidth
+                  />
 
-                          const inactiveClass = isAssignmentOnly
-                            ? "border-amber-200 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:border-amber-500/60 dark:bg-amber-900/30 dark:text-amber-200"
-                            : "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-200 dark:hover:bg-blue-900/60";
-                          const activeClass = isAssignmentOnly
-                            ? "border-amber-500 bg-amber-500 text-white shadow-sm dark:border-amber-400 dark:bg-amber-500/80"
-                            : "border-blue-600 bg-blue-600 text-white shadow-sm dark:border-blue-500 dark:bg-blue-500";
+                  <Input
+                    type="number"
+                    label="Horas Extra"
+                    value={calculationData.overtimeHours}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        overtimeHours: e.target.value,
+                      }))
+                    }
+                    placeholder="0"
+                    fullWidth
+                  />
+                </div>
 
-                          return (
-                            <button
-                              key={companyName}
-                              type="button"
-                              onClick={() =>
-                                setExpandedCompany((current) =>
-                                  current === companyName ? null : companyName
-                                )
-                              }
-                              aria-pressed={isActive}
-                              aria-expanded={isActive}
-                              className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 ${
-                                isActive ? activeClass : inactiveClass
-                              }`}
-                            >
-                              <span>{companyName}</span>
-                              {hasContracts && (
-                                <span
-                                  title={
-                                    contractCount === 1
-                                      ? "1 contrato"
-                                      : `${contractCount} contratos`
-                                  }
-                                  className={`ml-1 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                                    isActive
-                                      ? "bg-white/20 text-white"
-                                      : "bg-blue-200 text-blue-800 dark:bg-blue-900/70 dark:text-blue-100"
-                                  }`}
-                                >
-                                  {contractCount}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    type="number"
+                    label="Bonificaciones (€)"
+                    value={calculationData.bonuses}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        bonuses: e.target.value,
+                      }))
+                    }
+                    placeholder="0"
+                    fullWidth
+                  />
 
-                      {expandedCompany && (
-                        <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 p-3 text-sm text-blue-900 shadow-sm dark:border-blue-700/80 dark:bg-blue-900/20 dark:text-blue-100">
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="font-semibold">
-                              Contratos en {expandedCompany}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setExpandedCompany(null)}
-                              className="text-xs text-blue-500 underline transition hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
-                            >
-                              Cerrar
-                            </button>
-                          </div>
-                          {expandedCompanyContracts.length === 0 ? (
-                            <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-                              No hay información de contratos para esta empresa.
-                            </div>
-                          ) : (
-                            <>
-                              {expandedContractsWithContract.length > 0 && (
-                                <div className="space-y-3">
-                                  {expandedContractsWithContract.map(
-                                    (contract, index) => {
-                                      const startDateText = formatMaybeDate(
-                                        contract.startDate
-                                      );
-                                      const endDateText = formatMaybeDate(
-                                        contract.endDate
-                                      );
-                                      const contractLabel = `Contrato ${
-                                        index + 1
-                                      }`;
-                                      const contractTypeText =
-                                        contract.position || contract.label;
+                  <Input
+                    type="number"
+                    label="Deducciones (€)"
+                    value={calculationData.deductions}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        deductions: e.target.value,
+                      }))
+                    }
+                    placeholder="0"
+                    fullWidth
+                  />
+                </div>
 
-                                      return (
-                                        <div
-                                          key={`${expandedCompany}-${contract.id}`}
-                                          className="rounded-md border border-blue-100 bg-white/80 p-3 text-xs shadow-sm dark:border-blue-700/60 dark:bg-blue-900/40"
-                                        >
-                                          <div className="flex items-center justify-between">
-                                            <span className="font-semibold">
-                                              {contractLabel}
-                                            </span>
-                                            {contract.status && (
-                                              <span className="ml-2 rounded-full bg-blue-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:bg-blue-800/70 dark:text-blue-200">
-                                                {contract.status}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="mt-2 space-y-1 text-blue-800 dark:text-blue-100">
-                                            <div>
-                                              <span className="font-medium">
-                                                Precio por hora:
-                                              </span>{" "}
-                                              {typeof contract.hourlyRate ===
-                                              "number"
-                                                ? formatCurrency(contract.hourlyRate)
-                                                : "No especificado"}
-                                            </div>
-                                            {contractTypeText && (
-                                              <div>
-                                                <span className="font-medium">
-                                                  Contrato:
-                                                </span>{" "}
-                                                {contractTypeText}
-                                              </div>
-                                            )}
-                                            {startDateText && (
-                                              <div>
-                                                <span className="font-medium">
-                                                  Inicio:
-                                                </span>{" "}
-                                                {startDateText}
-                                              </div>
-                                            )}
-                                            {endDateText && (
-                                              <div>
-                                                <span className="font-medium">
-                                                  Fin:
-                                                </span>{" "}
-                                                {endDateText}
-                                              </div>
-                                            )}
-                                            {contract.description && (
-                                              <div>
-                                                <span className="font-medium">
-                                                  Descripción:
-                                                </span>{" "}
-                                                {contract.description}
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                  )}
-                                </div>
-                              )}
+                <Input
+                  label="Notas"
+                  value={calculationData.notes}
+                  onChange={(e) =>
+                    setCalculationData((prev) => ({
+                      ...prev,
+                      notes: e.target.value,
+                    }))
+                  }
+                  placeholder="Notas adicionales..."
+                  fullWidth
+                />
 
-                              {expandedContractCount === 0 &&
-                                expandedAssignmentCount > 0 && (
-                                  <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-                                    Esta empresa está asignada pero no tiene
-                                    contrato asociado.
-                                  </div>
-                                )}
-
-                              {expandedContractCount > 0 &&
-                                expandedAssignmentCount > 0 && (
-                                  <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-                                    Además, hay {expandedAssignmentCount}{" "}
-                                    {expandedAssignmentCount === 1
-                                      ? "asignación"
-                                      : "asignaciones"} sin contrato asociado.
-                                  </div>
-                                )}
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                {selectedWorker.department && (
-                  <p>Departamento: {selectedWorker.department}</p>
-                )}
-                {selectedWorker.position && (
-                  <p>Posición: {selectedWorker.position}</p>
-                )}
+                <Button
+                  onClick={handleCalculate}
+                  disabled={!selectedWorker || !calculationData.baseSalary}
+                  isLoading={isCalculating}
+                  leftIcon={<Calculator size={18} />}
+                  className="w-full"
+                >
+                  Calcular Sueldo
+                </Button>
               </div>
-            )}
-
-            {/* Calculation Form */}
-            <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="font-medium text-gray-900 dark:text-white">
-                Datos para Cálculo
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input
-                  type="number"
-                  label="Sueldo Base (€)"
-                  value={calculationData.baseSalary}
-                  onChange={(e) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      baseSalary: e.target.value,
-                    }))
-                  }
-                  placeholder="1500"
-                  fullWidth
-                />
-
-                <Select
-                  label="Período"
-                  value={calculationData.period}
-                  onChange={(value) =>
-                    setCalculationData((prev) => ({ ...prev, period: value }))
-                  }
-                  options={[
-                    { value: "monthly", label: "Mensual" },
-                    { value: "weekly", label: "Semanal" },
-                    { value: "daily", label: "Diario" },
-                  ]}
-                  fullWidth
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input
-                  type="number"
-                  label="Horas Trabajadas"
-                  value={calculationData.hoursWorked}
-                  onChange={(e) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      hoursWorked: e.target.value,
-                    }))
-                  }
-                  placeholder="160"
-                  fullWidth
-                />
-
-                <Input
-                  type="number"
-                  label="Horas Extra"
-                  value={calculationData.overtimeHours}
-                  onChange={(e) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      overtimeHours: e.target.value,
-                    }))
-                  }
-                  placeholder="0"
-                  fullWidth
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input
-                  type="number"
-                  label="Bonificaciones (€)"
-                  value={calculationData.bonuses}
-                  onChange={(e) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      bonuses: e.target.value,
-                    }))
-                  }
-                  placeholder="0"
-                  fullWidth
-                />
-
-                <Input
-                  type="number"
-                  label="Deducciones (€)"
-                  value={calculationData.deductions}
-                  onChange={(e) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      deductions: e.target.value,
-                    }))
-                  }
-                  placeholder="0"
-                  fullWidth
-                />
-              </div>
-
-              <Input
-                label="Notas"
-                value={calculationData.notes}
-                onChange={(e) =>
-                  setCalculationData((prev) => ({
-                    ...prev,
-                    notes: e.target.value,
-                  }))
-                }
-                placeholder="Notas adicionales..."
-                fullWidth
-              />
-
-              <Button
-                onClick={handleCalculate}
-                disabled={!selectedWorker || !calculationData.baseSalary}
-                isLoading={isCalculating}
-                leftIcon={<Calculator size={18} />}
-                className="w-full"
-              >
-                Calcular Sueldo
-              </Button>
-            </div>
             </CardContent>
           </Card>
 
