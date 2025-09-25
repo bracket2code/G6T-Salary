@@ -14,6 +14,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "buffer": "^6.0.3",
     "date-fns": "^3.6.0",
+    "htmldocs": "^0.2.30",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.344.0",
     "react": "^18.3.1",

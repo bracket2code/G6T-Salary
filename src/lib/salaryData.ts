@@ -1,0 +1,886 @@
+import { DayHoursSummary } from "../components/WorkerHoursCalendar";
+import {
+  Worker,
+  WorkerCompanyContract,
+  WorkerCompanyStats,
+} from "../types/salary";
+
+interface ApiRequestOptions {
+  apiUrl: string;
+  token: string;
+}
+
+const formatDateKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+
+const pickString = (
+  ...values: Array<string | number | null | undefined>
+): string | null => {
+  for (const value of values) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      return value.toString();
+    }
+  }
+  return null;
+};
+
+const parseNumeric = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.replace(/[^0-9,.-]/g, "").replace(/,/g, ".");
+    if (!normalized) {
+      return undefined;
+    }
+
+    const parsed = Number(normalized);
+    if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+};
+
+const parseRelationType = (
+  ...values: Array<string | number | null | undefined>
+): number | undefined => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const parsed = Number(trimmed);
+      if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const normalizeIdentifier = (value: unknown): string | undefined => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+  return undefined;
+};
+
+export interface WorkerDataResult {
+  workers: Worker[];
+  companyLookup: Record<string, string>;
+}
+
+export const fetchWorkersData = async ({
+  apiUrl,
+  token,
+}: ApiRequestOptions): Promise<WorkerDataResult> => {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  const companyLookup: Record<string, string> = {};
+
+  try {
+    const companiesResponse = await fetch(
+      `${apiUrl}/parameter/list?types[0]=2&types[1]=3&situation=0`,
+      {
+        method: "GET",
+        headers,
+      }
+    );
+
+    if (companiesResponse.ok) {
+      const companiesData = await companiesResponse.json();
+      companiesData.forEach((company: any) => {
+        const companyId = pickString(company?.id, company?.parameterId);
+        const companyName =
+          pickString(company?.name, company?.description, company?.label) ??
+          undefined;
+        if (companyId && companyName) {
+          companyLookup[companyId] = companyName;
+        }
+      });
+    } else {
+      console.warn(
+        `No se pudieron obtener las empresas: ${companiesResponse.status}`
+      );
+    }
+  } catch (error) {
+    console.error("Error fetching companies for worker data", error);
+  }
+
+  let workerSecondaryEmailLookup: Record<string, string> = {};
+
+  try {
+    let usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+
+    if (!usersResponse.ok) {
+      usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+        method: "GET",
+        headers,
+      });
+    }
+
+    if (usersResponse.ok) {
+      const usersData = await usersResponse.json();
+      const usersArray = Array.isArray(usersData)
+        ? usersData
+        : Array.isArray(usersData?.data)
+        ? usersData.data
+        : Array.isArray(usersData?.items)
+        ? usersData.items
+        : [];
+
+      usersArray.forEach((user: any) => {
+        const workerRelationId = pickString(
+          user?.workerIdRelation,
+          user?.workerRelationId,
+          user?.workerId,
+          user?.worker_id
+        );
+
+        const emailCandidate = pickString(
+          user?.email,
+          user?.userEmail,
+          user?.contactEmail,
+          user?.secondaryEmail
+        );
+
+        if (workerRelationId && emailCandidate) {
+          workerSecondaryEmailLookup[workerRelationId] = emailCandidate;
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Error fetching user email relationships", error);
+  }
+
+  let contractLookup: Record<
+    string,
+    {
+      companyId?: string;
+      companyName?: string;
+      relationType?: number;
+      label?: string;
+      description?: string;
+      status?: string;
+      typeLabel?: string;
+      hourlyRate?: number;
+      startDate?: string;
+      endDate?: string;
+    }
+  > = {};
+
+  try {
+    const contractsResponse = await fetch(`${apiUrl}/Contract/list`, {
+      method: "GET",
+      headers,
+    });
+
+    if (contractsResponse.ok) {
+      const contractsData = await contractsResponse.json();
+      if (Array.isArray(contractsData)) {
+        contractLookup = contractsData.reduce(
+          (acc, contract) => {
+            const identifier = pickString(
+              contract?.id,
+              contract?.contractId,
+              contract?.contract_id
+            );
+
+            if (!identifier) {
+              return acc;
+            }
+
+            const companyId = pickString(
+              contract?.companyId,
+              contract?.company_id,
+              contract?.companyIdContract
+            );
+
+            acc[identifier] = {
+              companyId: companyId ?? undefined,
+              companyName:
+                companyId && companyLookup[companyId]
+                  ? companyLookup[companyId]
+                  : pickString(
+                      contract?.companyName,
+                      contract?.company,
+                      contract?.companyLabel
+                    ) ?? undefined,
+              relationType: parseRelationType(
+                contract?.relationType,
+                contract?.type,
+                contract?.contractType
+              ),
+              label:
+                pickString(
+                  contract?.name,
+                  contract?.contractName,
+                  contract?.title,
+                  contract?.alias
+                ) ?? undefined,
+              description:
+                pickString(
+                  contract?.description,
+                  contract?.contractDescription,
+                  contract?.notes
+                ) ?? undefined,
+              status:
+                pickString(
+                  contract?.status,
+                  contract?.state,
+                  contract?.contractStatus
+                ) ?? undefined,
+              typeLabel:
+                pickString(
+                  contract?.contractTypeName,
+                  contract?.typeName,
+                  contract?.typeDescription,
+                  contract?.contractTypeLabel
+                ) ?? undefined,
+              hourlyRate:
+                parseNumeric(
+                  contract?.amount ??
+                    contract?.hourlyRate ??
+                    contract?.rate ??
+                    contract?.price ??
+                    contract?.weeklyHours ??
+                    contract?.hoursPerWeek ??
+                    contract?.hours_week
+                ) ?? undefined,
+              startDate:
+                pickString(
+                  contract?.startDate,
+                  contract?.contractStartDate,
+                  contract?.dateStart,
+                  contract?.beginDate
+                ) ?? undefined,
+              endDate:
+                pickString(
+                  contract?.endDate,
+                  contract?.contractEndDate,
+                  contract?.dateEnd,
+                  contract?.finishDate
+                ) ?? undefined,
+            };
+
+            return acc;
+          },
+          {} as typeof contractLookup
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching contract lookup", error);
+  }
+
+  const workersResponse = await fetch(
+    `${apiUrl}/parameter/list?types[0]=5&types[1]=4&situation=0`,
+    {
+      method: "GET",
+      headers,
+    }
+  );
+
+  if (!workersResponse.ok) {
+    throw new Error(
+      `Error fetching workers: ${workersResponse.status} - ${workersResponse.statusText}`
+    );
+  }
+
+  const workersRaw = await workersResponse.json();
+  const workersArray = Array.isArray(workersRaw)
+    ? workersRaw
+    : Array.isArray(workersRaw?.data)
+    ? workersRaw.data
+    : Array.isArray(workersRaw?.items)
+    ? workersRaw.items
+    : [];
+
+  const transformedWorkers: Worker[] = workersArray.map((apiWorker: any) => {
+    const workerId =
+      normalizeIdentifier(apiWorker?.id) ??
+      normalizeIdentifier(apiWorker?.parameterId) ??
+      normalizeIdentifier(apiWorker?.workerId) ??
+      normalizeIdentifier(apiWorker?.worker_id) ??
+      Math.random().toString(36).slice(2);
+
+    const baseWorker: Worker = {
+      id: workerId,
+      name:
+        pickString(
+          apiWorker?.name,
+          apiWorker?.fullName,
+          apiWorker?.label,
+          apiWorker?.description,
+          apiWorker?.workerName,
+          apiWorker?.firstName
+        ) ?? "Trabajador sin nombre",
+      email:
+        pickString(
+          apiWorker?.email,
+          apiWorker?.workerEmail,
+          apiWorker?.contactEmail,
+          apiWorker?.parameterEmail,
+          apiWorker?.principalEmail,
+          workerSecondaryEmailLookup[workerId]
+        ) ?? "Email no disponible",
+      secondaryEmail: workerSecondaryEmailLookup[workerId] ?? undefined,
+      role:
+        (pickString(apiWorker?.role, apiWorker?.workerRole) as Worker["role"]) ??
+        "tecnico",
+      phone:
+        pickString(
+          apiWorker?.phone,
+          apiWorker?.workerPhone,
+          apiWorker?.contactPhone,
+          apiWorker?.mobile,
+          apiWorker?.telephone
+        ) ?? null,
+      createdAt:
+        pickString(
+          apiWorker?.createdAt,
+          apiWorker?.creationDate,
+          apiWorker?.dateCreated
+        ) ?? new Date().toISOString(),
+      updatedAt:
+        pickString(
+          apiWorker?.updatedAt,
+          apiWorker?.dateUpdated,
+          apiWorker?.modifiedAt
+        ),
+      avatarUrl:
+        pickString(
+          apiWorker?.avatarUrl,
+          apiWorker?.picture,
+          apiWorker?.profileImage
+        ) ?? null,
+      baseSalary: parseNumeric(apiWorker?.baseSalary ?? apiWorker?.salary),
+      hourlyRate: parseNumeric(apiWorker?.hourlyRate ?? apiWorker?.rate),
+      contractType:
+        (pickString(
+          apiWorker?.contractType,
+          apiWorker?.type,
+          apiWorker?.employmentType
+        ) as Worker["contractType"]) ?? undefined,
+      department:
+        pickString(
+          apiWorker?.department,
+          apiWorker?.area,
+          apiWorker?.departmentName
+        ) ?? undefined,
+      position:
+        pickString(
+          apiWorker?.position,
+          apiWorker?.jobTitle,
+          apiWorker?.roleName
+        ) ?? undefined,
+      startDate:
+        pickString(
+          apiWorker?.startDate,
+          apiWorker?.dateStart,
+          apiWorker?.beginDate
+        ) ?? undefined,
+      companies: pickString(apiWorker?.companies, apiWorker?.companyList),
+      companyNames: undefined,
+      companyContracts: {},
+      companyStats: {},
+    };
+
+    const companyNamesSet = new Set<string>();
+    const companyContractsMap: Record<string, WorkerCompanyContract[]> = {};
+    const companyStatsMap: Record<string, WorkerCompanyStats> = {};
+
+    if (Array.isArray(apiWorker?.parameterRelations)) {
+      apiWorker.parameterRelations.forEach((relation: any) => {
+        const relationIdentifier = pickString(
+          relation?.parameterRelationId,
+          relation?.relationId,
+          relation?.id
+        );
+
+        const contractMeta = relationIdentifier
+          ? contractLookup[relationIdentifier]
+          : undefined;
+
+        const relationType = parseRelationType(
+          relation?.type,
+          relation?.relationType,
+          relation?.contractType,
+          relation?.typeId,
+          relation?.type_id,
+          contractMeta?.relationType
+        );
+
+        const hasContract = relationType === 1;
+
+        const companyId =
+          pickString(
+            contractMeta?.companyId,
+            relation?.companyId,
+            relation?.company_id,
+            relation?.companyIdContract
+          ) ?? undefined;
+
+        const relationCompanyPointer = normalizeIdentifier(
+          relation?.parameterRelationId
+        );
+
+        const relationCompanyId =
+          (relationCompanyPointer &&
+            contractLookup[relationCompanyPointer]?.companyId) ||
+          companyId;
+
+        const companyName =
+          relationCompanyId && companyLookup[relationCompanyId]
+            ? companyLookup[relationCompanyId]
+            : contractMeta?.companyName ??
+              pickString(
+                relation?.companyName,
+                relation?.company,
+                relation?.companyLabel
+              ) ??
+              (relationCompanyId ?? undefined);
+
+        if (companyName) {
+          companyNamesSet.add(companyName);
+        }
+
+        if (hasContract && relationCompanyId) {
+          const contractEntry: WorkerCompanyContract = {
+            id:
+              relationIdentifier ??
+              `${workerId}-${relationCompanyId}-${relation?.type}`,
+            hasContract,
+            relationType,
+            typeLabel:
+              contractMeta?.typeLabel ??
+              pickString(
+                relation?.typeLabel,
+                relation?.relationLabel,
+                relation?.contractTypeLabel
+              ) ?? undefined,
+            hourlyRate:
+              parseNumeric(
+                relation?.hourlyRate ??
+                  relation?.amount ??
+                  relation?.rate ??
+                  contractMeta?.hourlyRate
+              ) ?? undefined,
+            companyId: relationCompanyId,
+            companyName,
+            label:
+              pickString(
+                relation?.label,
+                relation?.name,
+                relation?.relationName,
+                relation?.contractName,
+                contractMeta?.label
+              ) ?? undefined,
+            position:
+              pickString(
+                relation?.position,
+                relation?.jobTitle,
+                relation?.role,
+                relation?.relationPosition
+              ) ?? undefined,
+            description:
+              pickString(
+                relation?.description,
+                relation?.notes,
+                relation?.contractDescription,
+                relation?.detail
+              ) ?? undefined,
+            startDate:
+              pickString(
+                relation?.startDate,
+                relation?.contractStartDate,
+                relation?.dateStart,
+                contractMeta?.startDate
+              ) ?? undefined,
+            endDate:
+              pickString(
+                relation?.endDate,
+                relation?.contractEndDate,
+                relation?.dateEnd,
+                contractMeta?.endDate
+              ) ?? undefined,
+            status:
+              pickString(
+                relation?.status,
+                relation?.state,
+                relation?.contractStatus,
+                contractMeta?.status
+              ) ?? undefined,
+            details: relation?.details ?? undefined,
+          };
+
+          if (!companyContractsMap[relationCompanyId]) {
+            companyContractsMap[relationCompanyId] = [];
+          }
+          companyContractsMap[relationCompanyId].push(contractEntry);
+
+          if (!companyStatsMap[relationCompanyId]) {
+            companyStatsMap[relationCompanyId] = {
+              companyId: relationCompanyId,
+              contractCount: 0,
+              assignmentCount: 0,
+            };
+          }
+
+          companyStatsMap[relationCompanyId].contractCount += 1;
+        }
+
+        if (relationCompanyId) {
+          if (!companyStatsMap[relationCompanyId]) {
+            companyStatsMap[relationCompanyId] = {
+              companyId: relationCompanyId,
+              contractCount: 0,
+              assignmentCount: 0,
+            };
+          }
+          companyStatsMap[relationCompanyId].assignmentCount += 1;
+        }
+      });
+    }
+
+    return {
+      ...baseWorker,
+      companyNames:
+        companyNamesSet.size > 0
+          ? Array.from(companyNamesSet).sort((a, b) =>
+              a.localeCompare(b, "es", { sensitivity: "base" })
+            )
+          : undefined,
+      companyContracts: companyContractsMap,
+      companyStats: companyStatsMap,
+    };
+  });
+
+  return {
+    workers: transformedWorkers,
+    companyLookup,
+  };
+};
+
+export interface WorkerHoursSummaryResult {
+  hoursByDate: Record<string, DayHoursSummary>;
+  totalHours: number;
+  totalTrackedDays: number;
+  companyTotals: Array<{
+    companyId?: string;
+    name?: string;
+    hours: number;
+  }>;
+}
+
+export const fetchWorkerHoursSummary = async (
+  options: ApiRequestOptions & {
+    workerId: string;
+    month: Date;
+    companyLookup?: Record<string, string>;
+  }
+): Promise<WorkerHoursSummaryResult> => {
+  const { apiUrl, token, workerId, month, companyLookup = {} } = options;
+
+  const fromDate = new Date(
+    Date.UTC(month.getFullYear(), month.getMonth(), 1, 0, 0, 0, 0)
+  );
+  const toDate = new Date(
+    Date.UTC(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999)
+  );
+
+  const baseRequestPayload = {
+    from: fromDate.toISOString(),
+    to: toDate.toISOString(),
+    parametersId: [workerId],
+    companiesId: [],
+  };
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  const fetchScheduleEntries = async (types: number[]) => {
+    const response = await fetch(`${apiUrl}/ControlSchedule/List`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        ...baseRequestPayload,
+        types,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Error fetching schedule control (types: ${types.join(",")}): ${
+          response.status
+        } - ${response.statusText}`
+      );
+    }
+
+    const rawData = await response.json();
+    const entries = Array.isArray(rawData)
+      ? rawData
+      : Array.isArray(rawData?.entries)
+      ? rawData.entries
+      : [];
+
+    return entries as any[];
+  };
+
+  const registerNote = (collector: Set<string>, value: unknown) => {
+    if (!value) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => registerNote(collector, item));
+      return;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        collector.add(trimmed);
+      }
+    }
+  };
+
+  const ensureAggregate = (
+    aggregates: Record<string, MutableDailyAggregate>,
+    key: string
+  ) => {
+    if (!aggregates[key]) {
+      aggregates[key] = {
+        totalHours: 0,
+        notes: new Set<string>(),
+        companies: {},
+      };
+    }
+    return aggregates[key];
+  };
+
+  type MutableDailyAggregate = {
+    totalHours: number;
+    notes: Set<string>;
+    companies: Record<
+      string,
+      {
+        companyId?: string;
+        name?: string;
+        hours: number;
+      }
+    >;
+  };
+
+  const dailyAggregates: Record<string, MutableDailyAggregate> = {};
+
+  const hourEntries = await fetchScheduleEntries([1]);
+  let noteEntries: any[] = [];
+  try {
+    noteEntries = await fetchScheduleEntries([7]);
+  } catch (error) {
+    console.error("Error fetching worker notes:", error);
+  }
+
+  const processEntryHours = (entry: any, hoursValue: unknown) => {
+    let hours = 0;
+
+    if (typeof hoursValue === "number" && Number.isFinite(hoursValue)) {
+      hours = hoursValue;
+    } else if (typeof hoursValue === "string") {
+      const normalized = hoursValue.replace(/[^0-9,.-]/g, "").replace(/,/g, ".");
+      const parsed = Number(normalized);
+      if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+        hours = parsed;
+      }
+    }
+
+    if (hours === 0 && Array.isArray(entry?.workShifts)) {
+      const shiftsTotal = entry.workShifts.reduce((acc: number, shift: any) => {
+        const shiftHours = parseNumeric(
+          shift?.hours ?? shift?.value ?? shift?.workedHours
+        );
+        if (typeof shiftHours === "number") {
+          return acc + shiftHours;
+        }
+        return acc;
+      }, 0);
+
+      if (Number.isFinite(shiftsTotal) && shiftsTotal > 0) {
+        hours = shiftsTotal;
+      }
+    }
+
+    if (Number.isNaN(hours) || !Number.isFinite(hours) || hours < 0) {
+      hours = 0;
+    }
+
+    return hours;
+  };
+
+  hourEntries.forEach((entry) => {
+    const dateValue = pickString(entry?.start, entry?.date, entry?.day);
+    if (!dateValue) {
+      return;
+    }
+
+    const entryDate = new Date(dateValue);
+    if (Number.isNaN(entryDate.getTime())) {
+      return;
+    }
+
+    const dayKey = formatDateKey(entryDate);
+    const aggregate = ensureAggregate(dailyAggregates, dayKey);
+
+    const hours = processEntryHours(entry, entry?.hours ?? entry?.value);
+    if (hours > 0) {
+      aggregate.totalHours += hours;
+    }
+
+    const companyId = pickString(
+      entry?.companyId,
+      entry?.company_id,
+      entry?.company
+    );
+
+    const resolvedCompanyId = companyId ?? "unknown";
+
+    if (!aggregate.companies[resolvedCompanyId]) {
+      aggregate.companies[resolvedCompanyId] = {
+        companyId: companyId ?? undefined,
+        name:
+          companyId && companyLookup[companyId]
+            ? companyLookup[companyId]
+            : companyId ?? "Sin empresa",
+        hours: 0,
+      };
+    }
+
+    aggregate.companies[resolvedCompanyId].hours += hours;
+
+    registerNote(aggregate.notes, entry?.observation);
+    registerNote(aggregate.notes, entry?.observations);
+    registerNote(aggregate.notes, entry?.description);
+    registerNote(aggregate.notes, entry?.value);
+  });
+
+  noteEntries.forEach((entry) => {
+    const dateValue = pickString(entry?.start, entry?.date, entry?.day);
+    if (!dateValue) {
+      return;
+    }
+
+    const entryDate = new Date(dateValue);
+    if (Number.isNaN(entryDate.getTime())) {
+      return;
+    }
+
+    const dayKey = formatDateKey(entryDate);
+    const aggregate = ensureAggregate(dailyAggregates, dayKey);
+
+    registerNote(aggregate.notes, entry?.observation);
+    registerNote(aggregate.notes, entry?.observations);
+    registerNote(aggregate.notes, entry?.description);
+    registerNote(aggregate.notes, entry?.value);
+  });
+
+  const formattedTotals: Record<string, DayHoursSummary> = {};
+  const companyTotalsMap: Record<string, { companyId?: string; name?: string; hours: number }> = {};
+
+  Object.entries(dailyAggregates).forEach(([key, aggregate]) => {
+    if (
+      aggregate.totalHours === 0 &&
+      aggregate.notes.size === 0 &&
+      Object.keys(aggregate.companies).length === 0
+    ) {
+      return;
+    }
+
+    const companies = Object.values(aggregate.companies).map((company) => {
+      const resolvedName =
+        company.companyId && companyLookup[company.companyId]
+          ? companyLookup[company.companyId]
+          : company.name ?? company.companyId;
+      const normalized = {
+        ...company,
+        name: resolvedName ?? "Sin empresa",
+      };
+
+      const summaryKey = company.companyId ?? normalized.name ?? "unknown";
+      if (!companyTotalsMap[summaryKey]) {
+        companyTotalsMap[summaryKey] = {
+          companyId: company.companyId,
+          name: normalized.name,
+          hours: 0,
+        };
+      }
+      companyTotalsMap[summaryKey].hours += normalized.hours;
+
+      return normalized;
+    });
+
+    companies.sort((a, b) =>
+      (a.name ?? "").localeCompare(b.name ?? "", "es", { sensitivity: "base" })
+    );
+
+    formattedTotals[key] = {
+      totalHours: aggregate.totalHours,
+      notes: Array.from(aggregate.notes),
+      companies,
+    };
+  });
+
+  const totalTrackedDays = Object.values(formattedTotals).reduce((acc, detail) => {
+    if (detail && detail.totalHours > 0) {
+      return acc + 1;
+    }
+    return acc;
+  }, 0);
+
+  const totalHours = Object.values(formattedTotals).reduce(
+    (acc, value) => acc + (value?.totalHours ?? 0),
+    0
+  );
+
+  const companyTotals = Object.values(companyTotalsMap).sort((a, b) =>
+    (a.name ?? "").localeCompare(b.name ?? "", "es", { sensitivity: "base" })
+  );
+
+  return {
+    hoursByDate: formattedTotals,
+    totalHours,
+    totalTrackedDays,
+    companyTotals,
+  };
+};

@@ -10,6 +10,7 @@ import { HoursRegistryPage } from './pages/HoursRegistryPage';
 import { WorkerQueriesPage } from './pages/WorkerQueriesPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ProfilePage } from './pages/ProfilePage';
+import TemplatesPage from './pages/TemplatesPage';
 import { Layout } from './components/layout/Layout';
 
 // Route guard component
@@ -69,6 +70,7 @@ function App() {
           <Route path="hours" element={<HoursRegistryPage />} />
           <Route path="queries" element={<WorkerQueriesPage />} />
           <Route path="reports" element={<ReportsPage />} />
+          <Route path="templates" element={<TemplatesPage />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>
         
