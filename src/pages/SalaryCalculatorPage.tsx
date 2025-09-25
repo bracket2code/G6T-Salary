@@ -26,7 +26,10 @@ import {
 } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
-import { WorkerHoursCalendar } from "../components/WorkerHoursCalendar";
+import {
+  WorkerHoursCalendar,
+  type DayHoursSummary,
+} from "../components/WorkerHoursCalendar";
 
 const sanitizeTelHref = (phone: string) => {
   const sanitized = phone.replace(/[^+\d]/g, "");
@@ -431,7 +434,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
-  const [calendarHours, setCalendarHours] = useState<Record<string, number>>({});
+  const [calendarHours, setCalendarHours] = useState<Record<string, DayHoursSummary>>({});
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
 
@@ -456,6 +459,7 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [copyFeedback, setCopyFeedback] = useState<{
     type: "email" | "phone";
     message: string;
+    target?: string;
   } | null>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -550,7 +554,38 @@ export const SalaryCalculatorPage: React.FC = () => {
           ? rawData.entries
           : [];
 
-        const dailyTotals: Record<string, number> = {};
+        type MutableDailyAggregate = {
+          totalHours: number;
+          notes: Set<string>;
+          companies: Record<
+            string,
+            {
+              companyId?: string;
+              name?: string;
+              hours: number;
+            }
+          >;
+        };
+
+        const dailyAggregates: Record<string, MutableDailyAggregate> = {};
+
+        const registerNote = (collector: Set<string>, value: unknown) => {
+          if (!value) {
+            return;
+          }
+
+          if (Array.isArray(value)) {
+            value.forEach((item) => registerNote(collector, item));
+            return;
+          }
+
+          if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (trimmed.length > 0) {
+              collector.add(trimmed);
+            }
+          }
+        };
 
         entries.forEach((entry: any) => {
           if (!entry) {
@@ -566,39 +601,158 @@ export const SalaryCalculatorPage: React.FC = () => {
           date.setHours(date.getHours() + 2);
           const key = formatDateKey(date);
 
+          const ensureAggregate = () => {
+            if (!dailyAggregates[key]) {
+              dailyAggregates[key] = {
+                totalHours: 0,
+                notes: new Set<string>(),
+                companies: {},
+              };
+            }
+            return dailyAggregates[key];
+          };
+
+          const aggregateForNotes = ensureAggregate();
+          registerNote(aggregateForNotes.notes, entry?.notes);
+          registerNote(aggregateForNotes.notes, entry?.note);
+          registerNote(aggregateForNotes.notes, entry?.comment);
+          registerNote(aggregateForNotes.notes, entry?.comments);
+          registerNote(aggregateForNotes.notes, entry?.observation);
+          registerNote(aggregateForNotes.notes, entry?.observations);
+          registerNote(aggregateForNotes.notes, entry?.description);
+
           let hours = 0;
-          const valueNum = entry?.value !== undefined ? parseFloat(entry.value) : NaN;
+          const valueNum =
+            entry?.value !== undefined ? parseFloat(entry.value) : NaN;
           if (!Number.isNaN(valueNum) && Number.isFinite(valueNum)) {
             hours = valueNum;
           }
 
           if (hours === 0 && Array.isArray(entry?.workShifts)) {
-            const shiftsTotal = entry.workShifts.reduce((acc: number, shift: any) => {
-              if (!shift?.workStart || !shift?.workEnd) {
-                return acc;
-              }
-              const start = new Date(`2000-01-01T${shift.workStart}`);
-              const end = new Date(`2000-01-01T${shift.workEnd}`);
-              if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-                return acc;
-              }
-              let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-              if (diff < 0) {
-                diff = 0;
-              }
-              return acc + diff;
-            }, 0);
+            const shiftsTotal = entry.workShifts.reduce(
+              (acc: number, shift: any) => {
+                if (!shift?.workStart || !shift?.workEnd) {
+                  return acc;
+                }
+                const start = new Date(`2000-01-01T${shift.workStart}`);
+                const end = new Date(`2000-01-01T${shift.workEnd}`);
+                if (
+                  Number.isNaN(start.getTime()) ||
+                  Number.isNaN(end.getTime())
+                ) {
+                  return acc;
+                }
+                let diff =
+                  (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+                if (diff < 0) {
+                  diff = 0;
+                }
+                return acc + diff;
+              },
+              0
+            );
             if (shiftsTotal > 0) {
               hours = shiftsTotal;
             }
           }
 
-          if (!Number.isNaN(hours) && Number.isFinite(hours)) {
-            dailyTotals[key] = (dailyTotals[key] ?? 0) + hours;
+          if (Number.isNaN(hours) || !Number.isFinite(hours)) {
+            hours = 0;
+          }
+
+          if (hours > 0) {
+            const aggregate = ensureAggregate();
+            aggregate.totalHours += hours;
+
+            const companyId =
+              typeof entry?.companyId === "string"
+                ? entry.companyId
+                : typeof entry?.company_id === "string"
+                ? entry.company_id
+                : typeof entry?.company?.id === "string"
+                ? entry.company.id
+                : typeof entry?.companyID === "string"
+                ? entry.companyID
+                : typeof entry?.companyIdContract === "string"
+                ? entry.companyIdContract
+                : undefined;
+
+            const companyNameCandidate =
+              typeof entry?.companyName === "string"
+                ? entry.companyName
+                : typeof entry?.company_name === "string"
+                ? entry.company_name
+                : typeof entry?.company?.name === "string"
+                ? entry.company.name
+                : typeof entry?.company === "string"
+                ? entry.company
+                : undefined;
+
+            const resolvedCompanyName =
+              companyNameCandidate?.trim() ||
+              (companyId ? companyLookup[companyId] : undefined);
+
+            const companyKey =
+              companyId ?? resolvedCompanyName ?? `sin-empresa-${key}`;
+
+            if (!aggregate.companies[companyKey]) {
+              aggregate.companies[companyKey] = {
+                companyId: companyId ?? undefined,
+                name: resolvedCompanyName ?? undefined,
+                hours: 0,
+              };
+            }
+
+            const companyEntry = aggregate.companies[companyKey];
+            if (!companyEntry.name || companyEntry.name.trim().length === 0) {
+              companyEntry.name =
+                resolvedCompanyName ??
+                (companyEntry.companyId
+                  ? companyLookup[companyEntry.companyId]
+                  : undefined) ??
+                (companyEntry.companyId ?? "Sin empresa");
+            }
+            companyEntry.hours += hours;
           }
         });
 
-        setCalendarHours(dailyTotals);
+        const formattedTotals: Record<string, DayHoursSummary> = {};
+
+        Object.entries(dailyAggregates).forEach(([key, aggregate]) => {
+          if (
+            aggregate.totalHours === 0 &&
+            aggregate.notes.size === 0 &&
+            Object.keys(aggregate.companies).length === 0
+          ) {
+            return;
+          }
+
+          const companies = Object.values(aggregate.companies).map(
+            (company) => ({
+              ...company,
+              name:
+                company.name?.trim() ||
+                (company.companyId
+                  ? companyLookup[company.companyId]
+                  : undefined) ||
+                (company.companyId ?? "Sin empresa"),
+            })
+          );
+
+          companies.sort((a, b) =>
+            (a.name ?? "").localeCompare(b.name ?? "", "es", {
+              sensitivity: "base",
+            })
+          );
+
+          formattedTotals[key] = {
+            totalHours: aggregate.totalHours,
+            notes: Array.from(aggregate.notes),
+            companies,
+          };
+        });
+
+        setCalendarHours(formattedTotals);
       } catch (error) {
         console.error("Error fetching worker hours:", error);
         setCalendarError("No se pudieron cargar las horas del trabajador.");
@@ -607,7 +761,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         setIsCalendarLoading(false);
       }
     },
-    [externalJwt, formatDateKey]
+    [companyLookup, externalJwt, formatDateKey]
   );
 
   useEffect(() => {
@@ -623,25 +777,30 @@ export const SalaryCalculatorPage: React.FC = () => {
     setCalendarMonth(new Date(next.getFullYear(), next.getMonth(), 1));
   }, []);
 
-  const showCopyFeedback = (type: "email" | "phone", message: string) => {
+  const showCopyFeedback = (
+    type: "email" | "phone",
+    message: string,
+    target?: string
+  ) => {
     if (copyFeedbackTimeoutRef.current) {
       clearTimeout(copyFeedbackTimeoutRef.current);
     }
-    setCopyFeedback({ type, message });
+    setCopyFeedback({ type, message, target });
     copyFeedbackTimeoutRef.current = setTimeout(() => {
       setCopyFeedback(null);
       copyFeedbackTimeoutRef.current = null;
     }, 2000);
   };
 
-  const handleEmailCopy = async () => {
-    if (!selectedWorker?.email) {
+  const handleEmailCopy = async (emailToCopy?: string | null) => {
+    const targetEmail = emailToCopy ?? selectedWorker?.email ?? null;
+    if (!targetEmail || targetEmail === "Email no disponible") {
       return;
     }
 
-    const copied = await copyTextToClipboard(selectedWorker.email);
+    const copied = await copyTextToClipboard(targetEmail);
     if (copied) {
-      showCopyFeedback("email", "Email copiado");
+      showCopyFeedback("email", "Email copiado", targetEmail);
     }
   };
 
@@ -652,7 +811,7 @@ export const SalaryCalculatorPage: React.FC = () => {
 
     const copied = await copyTextToClipboard(selectedWorker.phone);
     if (copied) {
-      showCopyFeedback("phone", "Teléfono copiado");
+      showCopyFeedback("phone", "Teléfono copiado", selectedWorker.phone);
     }
   };
 
@@ -752,6 +911,61 @@ export const SalaryCalculatorPage: React.FC = () => {
           endDate?: string;
         }
       > = {};
+      let workerSecondaryEmailLookup: Record<string, string> = {};
+
+      try {
+        let usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+          method: "POST",
+          headers: commonHeaders,
+          body: JSON.stringify({}),
+        });
+
+        if (!usersResponse.ok) {
+          usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+            method: "GET",
+            headers: commonHeaders,
+          });
+        }
+
+        if (usersResponse.ok) {
+          const usersData = await usersResponse.json();
+          const usersArray = Array.isArray(usersData)
+            ? usersData
+            : Array.isArray(usersData?.data)
+            ? usersData.data
+            : Array.isArray(usersData?.items)
+            ? usersData.items
+            : [];
+
+          usersArray.forEach((user: any) => {
+            const workerRelationId = pickString(
+              user?.workerIdRelation,
+              user?.workerRelationId,
+              user?.workerId,
+              user?.worker_id
+            );
+
+            const emailCandidate = pickString(
+              user?.email,
+              user?.userEmail,
+              user?.contactEmail,
+              user?.secondaryEmail
+            );
+
+            if (!workerRelationId || !emailCandidate) {
+              return;
+            }
+
+            workerSecondaryEmailLookup[workerRelationId] = emailCandidate;
+          });
+        } else {
+          throw new Error(
+            `Error fetching users: ${usersResponse.status} - ${usersResponse.statusText}`
+          );
+        }
+      } catch (usersError) {
+        console.error("Error fetching users from API:", usersError);
+      }
 
       try {
         const companiesResponse = await fetch(
@@ -1160,6 +1374,31 @@ export const SalaryCalculatorPage: React.FC = () => {
           a.localeCompare(b, "es", { sensitivity: "base" })
         );
 
+        // Resolve emails (primary from worker, secondary from users lookup via worker relation id)
+        const primaryEmail =
+          pickString(
+            apiWorker.email,
+            apiWorker.providerEmail,
+            apiWorker.contactEmail,
+            apiWorker.userEmail,
+            apiWorker?.user?.email
+          ) || "Email no disponible";
+        const workerRelationKey = pickString(
+          apiWorker.workerIdRelation,
+          apiWorker.workerRelationId,
+          apiWorker.workerId,
+          apiWorker.id
+        );
+        const lookedUpSecondary = workerRelationKey
+          ? workerSecondaryEmailLookup[workerRelationKey]
+          : undefined;
+        const normalizedPrimary = typeof primaryEmail === "string" ? primaryEmail.trim().toLowerCase() : "";
+        const normalizedSecondary = typeof lookedUpSecondary === "string" ? lookedUpSecondary.trim().toLowerCase() : "";
+        const secondaryEmailFinal =
+          lookedUpSecondary && normalizedSecondary && normalizedSecondary !== normalizedPrimary
+            ? lookedUpSecondary
+            : null;
+
         return {
           id:
             apiWorker.id ||
@@ -1171,14 +1410,8 @@ export const SalaryCalculatorPage: React.FC = () => {
               apiWorker.fullName,
               apiWorker.commercialName
             ) || "Nombre no disponible",
-          email:
-            pickString(
-              apiWorker.email,
-              apiWorker.providerEmail,
-              apiWorker.contactEmail,
-              apiWorker.userEmail,
-              apiWorker?.user?.email
-            ) || "Email no disponible",
+          email: primaryEmail,
+          secondaryEmail: secondaryEmailFinal,
           role:
             (pickString(
               apiWorker.role,
@@ -1539,24 +1772,41 @@ export const SalaryCalculatorPage: React.FC = () => {
                   </h3>
                   <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div>
-                      <span className="mr-1">Email:</span>
-                      {selectedWorker.email ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleEmailCopy();
-                          }}
-                          className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
-                        >
-                          {selectedWorker.email}
-                        </button>
-                      ) : (
-                        "No disponible"
+                    <div className="space-y-1">
+                      <div>
+                        <span className="mr-1">Email:</span>
+                        {selectedWorker.email ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleEmailCopy(selectedWorker.email);
+                            }}
+                            className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                          >
+                            {selectedWorker.email}
+                          </button>
+                        ) : (
+                          "No disponible"
+                        )}
+                      </div>
+                      {selectedWorker.secondaryEmail && (
+                        <div>
+                          <span className="mr-1">Email 2:</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleEmailCopy(selectedWorker.secondaryEmail);
+                            }}
+                            className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                          >
+                            {selectedWorker.secondaryEmail}
+                          </button>
+                        </div>
                       )}
                       {copyFeedback?.type === "email" && (
-                        <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                        <span className="ml-2 text-xs text-green-600 dark:text-green-300 inline-block">
                           {copyFeedback.message}
+                          {copyFeedback.target ? ` (${copyFeedback.target})` : ""}
                         </span>
                       )}
                     </div>

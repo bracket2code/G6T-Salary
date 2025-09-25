@@ -25,6 +25,7 @@ export interface Worker {
   id: string;
   name: string;
   email: string;
+  secondaryEmail?: string | null;
   role: 'admin' | 'supervisor' | 'tecnico';
   phone: string | null;
   createdAt: string;
