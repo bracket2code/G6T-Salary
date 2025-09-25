@@ -18,7 +18,12 @@ import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
-import { Worker, SalaryCalculation } from "../types/salary";
+import {
+  Worker,
+  SalaryCalculation,
+  WorkerCompanyContract,
+  WorkerCompanyStats,
+} from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
 
@@ -55,9 +60,8 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
     document.body.appendChild(textarea);
 
     const selection = document.getSelection();
-    const selectedRange = selection && selection.rangeCount > 0
-      ? selection.getRangeAt(0)
-      : null;
+    const selectedRange =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
 
     textarea.select();
     const copied = document.execCommand("copy");
@@ -319,7 +323,10 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
-  const [companyLookup, setCompanyLookup] = useState<Record<string, string>>({});
+  const [companyLookup, setCompanyLookup] = useState<Record<string, string>>(
+    {}
+  );
+  const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
 
   // Calculation form data
   const [calculationData, setCalculationData] = useState({
@@ -339,9 +346,10 @@ export const SalaryCalculatorPage: React.FC = () => {
     taxes: number;
     socialSecurity: number;
   } | null>(null);
-  const [copyFeedback, setCopyFeedback] = useState<
-    { type: "email" | "phone"; message: string } | null
-  >(null);
+  const [copyFeedback, setCopyFeedback] = useState<{
+    type: "email" | "phone";
+    message: string;
+  } | null>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
@@ -354,6 +362,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     if (selectedWorkerId) {
       const worker = workers.find((w) => w.id === selectedWorkerId);
       setSelectedWorker(worker || null);
+      setExpandedCompany(null);
 
       // Pre-fill with worker's base salary if available
       if (worker?.baseSalary) {
@@ -364,6 +373,7 @@ export const SalaryCalculatorPage: React.FC = () => {
       }
     } else {
       setSelectedWorker(null);
+      setExpandedCompany(null);
     }
   }, [selectedWorkerId, workers]);
 
@@ -408,7 +418,6 @@ export const SalaryCalculatorPage: React.FC = () => {
     }
   };
 
-
   const fetchAllWorkers = async () => {
     setIsLoading(true);
     try {
@@ -424,7 +433,7 @@ export const SalaryCalculatorPage: React.FC = () => {
       }
 
       const pickString = (
-        ...values: Array<string | null | undefined>
+        ...values: Array<string | number | null | undefined>
       ): string | null => {
         for (const value of values) {
           if (typeof value === "string") {
@@ -432,9 +441,55 @@ export const SalaryCalculatorPage: React.FC = () => {
             if (trimmed.length > 0) {
               return trimmed;
             }
+          } else if (typeof value === "number" && Number.isFinite(value)) {
+            return value.toString();
           }
         }
         return null;
+      };
+
+      const parseNumeric = (value: unknown): number | undefined => {
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return value;
+        }
+
+        if (typeof value === "string") {
+          const normalized = value.replace(/[^0-9,.-]/g, "").replace(/,/g, ".");
+          if (!normalized) {
+            return undefined;
+          }
+
+          const parsed = Number(normalized);
+          if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+            return parsed;
+          }
+        }
+
+        return undefined;
+      };
+
+      const parseRelationType = (
+        ...values: Array<string | number | null | undefined>
+      ): number | undefined => {
+        for (const value of values) {
+          if (typeof value === "number" && Number.isFinite(value)) {
+            return value;
+          }
+
+          if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (!trimmed) {
+              continue;
+            }
+
+            const parsed = Number(trimmed);
+            if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+              return parsed;
+            }
+          }
+        }
+
+        return undefined;
       };
 
       const commonHeaders = {
@@ -444,9 +499,23 @@ export const SalaryCalculatorPage: React.FC = () => {
       };
 
       let companyLookupFromApi: Record<string, string> = {};
+      let contractLookupFromApi: Record<
+        string,
+        {
+          companyId?: string;
+          companyName?: string;
+          relationType?: number;
+          label?: string;
+          description?: string;
+          status?: string;
+          typeLabel?: string;
+          hourlyRate?: number;
+          startDate?: string;
+          endDate?: string;
+        }
+      > = {};
 
       try {
-        console.log("Fetching company catalog from API...");
         const companiesResponse = await fetch(
           `${apiUrl}/parameter/list?types=1`,
           {
@@ -465,11 +534,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         if (Array.isArray(companiesData)) {
           companyLookupFromApi = companiesData.reduce(
             (acc: Record<string, string>, company: any) => {
-              const companyId =
-                company.id ||
-                company.parameterId ||
-                company.companyId ||
-                null;
+              const companyId = company.id || company.companyId || null;
               const companyName =
                 pickString(
                   company.name,
@@ -494,7 +559,120 @@ export const SalaryCalculatorPage: React.FC = () => {
         console.error("Error fetching companies from API:", companyError);
       }
 
-      console.log("Fetching all workers from API...");
+      try {
+        const contractsResponse = await fetch(
+          `${apiUrl}/parameter/list?types=7`,
+          {
+            method: "GET",
+            headers: commonHeaders,
+          }
+        );
+
+        if (!contractsResponse.ok) {
+          throw new Error(
+            `Error fetching contracts: ${contractsResponse.status} - ${contractsResponse.statusText}`
+          );
+        }
+
+        const contractsData = await contractsResponse.json();
+        if (Array.isArray(contractsData)) {
+          contractLookupFromApi = contractsData.reduce(
+            (acc: typeof contractLookupFromApi, contract: any) => {
+              const relationId = pickString(
+                contract.id,
+                contract.parameterRelationId,
+                contract.contractId,
+                contract.relationId
+              );
+
+              if (!relationId) {
+                return acc;
+              }
+
+              const companyId = pickString(
+                contract.companyIdContract,
+                contract.companyId,
+                contract.company_id,
+                contract.company
+              );
+
+              acc[relationId] = {
+                companyId: companyId ?? undefined,
+                companyName:
+                  pickString(
+                    contract.companyName,
+                    contract.company_name,
+                    contract.company,
+                    companyId && companyLookupFromApi[companyId]
+                  ) ?? undefined,
+                relationType:
+                  parseRelationType(
+                    contract.type,
+                    contract.contractType,
+                    contract.typeId,
+                    contract.type_id
+                  ) ?? undefined,
+                label:
+                  pickString(
+                    contract.name,
+                    contract.contractName,
+                    contract.title,
+                    contract.alias
+                  ) ?? undefined,
+                description:
+                  pickString(
+                    contract.description,
+                    contract.contractDescription,
+                    contract.notes
+                  ) ?? undefined,
+                status:
+                  pickString(
+                    contract.status,
+                    contract.state,
+                    contract.contractStatus
+                  ) ?? undefined,
+                typeLabel:
+                  pickString(
+                    contract.contractTypeName,
+                    contract.typeName,
+                    contract.typeDescription,
+                    contract.contractTypeLabel
+                  ) ?? undefined,
+                hourlyRate:
+                  parseNumeric(
+                    contract.amount ??
+                      contract.hourlyRate ??
+                      contract.rate ??
+                      contract.price ??
+                      contract.weeklyHours ??
+                      contract.hoursPerWeek ??
+                      contract.hours_week
+                  ) ?? undefined,
+                startDate:
+                  pickString(
+                    contract.startDate,
+                    contract.contractStartDate,
+                    contract.dateStart,
+                    contract.beginDate
+                  ) ?? undefined,
+                endDate:
+                  pickString(
+                    contract.endDate,
+                    contract.contractEndDate,
+                    contract.dateEnd,
+                    contract.finishDate
+                  ) ?? undefined,
+              };
+
+              return acc;
+            },
+            {} as typeof contractLookupFromApi
+          );
+        }
+      } catch (contractsError) {
+        console.error("Error fetching contracts from API:", contractsError);
+      }
+
       const workersResponse = await fetch(
         `${apiUrl}/parameter/list?types[0]=5&types[1]=4&situation=0`,
         {
@@ -510,22 +688,237 @@ export const SalaryCalculatorPage: React.FC = () => {
       }
 
       const workersData = await workersResponse.json();
-      console.log(`Fetched ${workersData.length} workers from API`);
-
       // Transform API data to match our Worker interface
       const transformedWorkers: Worker[] = workersData.map((apiWorker: any) => {
-        const companyNames = Array.isArray(apiWorker.parameterRelations)
-          ? apiWorker.parameterRelations
-              .map((relation: any) =>
+        const companyContractsMap: Record<string, WorkerCompanyContract[]> = {};
+        const companyStatsMap: Record<string, WorkerCompanyStats> = {};
+        const companyNamesSet = new Set<string>();
+
+        if (Array.isArray(apiWorker.parameterRelations)) {
+          apiWorker.parameterRelations.forEach(
+            (relation: any, relationIndex: number) => {
+              const relationIdentifier = pickString(
+                relation?.parameterRelationId,
+                relation?.relationId,
+                relation?.id
+              );
+              const contractMeta = relationIdentifier
+                ? contractLookupFromApi[relationIdentifier]
+                : undefined;
+
+              const relationType = parseRelationType(
+                relation?.type,
+                relation?.relationType,
+                relation?.contractType,
+                relation?.typeId,
+                relation?.type_id,
+                contractMeta?.relationType
+              );
+              const hasContract = relationType === 1;
+
+              const workerIdentifier =
+                (typeof apiWorker?.id === "string" && apiWorker.id.trim().length > 0
+                  ? apiWorker.id
+                  : undefined) ??
+                (typeof apiWorker?.workerId === "string" &&
+                apiWorker.workerId.trim().length > 0
+                  ? apiWorker.workerId
+                  : undefined);
+
+              let candidateCompanyId = pickString(
+                contractMeta?.companyId,
+                relation?.companyId,
+                relation?.company_id,
+                relation?.companyIdContract
+              );
+              const relationCompanyPointer =
+                typeof relation?.parameterRelationId === "string" &&
+                relation.parameterRelationId.trim().length > 0
+                  ? relation.parameterRelationId.trim()
+                  : undefined;
+
+              if (
+                candidateCompanyId &&
+                workerIdentifier &&
+                candidateCompanyId === workerIdentifier
+              ) {
+                candidateCompanyId = null;
+              }
+
+              let relationCompanyId =
+                candidateCompanyId ?? relationCompanyPointer ?? null;
+
+              let resolvedCompanyName =
+                (relationCompanyId &&
+                  companyLookupFromApi[relationCompanyId]) ||
+                contractMeta?.companyName ||
                 pickString(
-                  companyLookupFromApi[relation.parameterRelationId],
-                  relation.companyName,
-                  relation.name
-                )
-              )
-              .filter((name): name is string => Boolean(name && name.trim().length > 0))
-          : [];
-        const uniqueCompanyNames = Array.from(new Set(companyNames)).sort((a, b) =>
+                  relation?.companyName,
+                  relation?.name,
+                  relation?.company,
+                  relation?.commercialName,
+                  relation?.businessName
+                ) ||
+                "Empresa sin nombre";
+
+              if (relationCompanyId && resolvedCompanyName === "Empresa sin nombre") {
+                const existingEntry = Object.entries(companyStatsMap).find(
+                  ([, stats]) => stats.companyId === relationCompanyId
+                );
+                if (existingEntry) {
+                  resolvedCompanyName = existingEntry[0];
+                }
+              }
+
+              if (
+                resolvedCompanyName === "Empresa sin nombre" &&
+                !relationCompanyId &&
+                !(contractMeta?.companyName && contractMeta.companyName.trim())
+              ) {
+                return;
+              }
+
+              companyNamesSet.add(resolvedCompanyName);
+
+              if (!companyStatsMap[resolvedCompanyName]) {
+                companyStatsMap[resolvedCompanyName] = {
+                  companyId:
+                    relationCompanyId ??
+                    (typeof contractMeta?.companyId === "string" &&
+                    contractMeta.companyId.trim().length > 0
+                      ? contractMeta.companyId
+                      : undefined),
+                  contractCount: 0,
+                  assignmentCount: 0,
+                };
+              } else if (
+                relationCompanyId &&
+                !companyStatsMap[resolvedCompanyName].companyId
+              ) {
+                companyStatsMap[resolvedCompanyName].companyId = relationCompanyId;
+              }
+
+              const companyStatsEntry = companyStatsMap[resolvedCompanyName];
+              if (hasContract) {
+                companyStatsEntry.contractCount += 1;
+              } else {
+                companyStatsEntry.assignmentCount += 1;
+              }
+
+              const fallbackRelationId = `${
+                apiWorker?.id ?? "worker"
+              }-relation-${relationIndex}`;
+              const contractIdValue =
+                relationIdentifier ||
+                pickString(
+                  relation?.contractId,
+                  relation?.contractID,
+                  relation?.idContract,
+                  relation?.id
+                ) ||
+                fallbackRelationId;
+
+              const hourlyRate =
+                parseNumeric(
+                  relation?.amount ??
+                    relation?.hourlyRate ??
+                    relation?.rate ??
+                    relation?.price ??
+                    relation?.hours ??
+                    relation?.weeklyHours ??
+                    relation?.hoursPerWeek ??
+                    relation?.hours_week
+                ) ?? contractMeta?.hourlyRate;
+
+              const positionValue =
+                pickString(
+                  relation?.position,
+                  relation?.jobTitle,
+                  relation?.roleName,
+                  relation?.contractName
+                ) || contractMeta?.label;
+
+              const descriptionValue =
+                contractMeta?.description ??
+                pickString(
+                  relation?.contractDescription,
+                  relation?.description,
+                  relation?.notes
+                );
+
+              const statusValue =
+                contractMeta?.status ??
+                pickString(
+                  relation?.status,
+                  relation?.state,
+                  relation?.contractStatus
+                );
+
+              const startDateValue =
+                contractMeta?.startDate ??
+                pickString(
+                  relation?.startDate,
+                  relation?.contractStartDate,
+                  relation?.dateStart,
+                  relation?.beginDate
+                );
+
+              const endDateValue =
+                contractMeta?.endDate ??
+                pickString(
+                  relation?.endDate,
+                  relation?.contractEndDate,
+                  relation?.dateEnd,
+                  relation?.finishDate
+                );
+
+              const typeLabel =
+                contractMeta?.typeLabel ??
+                pickString(
+                  relation?.contractTypeName,
+                  relation?.typeName,
+                  relation?.typeDescription,
+                  typeof relationType === "number"
+                    ? relationType.toString()
+                    : null
+                );
+
+              const labelValue =
+                contractMeta?.label ??
+                pickString(
+                  relation?.contractTitle,
+                  relation?.title,
+                  relation?.alias,
+                  positionValue,
+                  descriptionValue
+                );
+
+              const contractEntry: WorkerCompanyContract = {
+                id: contractIdValue,
+                hasContract,
+                relationType: relationType ?? undefined,
+                typeLabel: typeLabel ?? undefined,
+                hourlyRate: hourlyRate ?? undefined,
+                companyId: relationCompanyId ?? undefined,
+                companyName: resolvedCompanyName,
+                label: labelValue ?? undefined,
+                position: positionValue ?? undefined,
+                description: descriptionValue ?? undefined,
+                status: statusValue ?? undefined,
+                startDate: startDateValue ?? undefined,
+                endDate: endDateValue ?? undefined,
+              };
+
+              if (!companyContractsMap[resolvedCompanyName]) {
+                companyContractsMap[resolvedCompanyName] = [];
+              }
+
+              companyContractsMap[resolvedCompanyName].push(contractEntry);
+            }
+          );
+        }
+
+        const uniqueCompanyNames = Array.from(companyNamesSet).sort((a, b) =>
           a.localeCompare(b, "es", { sensitivity: "base" })
         );
 
@@ -549,8 +942,10 @@ export const SalaryCalculatorPage: React.FC = () => {
               apiWorker?.user?.email
             ) || "Email no disponible",
           role:
-            (pickString(apiWorker.role, apiWorker.userRole) as Worker["role"]) ||
-            "tecnico",
+            (pickString(
+              apiWorker.role,
+              apiWorker.userRole
+            ) as Worker["role"]) || "tecnico",
           phone: pickString(
             apiWorker.phone,
             apiWorker.phoneNumber,
@@ -571,8 +966,16 @@ export const SalaryCalculatorPage: React.FC = () => {
           contractType: apiWorker.contractType || "full_time",
           department: pickString(apiWorker.department, apiWorker.area) || "",
           position: pickString(apiWorker.position, apiWorker.jobTitle) || "",
-          companies: uniqueCompanyNames.length ? uniqueCompanyNames.join(", ") : null,
+          companies: uniqueCompanyNames.length
+            ? uniqueCompanyNames.join(", ")
+            : null,
           companyNames: uniqueCompanyNames,
+          companyContracts:
+            Object.keys(companyContractsMap).length > 0
+              ? companyContractsMap
+              : undefined,
+          companyStats:
+            Object.keys(companyStatsMap).length > 0 ? companyStatsMap : undefined,
         };
       });
 
@@ -590,6 +993,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         JSON.stringify({
           data: transformedWorkers,
           companyLookup: companyLookupFromApi,
+          contractLookup: contractLookupFromApi,
           timestamp: new Date().toISOString(),
         })
       );
@@ -604,15 +1008,79 @@ export const SalaryCalculatorPage: React.FC = () => {
           const sortedData = (parsed.data || []).sort((a, b) =>
             a.name.localeCompare(b.name, "es", { sensitivity: "base" })
           );
-          setAllWorkers(sortedData);
-          setWorkers(sortedData);
+
+          const normalizedData = sortedData.map((worker: Worker) => {
+            if (!worker.companyContracts) {
+              return worker;
+            }
+
+            const normalizedContracts = Object.entries(worker.companyContracts).reduce(
+              (acc, [companyName, contracts]) => {
+                acc[companyName] = contracts.map((contract) => {
+                  if (
+                    typeof contract.hourlyRate === "number" ||
+                    typeof (contract as any).hoursPerWeek !== "number"
+                  ) {
+                    return contract;
+                  }
+
+                  const legacyRate = (contract as any).hoursPerWeek;
+                  return {
+                    ...contract,
+                    hourlyRate: legacyRate,
+                  };
+                });
+                return acc;
+              },
+              {} as Record<string, WorkerCompanyContract[]>
+            );
+
+            const statsFromContracts = Object.entries(normalizedContracts).reduce(
+              (acc, [companyName, contracts]) => {
+                const baseStats: WorkerCompanyStats = {
+                  companyId:
+                    contracts.find((contract) => contract.companyId)?.companyId ??
+                    worker.companyStats?.[companyName]?.companyId,
+                  contractCount: 0,
+                  assignmentCount: 0,
+                };
+
+                contracts.forEach((contract) => {
+                  if (contract.hasContract) {
+                    baseStats.contractCount += 1;
+                  } else {
+                    baseStats.assignmentCount += 1;
+                  }
+
+                  if (!baseStats.companyId && contract.companyId) {
+                    baseStats.companyId = contract.companyId;
+                  }
+                });
+
+                acc[companyName] = baseStats;
+                return acc;
+              },
+              {} as Record<string, WorkerCompanyStats>
+            );
+
+            return {
+              ...worker,
+              companyContracts: normalizedContracts,
+              companyStats:
+                Object.keys(statsFromContracts).length > 0
+                  ? statsFromContracts
+                  : worker.companyStats,
+            };
+          });
+
+          setAllWorkers(normalizedData);
+          setWorkers(normalizedData);
           if (parsed.companyLookup) {
             setCompanyLookup(parsed.companyLookup);
           }
           if (parsed.timestamp) {
             setLastFetchTime(new Date(parsed.timestamp));
           }
-          console.log("Loaded workers from cache");
         } catch (cacheError) {
           console.error("Error loading cached workers:", cacheError);
         }
@@ -694,6 +1162,41 @@ export const SalaryCalculatorPage: React.FC = () => {
       style: "currency",
       currency: "EUR",
     }).format(amount);
+  };
+
+  const expandedCompanyContracts =
+    expandedCompany && selectedWorker?.companyContracts
+      ? selectedWorker.companyContracts[expandedCompany] ?? []
+      : [];
+
+  const expandedContractsWithContract = expandedCompanyContracts.filter(
+    (contract) => contract.hasContract
+  );
+  const expandedAssignmentsWithoutContract = expandedCompanyContracts.filter(
+    (contract) => !contract.hasContract
+  );
+
+  const expandedCompanyStats = expandedCompany
+    ? selectedWorker?.companyStats?.[expandedCompany]
+    : undefined;
+  const expandedAssignmentCount =
+    expandedCompanyStats?.assignmentCount ??
+    expandedAssignmentsWithoutContract.length;
+  const expandedContractCount =
+    expandedCompanyStats?.contractCount ??
+    expandedContractsWithContract.length;
+
+  const formatMaybeDate = (value?: string | null) => {
+    if (!value) {
+      return null;
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    return formatDate(value);
   };
 
   const canLinkEmail =
@@ -826,7 +1329,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                         leftIcon={<Mail size={14} />}
                         onClick={openEmailClient}
                       >
-                        Abrir email
+                        Enviar email
                       </Button>
                     )}
                   </div>
@@ -882,20 +1385,189 @@ export const SalaryCalculatorPage: React.FC = () => {
 
                 {selectedWorker.companyNames &&
                   selectedWorker.companyNames.length > 0 && (
-                    <div className="mt-2">
-                      <span className="text-xs font-semibold text-blue-800 dark:text-blue-200">
-                        Empresas asignadas
+                    <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
+                      <span className="mr-1 text-blue-900 dark:text-blue-100">
+                        Empresas asignadas:
                       </span>
                       <div className="mt-1 flex flex-wrap gap-2">
-                        {selectedWorker.companyNames.map((companyName) => (
-                          <span
-                            key={companyName}
-                            className="text-xs rounded-full bg-blue-100 text-blue-800 px-2 py-1 dark:bg-blue-900/40 dark:text-blue-200"
-                          >
-                            {companyName}
-                          </span>
-                        ))}
+                        {selectedWorker.companyNames.map((companyName) => {
+                          const isActive = expandedCompany === companyName;
+                          const companyStats =
+                            selectedWorker.companyStats?.[companyName];
+                          const contractCount =
+                            companyStats?.contractCount ?? 0;
+                          const assignmentCount =
+                            companyStats?.assignmentCount ?? 0;
+                          const hasContracts = contractCount > 0;
+                          const isAssignmentOnly =
+                            !hasContracts && assignmentCount > 0;
+
+                          const inactiveClass = isAssignmentOnly
+                            ? "border-amber-200 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:border-amber-500/60 dark:bg-amber-900/30 dark:text-amber-200"
+                            : "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-200 dark:hover:bg-blue-900/60";
+                          const activeClass = isAssignmentOnly
+                            ? "border-amber-500 bg-amber-500 text-white shadow-sm dark:border-amber-400 dark:bg-amber-500/80"
+                            : "border-blue-600 bg-blue-600 text-white shadow-sm dark:border-blue-500 dark:bg-blue-500";
+
+                          return (
+                            <button
+                              key={companyName}
+                              type="button"
+                              onClick={() =>
+                                setExpandedCompany((current) =>
+                                  current === companyName ? null : companyName
+                                )
+                              }
+                              aria-pressed={isActive}
+                              aria-expanded={isActive}
+                              className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 ${
+                                isActive ? activeClass : inactiveClass
+                              }`}
+                            >
+                              <span>{companyName}</span>
+                              {hasContracts && (
+                                <span
+                                  title={
+                                    contractCount === 1
+                                      ? "1 contrato"
+                                      : `${contractCount} contratos`
+                                  }
+                                  className={`ml-1 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                    isActive
+                                      ? "bg-white/20 text-white"
+                                      : "bg-blue-200 text-blue-800 dark:bg-blue-900/70 dark:text-blue-100"
+                                  }`}
+                                >
+                                  {contractCount}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
+
+                      {expandedCompany && (
+                        <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 p-3 text-sm text-blue-900 shadow-sm dark:border-blue-700/80 dark:bg-blue-900/20 dark:text-blue-100">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="font-semibold">
+                              Contratos en {expandedCompany}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedCompany(null)}
+                              className="text-xs text-blue-500 underline transition hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
+                            >
+                              Cerrar
+                            </button>
+                          </div>
+                          {expandedCompanyContracts.length === 0 ? (
+                            <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                              No hay información de contratos para esta empresa.
+                            </div>
+                          ) : (
+                            <>
+                              {expandedContractsWithContract.length > 0 && (
+                                <div className="space-y-3">
+                                  {expandedContractsWithContract.map(
+                                    (contract, index) => {
+                                      const startDateText = formatMaybeDate(
+                                        contract.startDate
+                                      );
+                                      const endDateText = formatMaybeDate(
+                                        contract.endDate
+                                      );
+                                      const contractLabel = `Contrato ${
+                                        index + 1
+                                      }`;
+                                      const contractTypeText =
+                                        contract.position || contract.label;
+
+                                      return (
+                                        <div
+                                          key={`${expandedCompany}-${contract.id}`}
+                                          className="rounded-md border border-blue-100 bg-white/80 p-3 text-xs shadow-sm dark:border-blue-700/60 dark:bg-blue-900/40"
+                                        >
+                                          <div className="flex items-center justify-between">
+                                            <span className="font-semibold">
+                                              {contractLabel}
+                                            </span>
+                                            {contract.status && (
+                                              <span className="ml-2 rounded-full bg-blue-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:bg-blue-800/70 dark:text-blue-200">
+                                                {contract.status}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="mt-2 space-y-1 text-blue-800 dark:text-blue-100">
+                                            <div>
+                                              <span className="font-medium">
+                                                Precio por hora:
+                                              </span>{" "}
+                                              {typeof contract.hourlyRate ===
+                                              "number"
+                                                ? formatCurrency(contract.hourlyRate)
+                                                : "No especificado"}
+                                            </div>
+                                            {contractTypeText && (
+                                              <div>
+                                                <span className="font-medium">
+                                                  Contrato:
+                                                </span>{" "}
+                                                {contractTypeText}
+                                              </div>
+                                            )}
+                                            {startDateText && (
+                                              <div>
+                                                <span className="font-medium">
+                                                  Inicio:
+                                                </span>{" "}
+                                                {startDateText}
+                                              </div>
+                                            )}
+                                            {endDateText && (
+                                              <div>
+                                                <span className="font-medium">
+                                                  Fin:
+                                                </span>{" "}
+                                                {endDateText}
+                                              </div>
+                                            )}
+                                            {contract.description && (
+                                              <div>
+                                                <span className="font-medium">
+                                                  Descripción:
+                                                </span>{" "}
+                                                {contract.description}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                  )}
+                                </div>
+                              )}
+
+                              {expandedContractCount === 0 &&
+                                expandedAssignmentCount > 0 && (
+                                  <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                    Esta empresa está asignada pero no tiene
+                                    contrato asociado.
+                                  </div>
+                                )}
+
+                              {expandedContractCount > 0 &&
+                                expandedAssignmentCount > 0 && (
+                                  <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                    Además, hay {expandedAssignmentCount}{" "}
+                                    {expandedAssignmentCount === 1
+                                      ? "asignación"
+                                      : "asignaciones"} sin contrato asociado.
+                                  </div>
+                                )}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
