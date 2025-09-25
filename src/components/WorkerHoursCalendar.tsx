@@ -255,58 +255,52 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-7 text-base border border-gray-100 dark:border-gray-700 rounded-lg overflow-hidden">
-              {days.map((day, index) => (
-                <div
-                  key={`${day.date.toISOString()}-${index}`}
-                  role={day.isCurrentMonth ? "button" : undefined}
-                  tabIndex={day.isCurrentMonth ? 0 : -1}
-                  onClick={() => handleDaySelect(day)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      handleDaySelect(day);
-                    }
-                  }}
-                  className={`min-h-[92px] p-3 border-b border-r border-gray-100 dark:border-gray-700 flex flex-col gap-2 transition ${
-                    day.isCurrentMonth
-                      ? "bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer"
-                      : "bg-gray-50 dark:bg-gray-900/40"
-                  } ${
-                    day.isToday && day.isCurrentMonth ? "ring-1 ring-blue-500" : ""
-                  } ${
-                    day.isWeekend && day.isCurrentMonth
-                      ? "bg-gray-50 dark:bg-gray-900/70"
-                      : ""
-                  } ${
-                    day.hasNotes && day.isCurrentMonth
-                      ? "bg-[#FEF3C7] dark:bg-amber-900/40"
-                      : ""
-                  } ${
-                    selectedDayKey === day.dayKey && day.isCurrentMonth
-                      ? "ring-2 ring-blue-500"
-                      : ""
-                  }`}
-                >
-                  <span
-                    className={`text-lg font-semibold leading-none ${
+            <div className="grid grid-cols-7 text-base gap-2">
+              {days.map((day, index) => {
+                const isSelectableDay = day.isCurrentMonth;
+                const dayNumberClasses = day.isCurrentMonth
+                  ? "text-gray-900 dark:text-gray-100"
+                  : "text-gray-400 dark:text-gray-600";
+                const hoursClasses = day.isCurrentMonth
+                  ? "text-blue-600 dark:text-blue-400"
+                  : "text-blue-400 dark:text-blue-500/70";
+
+                return (
+                  <div
+                    key={`${day.date.toISOString()}-${index}`}
+                    role={isSelectableDay ? "button" : undefined}
+                    tabIndex={isSelectableDay ? 0 : -1}
+                    onClick={() => handleDaySelect(day)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleDaySelect(day);
+                      }
+                    }}
+                    className={`relative min-h-[92px] px-3 pb-3 pt-5 flex flex-col items-center gap-2 rounded-xl border transition text-center ${
                       day.isCurrentMonth
-                        ? "text-gray-900 dark:text-gray-100"
-                        : "text-gray-400 dark:text-gray-600"
+                        ? "border-gray-200 bg-white text-gray-900 hover:border-blue-300 hover:bg-blue-50/60 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-blue-500 dark:hover:bg-blue-900/40 cursor-pointer"
+                        : "border-gray-100 bg-gray-50 text-gray-400 cursor-default dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-500"
+                    } ${
+                      day.isToday && day.isCurrentMonth ? "ring-1 ring-blue-400" : ""
+                    } ${
+                      selectedDayKey === day.dayKey && day.isCurrentMonth
+                        ? "ring-2 ring-blue-500"
+                        : ""
                     }`}
                   >
-                    {day.date.getDate()}
-                  </span>
-                  <span className="text-base font-medium text-gray-600 dark:text-gray-300">
-                    {day.hours !== null ? `${day.hours.toFixed(1)} h` : "-"}
-                  </span>
-                  {day.hasNotes && day.isCurrentMonth && (
-                    <span className="text-[12px] font-medium text-amber-600 dark:text-amber-300">
-                      Nota
+                    <span className={`text-3xl font-semibold leading-tight ${dayNumberClasses}`}>
+                      {day.date.getDate()}
                     </span>
-                  )}
-                </div>
-              ))}
+                    <span className={`mt-2 text-base font-semibold ${hoursClasses}`}>
+                      {day.hours !== null ? `${day.hours.toFixed(1)}h` : "-"}
+                    </span>
+                    {day.hasNotes && day.isCurrentMonth && (
+                      <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-amber-400 dark:bg-amber-500" />
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             <div className="rounded-md bg-blue-50 dark:bg-blue-900/20 p-3 text-xs text-blue-800 dark:text-blue-200">
@@ -382,7 +376,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
               )}
 
               {selectedNotes.length > 0 && (
-                <div className="mt-4 rounded-md bg-[#FEF3C7] dark:bg-amber-900/40 p-3 text-sm text-amber-800 dark:text-amber-200">
+                <div className="mt-4 rounded-md bg-amber-100 dark:bg-amber-900/50 p-3 text-sm text-amber-900 dark:text-amber-100">
                   <h4 className="font-semibold">Notas del día</h4>
                   <ul className="mt-2 space-y-1 text-sm">
                     {selectedNotes.map((note, index) => (

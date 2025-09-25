@@ -1792,8 +1792,8 @@ export const SalaryCalculatorPage: React.FC = () => {
           {/* Worker Selection and Input Form */}
           <Card className="h-full">
             <CardHeader>
-              <div className="flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-3">
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
                     <User
                       size={20}
@@ -1817,7 +1817,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                   </Button>
                 </div>
                 {lastFetchTime && (
-                  <div className="inline-flex items-center gap-2 max-w-full text-sm text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 px-3 py-1.5 rounded-lg">
+                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
                     Actualizado: {lastFetchTime.toLocaleString("es-ES")}
                   </div>
                 )}
