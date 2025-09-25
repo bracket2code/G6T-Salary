@@ -35,7 +35,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   
   refreshSession: async () => {
     // Session refresh logic can be implemented here if needed
-    console.log('Session refresh not implemented');
   },
   
   login: async (email: string, password: string) => {

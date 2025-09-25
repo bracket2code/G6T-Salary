@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Calculator,
   Search,
@@ -26,6 +26,7 @@ import {
 } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
+import { WorkerHoursCalendar } from "../components/WorkerHoursCalendar";
 
 const sanitizeTelHref = (phone: string) => {
   const sanitized = phone.replace(/[^+\d]/g, "");
@@ -97,7 +98,9 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [inputValue, setInputValue] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const selectedWorker = workers.find((w) => w.id === selectedWorkerId);
 
@@ -114,7 +117,11 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
             .toLowerCase()
             .includes(searchQuery.toLowerCase())) ||
         (worker.position &&
-          worker.position.toLowerCase().includes(searchQuery.toLowerCase()))
+          worker.position.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (worker.companyNames &&
+          worker.companyNames.some((company) =>
+            company.toLowerCase().includes(searchQuery.toLowerCase())
+          ))
     )
     .sort((a, b) =>
       a.name.localeCompare(b.name, "es", { sensitivity: "base" })
@@ -135,6 +142,7 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
           setInputValue("");
         }
         setSearchQuery("");
+        setHighlightedIndex(-1);
       }
     };
 
@@ -150,11 +158,16 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
       setInputValue("");
     }
   }, [selectedWorker]);
+
+  useEffect(() => {
+    itemRefs.current = itemRefs.current.slice(0, filteredWorkers.length);
+  }, [filteredWorkers.length]);
   const handleWorkerSelect = (worker: Worker) => {
     onWorkerSelect(worker.id);
     setInputValue(worker.name);
     setIsOpen(false);
     setSearchQuery("");
+    setHighlightedIndex(-1);
   };
 
   const handleClear = (e: React.MouseEvent) => {
@@ -163,6 +176,7 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
     setInputValue("");
     setSearchQuery("");
     setIsOpen(false);
+    setHighlightedIndex(-1);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,6 +184,7 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
     setInputValue(value);
     setSearchQuery(value);
     setIsOpen(true);
+    setHighlightedIndex(-1);
 
     // Si se borra todo el contenido, deseleccionar trabajador
     if (value === "") {
@@ -184,11 +199,86 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
       setInputValue("");
       setSearchQuery("");
     }
+    if (filteredWorkers.length > 0) {
+      setHighlightedIndex(0);
+    }
   };
 
   const handleInputClick = () => {
     setIsOpen(true);
+    if (filteredWorkers.length > 0 && highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    }
   };
+
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setIsOpen(false);
+      setHighlightedIndex(-1);
+      if (selectedWorker) {
+        setInputValue(selectedWorker.name);
+      }
+      return;
+    }
+
+    if (!isOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      setIsOpen(true);
+    }
+
+    if (!filteredWorkers.length) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHighlightedIndex((prev) => {
+        const nextIndex = prev + 1;
+        if (nextIndex >= filteredWorkers.length || prev === -1) {
+          return 0;
+        }
+        return nextIndex;
+      });
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightedIndex((prev) => {
+        if (prev <= 0) {
+          return filteredWorkers.length - 1;
+        }
+        return prev - 1;
+      });
+    } else if (event.key === "Enter") {
+      if (highlightedIndex >= 0 && highlightedIndex < filteredWorkers.length) {
+        event.preventDefault();
+        handleWorkerSelect(filteredWorkers[highlightedIndex]);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (filteredWorkers.length === 0) {
+      setHighlightedIndex(-1);
+      return;
+    }
+
+    if (highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    } else if (highlightedIndex >= filteredWorkers.length) {
+      setHighlightedIndex(filteredWorkers.length - 1);
+    }
+  }, [filteredWorkers, isOpen, highlightedIndex]);
+
+  useEffect(() => {
+    if (highlightedIndex >= 0) {
+      itemRefs.current[highlightedIndex]?.scrollIntoView({
+        block: "nearest",
+      });
+    }
+  }, [highlightedIndex]);
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -213,6 +303,7 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
             onChange={handleInputChange}
             onFocus={handleInputFocus}
             onClick={handleInputClick}
+            onKeyDown={handleInputKeyDown}
             placeholder={placeholder}
             className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none"
           />
@@ -258,49 +349,58 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
                 </div>
 
                 {/* Worker list */}
-                {filteredWorkers.map((worker) => (
-                  <div
-                    key={worker.id}
-                    className={`
-                      px-3 py-3 cursor-pointer flex items-center justify-between border-b border-gray-100 dark:border-gray-700 last:border-b-0
-                      hover:bg-gray-100 dark:hover:bg-gray-700
-                      ${
-                        selectedWorkerId === worker.id
-                          ? "bg-blue-50 dark:bg-blue-900/20"
-                          : ""
-                      }
-                    `}
-                    onClick={() => handleWorkerSelect(worker)}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p
-                        className={`text-sm font-medium truncate ${
-                          selectedWorkerId === worker.id
-                            ? "text-blue-700 dark:text-blue-300"
-                            : "text-gray-900 dark:text-white"
-                        }`}
-                      >
-                        {worker.name}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                        {worker.email}
-                      </p>
-                      {(worker.department || worker.position) && (
-                        <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
-                          {[worker.department, worker.position]
-                            .filter(Boolean)
-                            .join(" • ")}
+                {filteredWorkers.map((worker, index) => {
+                  const isHighlighted = highlightedIndex === index;
+                  const isSelected = selectedWorkerId === worker.id;
+                  const baseClasses = `px-3 py-3 cursor-pointer flex items-center justify-between border-b border-gray-100 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700`;
+                  const highlightClass = isSelected
+                    ? "bg-blue-50 dark:bg-blue-900/20"
+                    : isHighlighted
+                    ? "bg-gray-100 dark:bg-gray-700"
+                    : "";
+
+                  return (
+                    <div
+                      key={`${worker.id}-${index}`}
+                      ref={(el) => {
+                        itemRefs.current[index] = el;
+                      }}
+                      className={`${baseClasses} ${highlightClass}`}
+                      onClick={() => handleWorkerSelect(worker)}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className={`text-sm font-medium truncate ${
+                            isSelected
+                              ? "text-blue-700 dark:text-blue-300"
+                              : "text-gray-900 dark:text-white"
+                          }`}
+                        >
+                          {worker.name}
                         </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                          {worker.companyNames && worker.companyNames.length > 0
+                            ? worker.companyNames.join(", ")
+                            : "Sin empresas asignadas"}
+                        </p>
+                        {(worker.department || worker.position) && (
+                          <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                            {[worker.department, worker.position]
+                              .filter(Boolean)
+                              .join(" • ")}
+                          </p>
+                        )}
+                      </div>
+                      {selectedWorkerId === worker.id && (
+                        <Check
+                          size={16}
+                          className="text-blue-600 dark:text-blue-400 ml-2"
+                        />
                       )}
                     </div>
-                    {selectedWorkerId === worker.id && (
-                      <Check
-                        size={16}
-                        className="text-blue-600 dark:text-blue-400 ml-2"
-                      />
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </>
             )}
           </div>
@@ -327,6 +427,13 @@ export const SalaryCalculatorPage: React.FC = () => {
     {}
   );
   const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [calendarHours, setCalendarHours] = useState<Record<string, number>>({});
+  const [isCalendarLoading, setIsCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
 
   // Calculation form data
   const [calculationData, setCalculationData] = useState({
@@ -363,6 +470,10 @@ export const SalaryCalculatorPage: React.FC = () => {
       const worker = workers.find((w) => w.id === selectedWorkerId);
       setSelectedWorker(worker || null);
       setExpandedCompany(null);
+      if (worker) {
+        const now = new Date();
+        setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+      }
 
       // Pre-fill with worker's base salary if available
       if (worker?.baseSalary) {
@@ -383,6 +494,133 @@ export const SalaryCalculatorPage: React.FC = () => {
         clearTimeout(copyFeedbackTimeoutRef.current);
       }
     };
+  }, []);
+
+  const formatDateKey = useCallback((date: Date) => {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }, []);
+
+  const fetchWorkerHoursForMonth = useCallback(
+    async (workerId: string, month: Date) => {
+      if (!externalJwt) {
+        return;
+      }
+
+      const apiUrl = import.meta.env.VITE_API_BASE_URL;
+      if (!apiUrl) {
+        console.error("API URL not configured");
+        return;
+      }
+
+      const fromDate = new Date(Date.UTC(month.getFullYear(), month.getMonth(), 1, 0, 0, 0, 0));
+      const toDate = new Date(Date.UTC(month.getFullYear(), month.getMonth() + 1, 0, 3, 59, 59, 999));
+
+      const body = {
+        from: fromDate.toISOString(),
+        to: toDate.toISOString(),
+        types: [1],
+        parametersId: [workerId],
+        companiesId: [],
+      };
+
+      setIsCalendarLoading(true);
+      setCalendarError(null);
+
+      try {
+        const response = await fetch(`${apiUrl}/ControlSchedule/List`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${externalJwt}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Error fetching schedule control: ${response.status} - ${response.statusText}`
+          );
+        }
+
+        const rawData = await response.json();
+        const entries = Array.isArray(rawData)
+          ? rawData
+          : Array.isArray(rawData?.entries)
+          ? rawData.entries
+          : [];
+
+        const dailyTotals: Record<string, number> = {};
+
+        entries.forEach((entry: any) => {
+          if (!entry) {
+            return;
+          }
+
+          const date = entry?.dateTime ? new Date(entry.dateTime) : null;
+          if (!date || Number.isNaN(date.getTime())) {
+            return;
+          }
+
+          // Adjust timezone offset (records are stored 2 hours behind GMT+2)
+          date.setHours(date.getHours() + 2);
+          const key = formatDateKey(date);
+
+          let hours = 0;
+          const valueNum = entry?.value !== undefined ? parseFloat(entry.value) : NaN;
+          if (!Number.isNaN(valueNum) && Number.isFinite(valueNum)) {
+            hours = valueNum;
+          }
+
+          if (hours === 0 && Array.isArray(entry?.workShifts)) {
+            const shiftsTotal = entry.workShifts.reduce((acc: number, shift: any) => {
+              if (!shift?.workStart || !shift?.workEnd) {
+                return acc;
+              }
+              const start = new Date(`2000-01-01T${shift.workStart}`);
+              const end = new Date(`2000-01-01T${shift.workEnd}`);
+              if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+                return acc;
+              }
+              let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+              if (diff < 0) {
+                diff = 0;
+              }
+              return acc + diff;
+            }, 0);
+            if (shiftsTotal > 0) {
+              hours = shiftsTotal;
+            }
+          }
+
+          if (!Number.isNaN(hours) && Number.isFinite(hours)) {
+            dailyTotals[key] = (dailyTotals[key] ?? 0) + hours;
+          }
+        });
+
+        setCalendarHours(dailyTotals);
+      } catch (error) {
+        console.error("Error fetching worker hours:", error);
+        setCalendarError("No se pudieron cargar las horas del trabajador.");
+        setCalendarHours({});
+      } finally {
+        setIsCalendarLoading(false);
+      }
+    },
+    [externalJwt, formatDateKey]
+  );
+
+  useEffect(() => {
+    if (!selectedWorker) {
+      setCalendarHours({});
+      return;
+    }
+
+    void fetchWorkerHoursForMonth(selectedWorker.id, calendarMonth);
+  }, [selectedWorker?.id, calendarMonth, fetchWorkerHoursForMonth, selectedWorker]);
+
+  const handleCalendarMonthChange = useCallback((next: Date) => {
+    setCalendarMonth(new Date(next.getFullYear(), next.getMonth(), 1));
   }, []);
 
   const showCopyFeedback = (type: "email" | "phone", message: string) => {
@@ -1239,7 +1477,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         actionIcon={<Calculator size={18} />}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="space-y-6">
         {/* Worker Selection and Input Form */}
         <Card>
           <CardHeader>
@@ -1701,6 +1939,14 @@ export const SalaryCalculatorPage: React.FC = () => {
             </div>
           </CardContent>
         </Card>
+
+        <WorkerHoursCalendar
+          worker={selectedWorker}
+          selectedMonth={calendarMonth}
+          hoursByDate={calendarHours}
+          onMonthChange={handleCalendarMonthChange}
+          isLoading={isCalendarLoading}
+        />
 
         {/* Results */}
         <Card>

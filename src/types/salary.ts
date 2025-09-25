@@ -1,3 +1,26 @@
+export interface WorkerCompanyContract {
+  id: string;
+  hasContract: boolean;
+  relationType?: number;
+  typeLabel?: string;
+  hourlyRate?: number;
+  companyId?: string;
+  companyName?: string;
+  label?: string;
+  position?: string;
+  description?: string;
+  startDate?: string;
+  endDate?: string;
+  status?: string;
+  details?: Record<string, string>;
+}
+
+export interface WorkerCompanyStats {
+  companyId?: string;
+  contractCount: number;
+  assignmentCount: number;
+}
+
 export interface Worker {
   id: string;
   name: string;
@@ -16,6 +39,8 @@ export interface Worker {
   startDate?: string;
   companies?: string | null;
   companyNames?: string[];
+  companyContracts?: Record<string, WorkerCompanyContract[]>;
+  companyStats?: Record<string, WorkerCompanyStats>;
 }
 
 export interface SalaryCalculation {
