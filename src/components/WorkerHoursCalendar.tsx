@@ -1,7 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader } from "./ui/Card";
 import { Button } from "./ui/Button";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Calendar as CalendarIcon,
+} from "lucide-react";
 import type { Worker } from "../types/salary";
 
 export interface DayHoursSummary {
@@ -52,7 +56,10 @@ const formatMonthTitle = (date: Date) =>
   });
 
 const formatDateKey = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(date.getDate()).padStart(2, "0")}`;
 
 export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   worker,
@@ -90,7 +97,11 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
 
     // Días del mes actual
     for (let day = 1; day <= endOfMonth.getDate(); day++) {
-      const date = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day);
+      const date = new Date(
+        selectedMonth.getFullYear(),
+        selectedMonth.getMonth(),
+        day
+      );
       const dayKey = formatDateKey(date);
       const dayStats = hoursByDate[dayKey];
       const totalDayHours = dayStats ? dayStats.totalHours : 0;
@@ -160,11 +171,15 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   }, [selectedMonth]);
 
   const goToPreviousMonth = () => {
-    onMonthChange(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1));
+    onMonthChange(
+      new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1)
+    );
   };
 
   const goToNextMonth = () => {
-    onMonthChange(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 1));
+    onMonthChange(
+      new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 1)
+    );
   };
 
   const handleDaySelect = (day: CalendarDay) => {
@@ -179,11 +194,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
       return null;
     }
     const [year, month, day] = key.split("-").map((part) => Number(part));
-    if (
-      Number.isNaN(year) ||
-      Number.isNaN(month) ||
-      Number.isNaN(day)
-    ) {
+    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
       return null;
     }
     return new Date(year, month - 1, day);
@@ -200,15 +211,17 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   return (
     <Card>
       <CardHeader>
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
           <div className="flex w-full flex-col gap-1">
             <div className="flex items-center gap-2">
-              <CalendarIcon className="text-blue-600 dark:text-blue-400" size={20} />
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Calendario de Horas</h2>
+              <CalendarIcon
+                className="text-blue-600 dark:text-blue-400"
+                size={20}
+              />
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Calendario de Horas
+              </h2>
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Visualiza las horas registradas del trabajador seleccionado
-            </p>
           </div>
           <div className="flex w-full items-center justify-center gap-2">
             <Button
@@ -221,7 +234,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
             >
               <ChevronLeft size={16} />
             </Button>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 min-w-[120px] text-center">
+            <span className="text-lg font-semibold text-gray-700 dark:text-gray-300 min-w-[140px] text-center">
               {formatMonthTitle(selectedMonth)}
             </span>
             <Button
@@ -250,7 +263,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
           <div className="space-y-4">
             <div className="grid grid-cols-7 text-center text-base font-semibold text-gray-500 uppercase">
               {weekDayLabels.map((label) => (
-                <div key={label} className="py-2">
+                <div key={label} className="py-0.5">
                   {label}
                 </div>
               ))}
@@ -277,22 +290,28 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                         handleDaySelect(day);
                       }
                     }}
-                    className={`relative min-h-[92px] px-3 pb-3 pt-5 flex flex-col items-center gap-2 rounded-xl border transition text-center ${
+                    className={`relative min-h-[64px] px-2.5 pb-1 pt-2.5 flex flex-col items-center gap-1 rounded-xl border transition text-center ${
                       day.isCurrentMonth
                         ? "border-gray-200 bg-white text-gray-900 hover:border-blue-300 hover:bg-blue-50/60 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-blue-500 dark:hover:bg-blue-900/40 cursor-pointer"
                         : "border-gray-100 bg-gray-50 text-gray-400 cursor-default dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-500"
                     } ${
-                      day.isToday && day.isCurrentMonth ? "ring-1 ring-blue-400" : ""
+                      day.isToday && day.isCurrentMonth
+                        ? "ring-1 ring-blue-400"
+                        : ""
                     } ${
                       selectedDayKey === day.dayKey && day.isCurrentMonth
                         ? "ring-2 ring-blue-500"
                         : ""
                     }`}
                   >
-                    <span className={`text-3xl font-semibold leading-tight ${dayNumberClasses}`}>
+                    <span
+                      className={`text-3xl font-semibold leading-tight ${dayNumberClasses}`}
+                    >
                       {day.date.getDate()}
                     </span>
-                    <span className={`mt-2 text-base font-semibold ${hoursClasses}`}>
+                    <span
+                      className={`mt-0.5 text-base font-semibold ${hoursClasses}`}
+                    >
                       {day.hours !== null ? `${day.hours.toFixed(1)}h` : "-"}
                     </span>
                     {day.hasNotes && day.isCurrentMonth && (
@@ -328,7 +347,8 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                   </p>
                 </div>
                 <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
-                  Total día: {selectedDayDetails?.totalHours?.toFixed(1) ?? "0.0"} h
+                  Total día:{" "}
+                  {selectedDayDetails?.totalHours?.toFixed(1) ?? "0.0"} h
                 </span>
               </div>
 
@@ -342,7 +362,9 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                         </th>
                         {companyColumns.map((company) => (
                           <th
-                            key={`${company.companyId ?? company.name ?? "sin"}-header`}
+                            key={`${
+                              company.companyId ?? company.name ?? "sin"
+                            }-header`}
                             className="border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-left font-semibold text-gray-700 dark:text-gray-200"
                           >
                             {company.name?.trim() || "Sin empresa"}
@@ -357,7 +379,9 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                         </th>
                         {companyColumns.map((company) => (
                           <td
-                            key={`${company.companyId ?? company.name ?? "sin"}-value`}
+                            key={`${
+                              company.companyId ?? company.name ?? "sin"
+                            }-value`}
                             className="border border-gray-200 dark:border-gray-700 px-3 py-2 text-left"
                           >
                             {company.hours.toFixed(2)} h
