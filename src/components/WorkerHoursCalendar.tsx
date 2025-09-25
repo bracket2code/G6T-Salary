@@ -200,17 +200,17 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CalendarIcon className="text-blue-600 dark:text-blue-400" size={20} />
-            <div>
+        <div className="flex flex-col gap-4">
+          <div className="flex w-full flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <CalendarIcon className="text-blue-600 dark:text-blue-400" size={20} />
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Calendario de Horas</h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Visualiza las horas registradas del trabajador seleccionado
-              </p>
             </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Visualiza las horas registradas del trabajador seleccionado
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full items-center justify-center gap-2">
             <Button
               type="button"
               variant="ghost"
