@@ -48,8 +48,8 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   const options = {
     body: event.data ? event.data.text() : 'Nueva notificación de G6T-Salary',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    icon: '/favicon.svg',
+    badge: '/favicon.svg',
     vibrate: [100, 50, 100],
     data: {
       dateOfArrival: Date.now(),
@@ -59,12 +59,12 @@ self.addEventListener('push', (event) => {
       {
         action: 'explore',
         title: 'Ver detalles',
-        icon: '/icon-192.png'
+        icon: '/favicon.svg'
       },
       {
         action: 'close',
         title: 'Cerrar',
-        icon: '/icon-192.png'
+        icon: '/favicon.svg'
       }
     ]
   };
