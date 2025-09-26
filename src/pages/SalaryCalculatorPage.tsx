@@ -100,6 +100,7 @@ interface WorkerSearchSelectProps {
 interface CompanyContractInputState {
   hours: string;
   baseSalary: string;
+  hourlyRate?: string;
 }
 
 interface CalculationFormState {
@@ -474,7 +475,7 @@ export const SalaryCalculatorPage: React.FC = () => {
   >({});
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
-  const [isContractInputsOpen, setIsContractInputsOpen] = useState(true);
+  const [isContractInputsOpen, setIsContractInputsOpen] = useState(false);
   const [autoFillHoursMap, setAutoFillHoursMap] = useState<
     Record<string, boolean>
   >({});
@@ -504,9 +505,7 @@ export const SalaryCalculatorPage: React.FC = () => {
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
-  const autoFilledContractKeysRef = useRef<Map<string, Set<string>>>(
-    new Map()
-  );
+  const autoFilledContractKeysRef = useRef<Map<string, Set<string>>>(new Map());
   const manualHoursOverrideRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -898,10 +897,17 @@ export const SalaryCalculatorPage: React.FC = () => {
   }, []);
 
   const handleContractInputChange = useCallback(
-    (contractKey: string, field: keyof CompanyContractInputState, value: string) => {
+    (
+      contractKey: string,
+      field: keyof CompanyContractInputState,
+      value: string
+    ) => {
       setCalculationData((prev) => {
         const nextInputs = { ...prev.companyContractInputs };
-        const existing = nextInputs[contractKey] ?? { hours: "", baseSalary: "" };
+        const existing = nextInputs[contractKey] ?? {
+          hours: "",
+          baseSalary: "",
+        };
 
         nextInputs[contractKey] = {
           ...existing,
@@ -1067,57 +1073,49 @@ export const SalaryCalculatorPage: React.FC = () => {
       let workerSecondaryEmailLookup: Record<string, string> = {};
 
       try {
-        let usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
-          method: "POST",
-          headers: commonHeaders,
-          body: JSON.stringify({}),
-        });
-
-        if (!usersResponse.ok) {
-          usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+        const enableUsersLookup =
+          (import.meta as any).env?.VITE_ENABLE_USERS_LOOKUP === "true";
+        if (enableUsersLookup) {
+          const url = `${apiUrl}/User/GetAll`;
+          const resp = await fetch(url, {
             method: "GET",
             headers: commonHeaders,
           });
-        }
+          if (resp.ok) {
+            const usersData = await resp.json();
+            const usersArray = Array.isArray(usersData)
+              ? usersData
+              : Array.isArray(usersData?.data)
+              ? usersData.data
+              : Array.isArray(usersData?.items)
+              ? usersData.items
+              : [];
 
-        if (usersResponse.ok) {
-          const usersData = await usersResponse.json();
-          const usersArray = Array.isArray(usersData)
-            ? usersData
-            : Array.isArray(usersData?.data)
-            ? usersData.data
-            : Array.isArray(usersData?.items)
-            ? usersData.items
-            : [];
-
-          usersArray.forEach((user: any) => {
-            const workerRelationId = pickString(
-              user?.workerIdRelation,
-              user?.workerRelationId,
-              user?.workerId,
-              user?.worker_id
+            usersArray.forEach((user: any) => {
+              const workerRelationId = pickString(
+                user?.workerIdRelation,
+                user?.workerRelationId,
+                user?.workerId,
+                user?.worker_id
+              );
+              const emailCandidate = pickString(
+                user?.email,
+                user?.userEmail,
+                user?.contactEmail,
+                user?.secondaryEmail
+              );
+              if (workerRelationId && emailCandidate) {
+                workerSecondaryEmailLookup[workerRelationId] = emailCandidate;
+              }
+            });
+          } else {
+            console.warn(
+              "No se pudieron cargar usuarios (omitiendo correo secundario)"
             );
-
-            const emailCandidate = pickString(
-              user?.email,
-              user?.userEmail,
-              user?.contactEmail,
-              user?.secondaryEmail
-            );
-
-            if (!workerRelationId || !emailCandidate) {
-              return;
-            }
-
-            workerSecondaryEmailLookup[workerRelationId] = emailCandidate;
-          });
-        } else {
-          throw new Error(
-            `Error fetching users: ${usersResponse.status} - ${usersResponse.statusText}`
-          );
+          }
         }
       } catch (usersError) {
-        console.error("Error fetching users from API:", usersError);
+        console.warn("Error no crítico al cargar usuarios:", usersError);
       }
 
       try {
@@ -1883,6 +1881,7 @@ export const SalaryCalculatorPage: React.FC = () => {
             companyName: string;
             contractLabel: string;
             hasContract: boolean;
+            hourlyRate?: number;
           }
         >(),
       };
@@ -1907,6 +1906,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         companyName: string;
         contractLabel: string;
         hasContract: boolean;
+        hourlyRate?: number;
       }
     >();
 
@@ -1934,21 +1934,24 @@ export const SalaryCalculatorPage: React.FC = () => {
       }
     });
 
-    if (knownCompanyNames.size === 0) {
-      knownCompanyNames.add("General");
-    }
+    // No fallback company; only include real companies with contratos (type:1)
 
     Array.from(knownCompanyNames)
       .sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }))
       .forEach((companyName, index) => {
         const trimmedName = companyName?.trim() ?? "";
-        const contractsForCompany = companyContracts[companyName] ?? [];
+        // Consider only entries with hasContract=true (type:1)
+        const contractsForCompany = (
+          companyContracts[companyName] ?? []
+        ).filter((c) => c.hasContract === true);
         const statsForCompany = companyStats[companyName];
 
         const preferredCompanyId = statsForCompany?.companyId;
         const resolvedCompanyName =
           (trimmedName.length > 0 ? trimmedName : undefined) ??
-          (preferredCompanyId ? companyLookup[preferredCompanyId] : undefined) ??
+          (preferredCompanyId
+            ? companyLookup[preferredCompanyId]
+            : undefined) ??
           "Sin empresa";
 
         const companyKeyBase =
@@ -1974,14 +1977,12 @@ export const SalaryCalculatorPage: React.FC = () => {
             const labelCandidate =
               contract.label?.trim() ||
               contract.position?.trim() ||
-              contract.typeLabel?.trim() ||
               contract.description?.trim() ||
               (contract.hasContract
                 ? `Contrato ${contractIndex + 1}`
                 : `Asignación ${contractIndex + 1}`);
 
             const descriptionCandidate =
-              contract.typeLabel?.trim() ||
               contract.description?.trim() ||
               contract.position?.trim() ||
               undefined;
@@ -1991,6 +1992,11 @@ export const SalaryCalculatorPage: React.FC = () => {
               companyName: resolvedCompanyName,
               contractLabel: labelCandidate,
               hasContract: contract.hasContract,
+              hourlyRate:
+                typeof contract.hourlyRate === "number" &&
+                Number.isFinite(contract.hourlyRate)
+                  ? contract.hourlyRate
+                  : undefined,
             });
 
             entries.push({
@@ -2004,20 +2010,8 @@ export const SalaryCalculatorPage: React.FC = () => {
             });
           });
         } else {
-          const placeholderKey = `${companyKeyBase}-manual`;
-          contractMap.set(placeholderKey, {
-            companyId: preferredCompanyId,
-            companyName: resolvedCompanyName,
-            contractLabel: "Horas sin contrato",
-            hasContract: false,
-          });
-
-          entries.push({
-            contractKey: placeholderKey,
-            label: "Horas sin contrato",
-            description: "Introduce las horas y el sueldo manualmente",
-            hasContract: false,
-          });
+          // Skip companies without contratos; ignore type 0 assignments
+          return;
         }
 
         groups.push({
@@ -2041,12 +2035,33 @@ export const SalaryCalculatorPage: React.FC = () => {
 
       companyContractStructure.groups.forEach((group) => {
         if (next[group.companyKey] === undefined) {
-          next[group.companyKey] = true;
+          // Keep company sections collapsed by default
+          next[group.companyKey] = false;
           changed = true;
         }
       });
 
       return changed ? next : prev;
+    });
+  }, [companyContractStructure]);
+
+  // Enable "Usar registro" por defecto en todas las empresas
+  useEffect(() => {
+    setAutoFillHoursMap((prev) => {
+      // Si ya hay preferencia del usuario, no la sobreescribimos
+      if (Object.keys(prev).length > 0) {
+        return prev;
+      }
+
+      const next: Record<string, boolean> = {};
+      companyContractStructure.groups.forEach((group) => {
+        next[group.companyKey] = true;
+        // Evitar que un override manual bloquee el autocompletado inicial
+        group.entries.forEach((entry) =>
+          manualHoursOverrideRef.current.delete(entry.contractKey)
+        );
+      });
+      return next;
     });
   }, [companyContractStructure]);
 
@@ -2070,9 +2085,23 @@ export const SalaryCalculatorPage: React.FC = () => {
       const input = calculationData.companyContractInputs[contractKey];
       const parsedHours = parseFloat(input?.hours ?? "");
       const parsedBase = parseFloat(input?.baseSalary ?? "");
+      const parsedRateFromInput = parseFloat(input?.hourlyRate ?? "");
 
       const hours = Number.isFinite(parsedHours) ? parsedHours : 0;
-      const baseAmount = Number.isFinite(parsedBase) ? parsedBase : 0;
+      const explicitBase = Number.isFinite(parsedBase) ? parsedBase : 0;
+      const hourlyRate = Number.isFinite(parsedRateFromInput)
+        ? parsedRateFromInput
+        : typeof meta?.hourlyRate === "number" && Number.isFinite(meta.hourlyRate)
+        ? meta.hourlyRate
+        : 0;
+
+      // If base not filled, derive from hours * hourlyRate when both are valid
+      const baseAmount =
+        explicitBase > 0
+          ? explicitBase
+          : hours > 0 && hourlyRate > 0
+          ? hours * hourlyRate
+          : 0;
 
       if (hours !== 0 || baseAmount !== 0) {
         hasEntries = true;
@@ -2117,7 +2146,10 @@ export const SalaryCalculatorPage: React.FC = () => {
       totalBaseAmount,
       companyList,
     };
-  }, [calculationData.companyContractInputs, companyContractStructure.contractMap]);
+  }, [
+    calculationData.companyContractInputs,
+    companyContractStructure.contractMap,
+  ]);
 
   const clearAutoFilledHoursForGroup = useCallback(
     (companyKey: string) => {
@@ -2222,7 +2254,11 @@ export const SalaryCalculatorPage: React.FC = () => {
         };
       });
     },
-    [clearAutoFilledHoursForGroup, getCalendarHoursForCompany, setCalculationData]
+    [
+      clearAutoFilledHoursForGroup,
+      getCalendarHoursForCompany,
+      setCalculationData,
+    ]
   );
 
   useEffect(() => {
@@ -2257,16 +2293,43 @@ export const SalaryCalculatorPage: React.FC = () => {
         group.entries.forEach((entry) => {
           manualHoursOverrideRef.current.delete(entry.contractKey);
         });
-        setExpandedCompanyInputs((prev) => ({
-          ...prev,
-          [group.companyKey]: true,
-        }));
         applyAutoFillHoursForGroup(group);
       } else {
         clearAutoFilledHoursForGroup(group.companyKey);
       }
     },
     [
+      applyAutoFillHoursForGroup,
+      clearAutoFilledHoursForGroup,
+      setAutoFillHoursMap,
+    ]
+  );
+
+  const handleToggleAllAutoFill = useCallback(
+    (enable: boolean) => {
+      const groups = companyContractStructure.groups;
+      if (enable) {
+        // Enable for all groups without expanding them
+        const nextMap: Record<string, boolean> = {};
+        groups.forEach((group) => {
+          nextMap[group.companyKey] = true;
+          // Remove manual overrides for contracts in the group
+          group.entries.forEach((entry) =>
+            manualHoursOverrideRef.current.delete(entry.contractKey)
+          );
+          applyAutoFillHoursForGroup(group);
+        });
+        setAutoFillHoursMap(nextMap);
+      } else {
+        // Disable for all groups and clear auto-filled values
+        setAutoFillHoursMap({});
+        groups.forEach((group) => {
+          clearAutoFilledHoursForGroup(group.companyKey);
+        });
+      }
+    },
+    [
+      companyContractStructure.groups,
       applyAutoFillHoursForGroup,
       clearAutoFilledHoursForGroup,
       setAutoFillHoursMap,
@@ -2327,10 +2390,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         0
       );
       const adjustment = totalAmount - computedSum;
-      if (
-        companyBreakdown.length > 0 &&
-        Math.abs(adjustment) > 0.01
-      ) {
+      if (companyBreakdown.length > 0 && Math.abs(adjustment) > 0.01) {
         const lastIndex = companyBreakdown.length - 1;
         companyBreakdown[lastIndex] = {
           ...companyBreakdown[lastIndex],
@@ -2415,7 +2475,8 @@ export const SalaryCalculatorPage: React.FC = () => {
       0
     );
 
-    const regularHours = totalCompanyHours > 0 ? totalCompanyHours : hoursWorked;
+    const regularHours =
+      totalCompanyHours > 0 ? totalCompanyHours : hoursWorked;
     const totalHours = regularHours + overtimeHours;
     const usesCalendarHours = totalCompanyHours > 0;
 
@@ -2433,10 +2494,7 @@ export const SalaryCalculatorPage: React.FC = () => {
 
     const companyBreakdown = breakdownSource.map((item) => ({
       ...item,
-      amount:
-        regularHours > 0
-          ? (item.hours / regularHours) * totalAmount
-          : 0,
+      amount: regularHours > 0 ? (item.hours / regularHours) * totalAmount : 0,
     }));
 
     const computedSum = companyBreakdown.reduce(
@@ -2444,10 +2502,7 @@ export const SalaryCalculatorPage: React.FC = () => {
       0
     );
     const adjustment = totalAmount - computedSum;
-    if (
-      companyBreakdown.length > 0 &&
-      Math.abs(adjustment) > 0.01
-    ) {
+    if (companyBreakdown.length > 0 && Math.abs(adjustment) > 0.01) {
       const lastIndex = companyBreakdown.length - 1;
       companyBreakdown[lastIndex] = {
         ...companyBreakdown[lastIndex],
@@ -2706,13 +2761,21 @@ export const SalaryCalculatorPage: React.FC = () => {
                   </div>
 
                   {selectedWorker.companyNames &&
-                    selectedWorker.companyNames.length > 0 && (
+                    selectedWorker.companyNames.filter(
+                      (name) =>
+                        (selectedWorker.companyStats?.[name]?.contractCount ?? 0) > 0
+                    ).length > 0 && (
                       <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
                         <span className="mr-1 text-blue-900 dark:text-blue-100">
                           Empresas asignadas:
                         </span>
                         <div className="mt-1 flex flex-wrap gap-2">
-                          {selectedWorker.companyNames.map((companyName) => {
+                          {selectedWorker.companyNames
+                            .filter(
+                              (name) =>
+                                (selectedWorker.companyStats?.[name]?.contractCount ?? 0) > 0
+                            )
+                            .map((companyName) => {
                             const isActive = expandedCompany === companyName;
                             const companyStats =
                               selectedWorker.companyStats?.[companyName];
@@ -2913,70 +2976,99 @@ export const SalaryCalculatorPage: React.FC = () => {
                 </h3>
 
                 <div className="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setIsContractInputsOpen((current) => !current)
-                    }
-                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-gray-50 dark:hover:bg-gray-900/70"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        Horas y sueldos por contrato
-                      </p>
-                      <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
-                        {manualContractAggregates.hasEntries
-                          ? `Total horas: ${formatHours(
-                              manualContractAggregates.totalHours
-                            )} · Total sueldo: ${formatCurrency(
-                              manualContractAggregates.totalBaseAmount
-                            )}`
-                          : "Distribuye las horas y el sueldo base por empresa"}
-                      </p>
-                    </div>
-                    <ChevronDown
-                      size={18}
-                      className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
-                        isContractInputsOpen ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
+                  <div className="flex items-center justify-between gap-3 px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIsContractInputsOpen((current) => !current)
+                      }
+                      className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left transition hover:bg-gray-50 dark:hover:bg-gray-900/70 rounded-md px-1"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900 dark:text-white">
+                          Horas y sueldos por contrato
+                        </p>
+                        <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+                          {manualContractAggregates.hasEntries
+                            ? `Total horas: ${formatHours(
+                                manualContractAggregates.totalHours
+                              )} · Total sueldo: ${formatCurrency(
+                                manualContractAggregates.totalBaseAmount
+                              )}`
+                            : "Distribuye las horas y el sueldo base por empresa"}
+                        </p>
+                      </div>
+                      <ChevronDown
+                        size={18}
+                        className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
+                          isContractInputsOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                    {(() => {
+                      const groups = companyContractStructure.groups;
+                      const allEnabled =
+                        groups.length > 0 &&
+                        groups.every((g) => Boolean(autoFillHoursMap[g.companyKey]));
+                      return (
+                        <label
+                          className="inline-flex items-center gap-2 px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-sm text-gray-700 dark:text-gray-200"
+                          title={allEnabled ? "Desactivar 'Usar registro' en todas" : "Activar 'Usar registro' en todas"}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            aria-label="Usar registro en todas"
+                            checked={allEnabled}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleToggleAllAutoFill(e.target.checked);
+                            }}
+                          />
+                          <span>Usar registro</span>
+                        </label>
+                      );
+                    })()}
+                  </div>
                   {isContractInputsOpen && (
                     <div className="border-t border-gray-200 dark:border-gray-700">
                       {companyContractStructure.groups.length === 0 ? (
                         <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
                           No hay empresas asignadas al trabajador. Añade las
-                          horas y sueldos manualmente cuando estén
-                          disponibles.
+                          horas y sueldos manualmente cuando estén disponibles.
                         </div>
                       ) : (
                         <div className="space-y-4 px-4 py-5">
                           {companyContractStructure.groups.map((group) => {
-                            const summary = manualContractAggregates.companyList.find(
-                              (company) =>
-                                (group.companyId &&
-                                  company.companyId === group.companyId) ||
-                                company.companyName === group.companyName
-                            );
+                            const summary =
+                              manualContractAggregates.companyList.find(
+                                (company) =>
+                                  (group.companyId &&
+                                    company.companyId === group.companyId) ||
+                                  company.companyName === group.companyName
+                              );
 
                             const totalCompanyHours = summary?.hours ?? 0;
                             const totalCompanyBase = summary?.baseAmount ?? 0;
                             const isAutoFillEnabled = Boolean(
                               autoFillHoursMap[group.companyKey]
                             );
-                            const calendarHoursForGroup = getCalendarHoursForCompany(
-                              group.companyId,
-                              group.companyName
-                            );
-                            const isExpanded = expandedCompanyInputs[group.companyKey] ?? false;
+                            const calendarHoursForGroup =
+                              getCalendarHoursForCompany(
+                                group.companyId,
+                                group.companyName
+                              );
+                            const isExpanded =
+                              expandedCompanyInputs[group.companyKey] ?? false;
 
                             return (
                               <div
                                 key={group.companyKey}
                                 className="rounded-lg border border-gray-200 bg-white/90 shadow-sm dark:border-gray-700 dark:bg-gray-900/60"
                               >
-                                <div className="border-b border-gray-200 px-3 py-2 dark:border-gray-700">
-                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="border-b border-gray-200 px-3 py-1.5 dark:border-gray-700">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="flex flex-1 items-start gap-2">
                                       <button
                                         type="button"
@@ -3001,16 +3093,18 @@ export const SalaryCalculatorPage: React.FC = () => {
                                         />
                                       </button>
                                       <div className="min-w-0">
-                                        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                                        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
                                           {group.companyName}
                                         </p>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                                          Define las horas y el sueldo para cada
-                                          contrato asociado
-                                        </p>
+                                        {false && (
+                                          <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
+                                            Define las horas y el sueldo para cada
+                                            contrato asociado
+                                          </p>
+                                        )}
                                       </div>
                                     </div>
-                                    <label className="flex items-center gap-2 font-medium text-gray-700 dark:text-gray-200">
+                                    <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
                                       <input
                                         type="checkbox"
                                         className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -3025,15 +3119,11 @@ export const SalaryCalculatorPage: React.FC = () => {
                                       <span>Usar registro</span>
                                     </label>
                                   </div>
-                                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
-                                    <span>
-                                      Horas en cálculo: {formatHours(totalCompanyHours)}
-                                    </span>
-                                    <span>
-                                      Sueldo base: {formatCurrency(totalCompanyBase)}
-                                    </span>
+                                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+                                    <span>Horas: {formatHours(totalCompanyHours)}</span>
+                                    <span>Importe: {formatCurrency(totalCompanyBase)}</span>
                                   </div>
-                                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                  <div className="mt-0.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500 dark:text-gray-400">
                                     <span>
                                       {calendarHoursForGroup > 0
                                         ? `Horas en calendario: ${formatHours(
@@ -3043,35 +3133,39 @@ export const SalaryCalculatorPage: React.FC = () => {
                                     </span>
                                     {isAutoFillEnabled && (
                                       <span className="font-medium text-blue-600 dark:text-blue-400">
-                                        Auto completando
+                                        Auto completado
                                       </span>
                                     )}
                                   </div>
                                 </div>
 
                                 {isExpanded && (
-                                  <div className="space-y-4 px-3 py-3">
+                                  <div className="space-y-3 px-3 py-2.5">
                                     {group.entries.map((entry) => {
-                                      const contractInput =
-                                        calculationData.companyContractInputs[
+                                      const contractInput = calculationData
+                                        .companyContractInputs[
+                                        entry.contractKey
+                                      ] ?? {
+                                        hours: "",
+                                        baseSalary: "",
+                                      };
+                                      const contractMeta =
+                                        companyContractStructure.contractMap.get(
                                           entry.contractKey
-                                        ] ?? {
-                                          hours: "",
-                                          baseSalary: "",
-                                        };
+                                        );
 
                                       return (
                                         <div
                                           key={entry.contractKey}
-                                          className="rounded-md border border-dashed border-gray-300 p-3 dark:border-gray-600"
+                                          className="rounded-md border border-dashed border-gray-300 p-2.5 dark:border-gray-600"
                                         >
                                           <div className="flex flex-wrap items-center justify-between gap-2">
                                             <div>
-                                              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
                                                 {entry.label}
                                               </p>
                                               {entry.description && (
-                                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
                                                   {entry.description}
                                                 </p>
                                               )}
@@ -3083,38 +3177,64 @@ export const SalaryCalculatorPage: React.FC = () => {
                                             )}
                                           </div>
 
-                                          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                            <Input
-                                              type="number"
-                                              label="Horas"
-                                              placeholder="0"
-                                              value={contractInput.hours}
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "hours",
-                                                  event.target.value
-                                                )
-                                              }
-                                              min="0"
-                                              step="0.25"
-                                              fullWidth
-                                            />
-                                            <Input
-                                              type="number"
-                                              label="Sueldo base (€)"
-                                              placeholder="0"
-                                              value={contractInput.baseSalary}
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "baseSalary",
-                                                  event.target.value
-                                                )
-                                              }
-                                              step="0.01"
-                                              fullWidth
-                                            />
+                                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <Input
+          type="number"
+          label="Horas"
+          placeholder="0"
+          value={contractInput.hours}
+          size="sm"
+          onChange={(event) =>
+            handleContractInputChange(
+              entry.contractKey,
+              "hours",
+              event.target.value
+            )
+          }
+          min="0"
+          step="0.25"
+          fullWidth
+        />
+        <Input
+          type="number"
+          label="Precio/Hora (€)"
+          placeholder="0"
+          value={
+            contractInput.hourlyRate ??
+            (typeof contractMeta?.hourlyRate ===
+            "number"
+              ? String(
+                  contractMeta.hourlyRate
+                )
+              : "")
+          }
+          size="sm"
+          onChange={(event) =>
+            handleContractInputChange(
+              entry.contractKey,
+              "hourlyRate",
+              event.target.value
+            )
+          }
+          step="0.01"
+          fullWidth
+        />
+        <Input
+          type="number"
+          label="Sueldo base (€)"
+          placeholder="0"
+          value={contractInput.baseSalary}
+          size="sm"
+          onChange={(event) =>
+            handleContractInputChange(
+              entry.contractKey,
+              "baseSalary",
+              event.target.value
+            )
+          }
+          step="0.01"
+          fullWidth
+        />
                                           </div>
                                         </div>
                                       );
@@ -3279,9 +3399,6 @@ export const SalaryCalculatorPage: React.FC = () => {
                       <span className="font-medium text-green-800 dark:text-green-300">
                         Importe calculado
                       </span>
-                      <p className="text-xs text-green-700 dark:text-green-200/80">
-                        Sin impuestos ni seguridad social
-                      </p>
                     </div>
                     <span className="text-xl font-bold text-green-900 dark:text-green-100">
                       {formatCurrency(results.totalAmount)}
@@ -3313,7 +3430,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                         </div>
                         {results.companyBreakdown.map((company) => (
                           <div
-                            key={`${company.companyId ?? "sin"}-${company.name ?? "empresa"}`}
+                            key={`${company.companyId ?? "sin"}-${
+                              company.name ?? "empresa"
+                            }`}
                             className="grid grid-cols-3 gap-2 border-t border-gray-100 px-3 py-2 text-sm dark:border-gray-700/70"
                           >
                             <span className="text-gray-700 dark:text-gray-200">
