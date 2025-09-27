@@ -9,17 +9,20 @@ import {
   Calculator,
   Search,
   User,
+  Sigma,
   Clock,
   DollarSign,
   FileText,
   RefreshCw,
   ChevronDown,
+  ChevronUp,
   X,
   Check,
   Mail,
   Phone,
   MessageCircle,
 } from "lucide-react";
+import { Landmark, Banknote } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -36,6 +39,12 @@ import {
   WorkerHoursCalendar,
   type DayHoursSummary,
 } from "../components/WorkerHoursCalendar";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import { useTemplatesStore } from "../store/templatesStore";
+import {
+  useGroupingStore,
+  type CompanyGroup as StoredCompanyGroup,
+} from "../store/groupingStore";
 
 const sanitizeTelHref = (phone: string) => {
   const sanitized = phone.replace(/[^+\d]/g, "");
@@ -484,6 +493,207 @@ export const SalaryCalculatorPage: React.FC = () => {
     Record<string, boolean>
   >({});
 
+  // Collapsible modules state
+  const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(true);
+  const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
+  const [isOtherOpsCollapsed, setIsOtherOpsCollapsed] = useState(true);
+  const [isResultsCollapsed, setIsResultsCollapsed] = useState(true);
+
+  // PDF export modal state
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
+    null
+  );
+  const { templates, createTemplate, setActiveTemplate } = useTemplatesStore();
+
+  const ensureSeedTemplates = useCallback(() => {
+    if (templates && templates.length > 0) return;
+    const colors = ["#2563eb", "#16a34a", "#ea580c", "#7c3aed"];
+    const sizes: Array<{ size: any; orientation: any }> = [
+      { size: "A4", orientation: "portrait" },
+      { size: "A4", orientation: "landscape" },
+      { size: "letter", orientation: "portrait" },
+      { size: "A5", orientation: "portrait" },
+    ];
+    for (let i = 0; i < 3; i++) {
+      const pick = sizes[i % sizes.length];
+      const col = colors[i % colors.length];
+      const t = createTemplate({
+        name: `Plantilla demo ${i + 1}`,
+        description: "Plantilla generada para pruebas",
+        pageSize: pick.size as any,
+        orientation: pick.orientation as any,
+        accentColor: col,
+        header: {
+          title: `Resumen ${i + 1}`,
+          subtitle: "Diseño de ejemplo",
+          showWorkerInfo: true,
+          showPeriodSummary: i % 2 === 0,
+        },
+        includeCompanyTotals: i % 2 === 0,
+        includeDailyBreakdown: i % 2 === 1,
+      });
+      if (i === 0) setSelectedTemplateId(t.id);
+    }
+  }, [templates, createTemplate]);
+
+  // ===== Otras operaciones: Agrupar pagos =====
+  type CompanyKey = string;
+  const [companyGroups, setCompanyGroups] = useState<StoredCompanyGroup[]>([]);
+  const { getGroups, setGroups } = useGroupingStore();
+
+  // Calculation results (declaration moved up for grouping dependencies)
+  const [results, setResults] = useState<CalculationResult | null>(null);
+
+  const getCompanyKey = useCallback(
+    (entry: { companyId?: string; name?: string }) => {
+      return (
+        (entry.companyId && String(entry.companyId)) ||
+        (entry.name ? `name:${entry.name}` : "sin")
+      );
+    },
+    []
+  );
+
+  const availableCompanies = useMemo(() => {
+    if (!results)
+      return [] as Array<{
+        key: CompanyKey;
+        name: string;
+        hours: number;
+        amount: number;
+      }>;
+    return results.companyBreakdown.map((c) => ({
+      key: getCompanyKey(c),
+      name: c.name ?? "Sin empresa",
+      hours: c.hours,
+      amount: c.amount,
+    }));
+  }, [results, getCompanyKey]);
+
+  const colorsPalette = [
+    "#2563eb",
+    "#16a34a",
+    "#f59e0b",
+    "#ef4444",
+    "#7c3aed",
+    "#0ea5e9",
+  ];
+
+  const addEmptyGroup = () => {
+    const id = Math.random().toString(36).slice(2, 8);
+    const color = colorsPalette[companyGroups.length % colorsPalette.length];
+    setCompanyGroups((prev) => [
+      ...prev,
+      {
+        id,
+        name: `Grupo ${prev.length + 1}`,
+        color,
+        companies: [],
+        paymentMethod: "bank",
+      },
+    ]);
+  };
+
+  const removeGroup = (id: string) => {
+    setCompanyGroups((prev) => prev.filter((g) => g.id !== id));
+  };
+
+  const toggleCompanyInGroup = (groupId: string, companyKey: CompanyKey) => {
+    setCompanyGroups((prev) => {
+      const target = prev.find((g) => g.id === groupId);
+      const alreadyInTarget = !!target && target.companies.includes(companyKey);
+      if (alreadyInTarget) {
+        // Si ya está en el grupo, quitarla (toggle off)
+        return prev.map((g) =>
+          g.id === groupId
+            ? { ...g, companies: g.companies.filter((k) => k !== companyKey) }
+            : g
+        );
+      }
+
+      // Si no está en el grupo destino, moverla de cualquier otro grupo al destino
+      return prev.map((g) =>
+        g.id === groupId
+          ? { ...g, companies: [...g.companies, companyKey] }
+          : { ...g, companies: g.companies.filter((k) => k !== companyKey) }
+      );
+    });
+  };
+
+  const removeCompanyFromAllGroups = (companyKey: CompanyKey) => {
+    setCompanyGroups((prev) =>
+      prev.map((g) => ({
+        ...g,
+        companies: g.companies.filter((k) => k !== companyKey),
+      }))
+    );
+  };
+
+  const groupedBreakdown = useMemo(() => {
+    if (!results) return null;
+    const byKey = new Map<
+      CompanyKey,
+      { name: string; hours: number; amount: number }
+    >();
+    availableCompanies.forEach((c) =>
+      byKey.set(c.key, { name: c.name, hours: c.hours, amount: c.amount })
+    );
+
+    const used = new Set<CompanyKey>();
+    const groups = companyGroups.map((g) => {
+      let hours = 0;
+      let amount = 0;
+      const items: Array<{ name: string; hours: number; amount: number }> = [];
+      g.companies.forEach((k) => {
+        const v = byKey.get(k);
+        if (v) {
+          hours += v.hours;
+          amount += v.amount;
+          used.add(k);
+          items.push({ name: v.name, hours: v.hours, amount: v.amount });
+        }
+      });
+      return {
+        id: g.id,
+        name: g.name,
+        color: g.color,
+        hours,
+        amount,
+        companies: g.companies.map((k) => byKey.get(k)?.name || k),
+        paymentMethod: g.paymentMethod ?? "bank",
+        items,
+      };
+    });
+
+    const remaining = availableCompanies
+      .filter((c) => !used.has(c.key))
+      .map((c) => ({ name: c.name, hours: c.hours, amount: c.amount }));
+
+    return { groups, remaining };
+  }, [results, availableCompanies, companyGroups]);
+
+  // Expand/collapse state for result groups
+  const [expandedResultGroups, setExpandedResultGroups] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Persist and restore company groups per worker
+  useEffect(() => {
+    const wid = selectedWorker?.id ?? null;
+    const stored = getGroups(wid);
+    if (stored && stored.length > 0) {
+      setCompanyGroups(stored);
+    } else {
+      setCompanyGroups([]);
+    }
+  }, [selectedWorker?.id]);
+
+  useEffect(() => {
+    const wid = selectedWorker?.id ?? null;
+    setGroups(wid, companyGroups);
+  }, [companyGroups, selectedWorker?.id]);
+
   // Calculation form data
   const [calculationData, setCalculationData] = useState<CalculationFormState>({
     baseSalary: "",
@@ -496,8 +706,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     companyContractInputs: {},
   });
 
-  // Calculation results
-  const [results, setResults] = useState<CalculationResult | null>(null);
+  // Calculation results moved earlier
   const [copyFeedback, setCopyFeedback] = useState<{
     type: "email" | "phone";
     message: string;
@@ -521,6 +730,11 @@ export const SalaryCalculatorPage: React.FC = () => {
       if (worker) {
         const now = new Date();
         setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+        // Al seleccionar trabajador: abrir todos los módulos
+        setIsCalcDataCollapsed(false);
+        setIsCalendarCollapsed(false);
+        setIsOtherOpsCollapsed(false);
+        setIsResultsCollapsed(false);
       }
 
       // Pre-fill with worker's base salary if available
@@ -2980,755 +3194,1072 @@ export const SalaryCalculatorPage: React.FC = () => {
           {/* Calculation Form */}
           <Card>
             <CardHeader>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-                <Clock
-                  size={20}
-                  className="mr-2 text-blue-600 dark:text-blue-400"
-                />
-                Datos para Cálculo
-              </h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <Sigma
+                    size={20}
+                    className="mr-2 text-blue-600 dark:text-blue-400"
+                  />
+                  Datos para Cálculo
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setIsCalcDataCollapsed((v) => !v)}
+                  className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+                >
+                  <ChevronDown
+                    size={18}
+                    className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                      isCalcDataCollapsed ? "" : "rotate-180"
+                    }`}
+                  />
+                </button>
+              </div>
             </CardHeader>
 
-            <CardContent className="space-y-4">
-              <div className="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
-                <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setIsContractInputsOpen((current) => !current)
-                    }
-                    className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
-                  >
-                    <ChevronDown
-                      size={18}
-                      className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
-                        isContractInputsOpen ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-900 dark:text-white">
-                      Horas y sueldos por contrato
-                    </p>
-                    <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+            {!isCalcDataCollapsed && (
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
+                  <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIsContractInputsOpen((current) => !current)
+                      }
+                      className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      <ChevronDown
+                        size={18}
+                        className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
+                          isContractInputsOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 dark:text-white">
+                        Horas y sueldos por contrato
+                      </p>
+                      <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+                        {manualContractAggregates.hasEntries
+                          ? `Total horas: ${formatHours(
+                              manualContractAggregates.totalHours
+                            )}`
+                          : ""}
+                      </p>
+                    </div>
+                    {(() => {
+                      const groups = companyContractStructure.groups;
+                      const allEnabled =
+                        groups.length > 0 &&
+                        groups.every((g) =>
+                          Boolean(autoFillHoursMap[g.companyKey])
+                        );
+                      return (
+                        <label
+                          className="inline-flex items-center gap-2 px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-sm text-gray-700 dark:text-gray-200"
+                          title={
+                            allEnabled
+                              ? "Desactivar 'Usar registro' en todas"
+                              : "Activar 'Usar registro' en todas"
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            aria-label="Usar registro en todas"
+                            checked={allEnabled}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleToggleAllAutoFill(e.target.checked);
+                            }}
+                          />
+                          <span>Usar registro</span>
+                        </label>
+                      );
+                    })()}
+                    <p className="mt-1 truncate text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end">
                       {manualContractAggregates.hasEntries
-                        ? `Total horas: ${formatHours(
-                            manualContractAggregates.totalHours
+                        ? `Total: ${formatCurrency(
+                            manualContractAggregates.totalBaseAmount
                           )}`
                         : ""}
                     </p>
                   </div>
-                  {(() => {
-                    const groups = companyContractStructure.groups;
-                    const allEnabled =
-                      groups.length > 0 &&
-                      groups.every((g) =>
-                        Boolean(autoFillHoursMap[g.companyKey])
-                      );
-                    return (
-                      <label
-                        className="inline-flex items-center gap-2 px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-sm text-gray-700 dark:text-gray-200"
-                        title={
-                          allEnabled
-                            ? "Desactivar 'Usar registro' en todas"
-                            : "Activar 'Usar registro' en todas"
-                        }
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          aria-label="Usar registro en todas"
-                          checked={allEnabled}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            handleToggleAllAutoFill(e.target.checked);
-                          }}
-                        />
-                        <span>Usar registro</span>
-                      </label>
-                    );
-                  })()}
-                  <p className="mt-1 truncate text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end">
-                    {manualContractAggregates.hasEntries
-                      ? `Total: ${formatCurrency(
-                          manualContractAggregates.totalBaseAmount
-                        )}`
-                      : ""}
-                  </p>
-                </div>
-                {isContractInputsOpen && (
-                  <div className="border-t border-gray-200 dark:border-gray-700">
-                    {companyContractStructure.groups.length === 0 ? (
-                      <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
-                        No hay empresas asignadas al trabajador. Añade las horas
-                        y sueldos manualmente cuando estén disponibles.
-                      </div>
-                    ) : (
-                      <div className="space-y-4 px-4 py-5">
-                        {companyContractStructure.groups.map((group) => {
-                          const summary =
-                            manualContractAggregates.companyList.find(
-                              (company) =>
-                                (group.companyId &&
-                                  company.companyId === group.companyId) ||
-                                company.companyName === group.companyName
-                            );
+                  {isContractInputsOpen && (
+                    <div className="border-t border-gray-200 dark:border-gray-700">
+                      {companyContractStructure.groups.length === 0 ? (
+                        <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
+                          No hay empresas asignadas al trabajador. Añade las
+                          horas y sueldos manualmente cuando estén disponibles.
+                        </div>
+                      ) : (
+                        <div className="space-y-4 px-4 py-5">
+                          {companyContractStructure.groups.map((group) => {
+                            const summary =
+                              manualContractAggregates.companyList.find(
+                                (company) =>
+                                  (group.companyId &&
+                                    company.companyId === group.companyId) ||
+                                  company.companyName === group.companyName
+                              );
 
-                          const totalCompanyHours = summary?.hours ?? 0;
-                          const totalCompanyBase = summary?.baseAmount ?? 0;
-                          const isAutoFillEnabled = Boolean(
-                            autoFillHoursMap[group.companyKey]
-                          );
-                          const calendarHoursForGroup =
-                            getCalendarHoursForCompany(
-                              group.companyId,
-                              group.companyName
+                            const totalCompanyHours = summary?.hours ?? 0;
+                            const totalCompanyBase = summary?.baseAmount ?? 0;
+                            const isAutoFillEnabled = Boolean(
+                              autoFillHoursMap[group.companyKey]
                             );
-                          const isExpanded =
-                            expandedCompanyInputs[group.companyKey] ?? false;
+                            const calendarHoursForGroup =
+                              getCalendarHoursForCompany(
+                                group.companyId,
+                                group.companyName
+                              );
+                            const isExpanded =
+                              expandedCompanyInputs[group.companyKey] ?? false;
 
-                          return (
-                            <div
-                              key={group.companyKey}
-                              className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
-                            >
+                            return (
                               <div
-                                className="border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer"
-                                onClick={() =>
-                                  handleCompanyGroupToggle(group.companyKey)
-                                }
+                                key={group.companyKey}
+                                className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
                               >
-                                <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,160px)] items-center gap-4">
-                                  <div className="flex items-start gap-2 min-w-[220px]">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleCompanyGroupToggle(
-                                          group.companyKey
-                                        );
-                                      }}
-                                      className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
-                                      aria-expanded={isExpanded}
-                                      aria-label={
-                                        isExpanded
-                                          ? "Contraer empresa"
-                                          : "Expandir empresa"
-                                      }
+                                <div
+                                  className="border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer"
+                                  onClick={() =>
+                                    handleCompanyGroupToggle(group.companyKey)
+                                  }
+                                >
+                                  <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,160px)] items-center gap-4">
+                                    <div className="flex items-start gap-2 min-w-[220px]">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleCompanyGroupToggle(
+                                            group.companyKey
+                                          );
+                                        }}
+                                        className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                        aria-expanded={isExpanded}
+                                        aria-label={
+                                          isExpanded
+                                            ? "Contraer empresa"
+                                            : "Expandir empresa"
+                                        }
+                                      >
+                                        <ChevronDown
+                                          size={16}
+                                          className={`transition-transform ${
+                                            isExpanded ? "rotate-180" : ""
+                                          }`}
+                                        />
+                                      </button>
+                                      <div className="min-w-0 select-none">
+                                        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+                                          {group.companyName}
+                                        </p>
+                                        {(() => {
+                                          const isHoursDifferent =
+                                            calendarHoursForGroup > 0 &&
+                                            Math.abs(
+                                              totalCompanyHours -
+                                                calendarHoursForGroup
+                                            ) > 0.001;
+                                          const hoursClass = isHoursDifferent
+                                            ? "text-amber-700 dark:text-amber-300"
+                                            : "text-gray-600 dark:text-gray-300";
+                                          return (
+                                            <p
+                                              className={`text-xs font-medium mt-0.5 ${hoursClass}`}
+                                            >
+                                              {formatHours(totalCompanyHours)}{" "}
+                                              Horas
+                                            </p>
+                                          );
+                                        })()}
+                                      </div>
+                                    </div>
+                                    <div
+                                      className="flex items-center justify-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 min-w-[180px] justify-center"
+                                      onClick={(e) => e.stopPropagation()}
                                     >
-                                      <ChevronDown
-                                        size={16}
-                                        className={`transition-transform ${
-                                          isExpanded ? "rotate-180" : ""
-                                        }`}
-                                      />
-                                    </button>
-                                    <div className="min-w-0 select-none">
-                                      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                                        {group.companyName}
-                                      </p>
-                                      {(() => {
-                                        const isHoursDifferent =
-                                          calendarHoursForGroup > 0 &&
-                                          Math.abs(
-                                            totalCompanyHours -
-                                              calendarHoursForGroup
-                                          ) > 0.001;
-                                        const hoursClass = isHoursDifferent
-                                          ? "text-amber-700 dark:text-amber-300"
-                                          : "text-gray-600 dark:text-gray-300";
-                                        return (
-                                          <p
-                                            className={`text-xs font-medium mt-0.5 ${hoursClass}`}
-                                          >
-                                            {formatHours(totalCompanyHours)}{" "}
-                                            Horas
-                                          </p>
-                                        );
-                                      })()}
+                                      <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
+                                        <input
+                                          type="checkbox"
+                                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                          checked={isAutoFillEnabled}
+                                          onChange={(event) =>
+                                            handleAutoFillHoursToggle(
+                                              group,
+                                              event.target.checked
+                                            )
+                                          }
+                                          onClick={(e) => e.stopPropagation()}
+                                        />
+                                        <span>Usar registro</span>
+                                      </label>
+                                    </div>
+                                    <div
+                                      className="text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {formatCurrency(totalCompanyBase)}
                                     </div>
                                   </div>
-                                  <div
-                                    className="flex items-center justify-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 min-w-[180px] justify-center"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
-                                      <input
-                                        type="checkbox"
-                                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                        checked={isAutoFillEnabled}
-                                        onChange={(event) =>
-                                          handleAutoFillHoursToggle(
-                                            group,
-                                            event.target.checked
-                                          )
-                                        }
-                                        onClick={(e) => e.stopPropagation()}
-                                      />
-                                      <span>Usar registro</span>
-                                    </label>
-                                  </div>
-                                  <div
-                                    className="text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {formatCurrency(totalCompanyBase)}
-                                  </div>
                                 </div>
-                              </div>
 
-                              {isExpanded && (
-                                <div className="space-y-3 px-3 py-2.5">
-                                  {group.entries.map((entry) => {
-                                    const contractInput = calculationData
-                                      .companyContractInputs[
-                                      entry.contractKey
-                                    ] ?? {
-                                      hours: "",
-                                      baseSalary: "",
-                                    };
-                                    const contractMeta =
-                                      companyContractStructure.contractMap.get(
+                                {isExpanded && (
+                                  <div className="space-y-3 px-3 py-2.5">
+                                    {group.entries.map((entry) => {
+                                      const contractInput = calculationData
+                                        .companyContractInputs[
                                         entry.contractKey
-                                      );
+                                      ] ?? {
+                                        hours: "",
+                                        baseSalary: "",
+                                      };
+                                      const contractMeta =
+                                        companyContractStructure.contractMap.get(
+                                          entry.contractKey
+                                        );
 
-                                    return (
-                                      <div
-                                        key={entry.contractKey}
-                                        className="rounded-md border border-dashed border-gray-300 p-2.5 dark:border-gray-600"
-                                      >
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                          <div>
-                                            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                                              {entry.label}
-                                            </p>
-                                            {entry.description && (
-                                              <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
-                                                {entry.description}
+                                      return (
+                                        <div
+                                          key={entry.contractKey}
+                                          className="rounded-md border border-dashed border-gray-300 p-2.5 dark:border-gray-600"
+                                        >
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div>
+                                              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+                                                {entry.label}
                                               </p>
+                                              {entry.description && (
+                                                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
+                                                  {entry.description}
+                                                </p>
+                                              )}
+                                            </div>
+                                            {!entry.hasContract && (
+                                              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                                                Sin contrato
+                                              </span>
                                             )}
                                           </div>
-                                          {!entry.hasContract && (
-                                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
-                                              Sin contrato
-                                            </span>
-                                          )}
+
+                                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                            <Input
+                                              type="number"
+                                              label="Horas"
+                                              placeholder="0"
+                                              value={contractInput.hours}
+                                              size="sm"
+                                              onChange={(event) =>
+                                                handleContractInputChange(
+                                                  entry.contractKey,
+                                                  "hours",
+                                                  event.target.value
+                                                )
+                                              }
+                                              min="0"
+                                              step="0.25"
+                                              fullWidth
+                                            />
+                                            <Input
+                                              type="number"
+                                              label="Precio/Hora (€)"
+                                              placeholder="0"
+                                              value={
+                                                contractInput.hourlyRate ??
+                                                (typeof contractMeta?.hourlyRate ===
+                                                "number"
+                                                  ? String(
+                                                      contractMeta.hourlyRate
+                                                    )
+                                                  : "")
+                                              }
+                                              size="sm"
+                                              onChange={(event) =>
+                                                handleContractInputChange(
+                                                  entry.contractKey,
+                                                  "hourlyRate",
+                                                  event.target.value
+                                                )
+                                              }
+                                              step="0.01"
+                                              fullWidth
+                                            />
+                                            <Input
+                                              type="number"
+                                              label="Sueldo base (€)"
+                                              placeholder="0"
+                                              value={contractInput.baseSalary}
+                                              size="sm"
+                                              onChange={(event) =>
+                                                handleContractInputChange(
+                                                  entry.contractKey,
+                                                  "baseSalary",
+                                                  event.target.value
+                                                )
+                                              }
+                                              step="0.01"
+                                              fullWidth
+                                            />
+                                          </div>
                                         </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
-                                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                          <Input
-                                            type="number"
-                                            label="Horas"
-                                            placeholder="0"
-                                            value={contractInput.hours}
-                                            size="sm"
-                                            onChange={(event) =>
-                                              handleContractInputChange(
-                                                entry.contractKey,
-                                                "hours",
-                                                event.target.value
-                                              )
-                                            }
-                                            min="0"
-                                            step="0.25"
-                                            fullWidth
-                                          />
-                                          <Input
-                                            type="number"
-                                            label="Precio/Hora (€)"
-                                            placeholder="0"
-                                            value={
-                                              contractInput.hourlyRate ??
-                                              (typeof contractMeta?.hourlyRate ===
-                                              "number"
-                                                ? String(
-                                                    contractMeta.hourlyRate
-                                                  )
-                                                : "")
-                                            }
-                                            size="sm"
-                                            onChange={(event) =>
-                                              handleContractInputChange(
-                                                entry.contractKey,
-                                                "hourlyRate",
-                                                event.target.value
-                                              )
-                                            }
-                                            step="0.01"
-                                            fullWidth
-                                          />
-                                          <Input
-                                            type="number"
-                                            label="Sueldo base (€)"
-                                            placeholder="0"
-                                            value={contractInput.baseSalary}
-                                            size="sm"
-                                            onChange={(event) =>
-                                              handleContractInputChange(
-                                                entry.contractKey,
-                                                "baseSalary",
-                                                event.target.value
-                                              )
-                                            }
-                                            step="0.01"
-                                            fullWidth
-                                          />
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Select
+                    label="Período"
+                    value={calculationData.period}
+                    onChange={(value) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        period: value as CalculationFormState["period"],
+                      }))
+                    }
+                    options={[
+                      { value: "monthly", label: "Mensual" },
+                      { value: "weekly", label: "Semanal" },
+                      { value: "daily", label: "Diario" },
+                    ]}
+                    fullWidth
+                  />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Select
-                  label="Período"
-                  value={calculationData.period}
-                  onChange={(value) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      period: value as CalculationFormState["period"],
-                    }))
-                  }
-                  options={[
-                    { value: "monthly", label: "Mensual" },
-                    { value: "weekly", label: "Semanal" },
-                    { value: "daily", label: "Diario" },
-                  ]}
-                  fullWidth
-                />
+                  <Input
+                    type="number"
+                    label="Horas Extra"
+                    value={calculationData.overtimeHours}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        overtimeHours: e.target.value,
+                      }))
+                    }
+                    placeholder="0"
+                    fullWidth
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    type="number"
+                    label="Bonificaciones (€)"
+                    value={calculationData.bonuses}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        bonuses: e.target.value,
+                      }))
+                    }
+                    placeholder="0"
+                    fullWidth
+                  />
+
+                  <Input
+                    type="number"
+                    label="Deducciones (€)"
+                    value={calculationData.deductions}
+                    onChange={(e) =>
+                      setCalculationData((prev) => ({
+                        ...prev,
+                        deductions: e.target.value,
+                      }))
+                    }
+                    placeholder="0"
+                    fullWidth
+                  />
+                </div>
 
                 <Input
-                  type="number"
-                  label="Horas Extra"
-                  value={calculationData.overtimeHours}
+                  label="Notas"
+                  value={calculationData.notes}
                   onChange={(e) =>
                     setCalculationData((prev) => ({
                       ...prev,
-                      overtimeHours: e.target.value,
+                      notes: e.target.value,
                     }))
                   }
-                  placeholder="0"
-                  fullWidth
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input
-                  type="number"
-                  label="Bonificaciones (€)"
-                  value={calculationData.bonuses}
-                  onChange={(e) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      bonuses: e.target.value,
-                    }))
-                  }
-                  placeholder="0"
+                  placeholder="Notas adicionales..."
                   fullWidth
                 />
 
-                <Input
-                  type="number"
-                  label="Deducciones (€)"
-                  value={calculationData.deductions}
-                  onChange={(e) =>
-                    setCalculationData((prev) => ({
-                      ...prev,
-                      deductions: e.target.value,
-                    }))
+                <Button
+                  onClick={handleCalculate}
+                  disabled={
+                    !selectedWorker ||
+                    (!manualContractAggregates.hasEntries &&
+                      (!calculationData.baseSalary ||
+                        calculationData.baseSalary.trim().length === 0))
                   }
-                  placeholder="0"
-                  fullWidth
-                />
-              </div>
-
-              <Input
-                label="Notas"
-                value={calculationData.notes}
-                onChange={(e) =>
-                  setCalculationData((prev) => ({
-                    ...prev,
-                    notes: e.target.value,
-                  }))
-                }
-                placeholder="Notas adicionales..."
-                fullWidth
-              />
-
-              <Button
-                onClick={handleCalculate}
-                disabled={
-                  !selectedWorker ||
-                  (!manualContractAggregates.hasEntries &&
-                    (!calculationData.baseSalary ||
-                      calculationData.baseSalary.trim().length === 0))
-                }
-                isLoading={isCalculating}
-                leftIcon={<Calculator size={18} />}
-                className="w-full"
-              >
-                Calcular Sueldo
-              </Button>
-            </CardContent>
+                  isLoading={isCalculating}
+                  leftIcon={<Calculator size={18} />}
+                  className="w-full"
+                >
+                  Calcular Sueldo
+                </Button>
+              </CardContent>
+            )}
           </Card>
 
-          <div className="min-w-0 h-full">
-            <WorkerHoursCalendar
-              worker={selectedWorker}
-              selectedMonth={calendarMonth}
-              hoursByDate={calendarHours}
-              onMonthChange={handleCalendarMonthChange}
-              isLoading={isCalendarLoading}
-            />
-          </div>
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <Clock
+                    size={20}
+                    className="mr-2 text-blue-600 dark:text-blue-400"
+                  />
+                  Calendario de horas
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setIsCalendarCollapsed((v) => !v)}
+                  className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+                >
+                  <ChevronDown
+                    size={18}
+                    className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                      isCalendarCollapsed ? "" : "rotate-180"
+                    }`}
+                  />
+                </button>
+              </div>
+            </CardHeader>
+            {!isCalendarCollapsed && (
+              <CardContent>
+                <div className="min-w-0 h-full">
+                  <WorkerHoursCalendar
+                    worker={selectedWorker}
+                    selectedMonth={calendarMonth}
+                    hoursByDate={calendarHours}
+                    onMonthChange={handleCalendarMonthChange}
+                    isLoading={isCalendarLoading}
+                    hideTitle
+                  />
+                </div>
+              </CardContent>
+            )}
+          </Card>
         </div>
 
         {/* Results */}
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-              <Calculator
-                size={20}
-                className="mr-2 text-yellow-600 dark:text-yellow-400"
-              />
-              Otras operaciones de Cálculo
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <Calculator
+                  size={20}
+                  className="mr-2 text-yellow-600 dark:text-yellow-400"
+                />
+                Otras operaciones de Cálculo
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsOtherOpsCollapsed((v) => !v)}
+                className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              >
+                <ChevronDown
+                  size={18}
+                  className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                    isOtherOpsCollapsed ? "" : "rotate-180"
+                  }`}
+                />
+              </button>
+            </div>
           </CardHeader>
-          <CardContent>
-            {!results ? (
-              <div className="text-center py-8">
-                <Calculator size={48} className="mx-auto text-gray-400 mb-4" />
-                <p className="text-gray-500 dark:text-gray-400">
-                  Selecciona un trabajador y completa los datos para ver los
-                  resultados
+          {!isOtherOpsCollapsed && (
+            <CardContent>
+              {!results ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Calcula primero para ver empresas a agrupar.
                 </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {selectedWorker && (
-                  <div className="text-center mb-6">
-                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                      {selectedWorker.name}
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Cálculo{" "}
-                      {calculationData.period === "monthly"
-                        ? "mensual"
-                        : calculationData.period === "weekly"
-                        ? "semanal"
-                        : "diario"}
-                    </p>
-                  </div>
-                )}
-
+              ) : (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between rounded-lg bg-green-50 p-3 dark:bg-green-900/20">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <span className="font-medium text-green-800 dark:text-green-300">
-                        Importe calculado
-                      </span>
+                      <p className="text-sm text-gray-600 dark:text-gray-300">
+                        Agrupa pagos de distintas empresas bajo un mismo nombre.
+                      </p>
                     </div>
-                    <span className="text-xl font-bold text-green-900 dark:text-green-100">
-                      {formatCurrency(results.totalAmount)}
-                    </span>
+                    <Button variant="outline" onClick={addEmptyGroup}>
+                      Crear grupo
+                    </Button>
                   </div>
 
-                  <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-gray-700">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-medium text-gray-900 dark:text-white">
-                        Detalle por empresa
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+                      <h4 className="font-medium mb-2 text-gray-900 dark:text-gray-100">
+                        Empresas detectadas
                       </h4>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {results.usesCalendarHours
-                          ? "Horas provenientes del calendario del mes"
-                          : "Horas distribuidas manualmente por contrato"}
-                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {availableCompanies.map((c) => {
+                          const inGroup = companyGroups.some((g) =>
+                            g.companies.includes(c.key)
+                          );
+                          return (
+                            <button
+                              key={c.key}
+                              type="button"
+                              onClick={() =>
+                                inGroup && removeCompanyFromAllGroups(c.key)
+                              }
+                              title={
+                                inGroup ? "Quitar de su grupo" : "Sin grupo"
+                              }
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
+                                inGroup
+                                  ? "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200"
+                                  : "border-gray-200 text-gray-700 dark:border-gray-700 dark:text-gray-300"
+                              } ${
+                                inGroup
+                                  ? "cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/40"
+                                  : "cursor-default"
+                              }`}
+                            >
+                              {c.name}
+                              {inGroup && (
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
 
-                    {results.companyBreakdown.length === 0 ? (
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        No hay horas registradas para este período.
-                      </p>
-                    ) : (
-                      <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="grid grid-cols-3 gap-2 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                          <span>Empresa</span>
-                          <span className="text-right">Horas</span>
-                          <span className="text-right">Importe</span>
+                    <div className="space-y-3">
+                      {companyGroups.length === 0 ? (
+                        <div className="rounded-md border border-dashed border-gray-300 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">
+                          Crea tu primer grupo y selecciona empresas para
+                          incluir.
                         </div>
-                        {results.companyBreakdown.map((company) => (
+                      ) : (
+                        companyGroups.map((g) => (
                           <div
-                            key={`${company.companyId ?? "sin"}-${
-                              company.name ?? "empresa"
-                            }`}
-                            className="grid grid-cols-3 gap-2 border-t border-gray-100 px-3 py-2 text-sm dark:border-gray-700/70"
+                            key={g.id}
+                            className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
                           >
-                            <span className="text-gray-700 dark:text-gray-200">
-                              {company.name ?? "Sin empresa"}
-                            </span>
-                            <span className="text-right text-gray-700 dark:text-gray-200">
-                              {formatHours(company.hours)}
-                            </span>
-                            <span className="text-right font-medium text-gray-900 dark:text-gray-100">
-                              {formatCurrency(company.amount)}
-                            </span>
+                            <div
+                              className="flex items-center justify-between px-3 py-2"
+                              style={{ backgroundColor: `${g.color}20` }}
+                            >
+                              <input
+                                value={g.name}
+                                onChange={(e) =>
+                                  setCompanyGroups((prev) =>
+                                    prev.map((x) =>
+                                      x.id === g.id
+                                        ? { ...x, name: e.target.value }
+                                        : x
+                                    )
+                                  )
+                                }
+                                className="bg-transparent font-semibold text-gray-900 dark:text-gray-100 outline-none"
+                              />
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="color"
+                                  value={g.color}
+                                  onChange={(e) =>
+                                    setCompanyGroups((prev) =>
+                                      prev.map((x) =>
+                                        x.id === g.id
+                                          ? { ...x, color: e.target.value }
+                                          : x
+                                      )
+                                    )
+                                  }
+                                  title="Color del grupo"
+                                />
+                                <Button
+                                  variant="outline"
+                                  onClick={() => removeGroup(g.id)}
+                                >
+                                  Eliminar
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="p-3">
+                              <div className="mb-3 flex items-center gap-2 text-xs">
+                                <span className="text-gray-600 dark:text-gray-300">
+                                  Forma de pago:
+                                </span>
+                                <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCompanyGroups((prev) =>
+                                        prev.map((x) =>
+                                          x.id === g.id
+                                            ? { ...x, paymentMethod: "bank" }
+                                            : x
+                                        )
+                                      )
+                                    }
+                                    className={`px-2 py-1 flex items-center gap-1 ${
+                                      g.paymentMethod !== "cash"
+                                        ? "bg-blue-600 text-white"
+                                        : "bg-transparent text-gray-700 dark:text-gray-300"
+                                    }`}
+                                    title="Banco"
+                                  >
+                                    <Landmark size={14} /> Banco
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCompanyGroups((prev) =>
+                                        prev.map((x) =>
+                                          x.id === g.id
+                                            ? { ...x, paymentMethod: "cash" }
+                                            : x
+                                        )
+                                      )
+                                    }
+                                    className={`px-2 py-1 flex items-center gap-1 ${
+                                      g.paymentMethod === "cash"
+                                        ? "bg-blue-600 text-white"
+                                        : "bg-transparent text-gray-700 dark:text-gray-300"
+                                    }`}
+                                    title="Efectivo"
+                                  >
+                                    <Banknote size={14} /> Efectivo
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {availableCompanies.map((c) => (
+                                  <button
+                                    type="button"
+                                    key={`${g.id}-${c.key}`}
+                                    onClick={() =>
+                                      toggleCompanyInGroup(g.id, c.key)
+                                    }
+                                    className={`px-2 py-1 rounded-full border text-xs transition ${
+                                      g.companies.includes(c.key)
+                                        ? "border-transparent text-white"
+                                        : "border-gray-300 text-gray-700 dark:text-gray-300"
+                                    } `}
+                                    style={
+                                      g.companies.includes(c.key)
+                                        ? { backgroundColor: g.color }
+                                        : {}
+                                    }
+                                  >
+                                    {c.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {groupedBreakdown && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-gray-900 dark:text-gray-100">
+                        Vista previa de agrupaciones
+                      </h4>
+                      <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {groupedBreakdown.groups.map((g) => (
+                          <div
+                            key={g.id}
+                            className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden"
+                          >
+                            <div
+                              className="px-3 py-2 text-white font-semibold"
+                              style={{ backgroundColor: g.color }}
+                            >
+                              {g.name}
+                            </div>
+                            <div className="p-3 space-y-2">
+                              <div className="text-sm text-gray-600 dark:text-gray-300">
+                                Miembros: {g.companies.join(", ")}
+                              </div>
+                              <div className="flex items-center justify-between text-sm">
+                                <span>Horas</span>
+                                <span className="font-medium">
+                                  {formatHours(g.hours)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between text-sm">
+                                <span>Importe</span>
+                                <span className="font-semibold">
+                                  {formatCurrency(g.amount)}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                         ))}
-                        <div className="grid grid-cols-3 gap-2 bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-900 dark:bg-gray-800 dark:text-gray-100">
-                          <span>Total</span>
-                          <span className="text-right">
-                            {formatHours(results.totalHours)}
-                          </span>
-                          <span className="text-right">
-                            {formatCurrency(results.totalAmount)}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-6 rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-                    <h4 className="mb-3 font-medium text-gray-900 dark:text-white">
-                      Resumen
-                    </h4>
-                    <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Horas regulares:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatHours(results.regularHours)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Horas extra:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatHours(results.overtimeHours)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Horas totales:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatHours(results.totalHours)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Importe total:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatCurrency(results.totalAmount)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Período:
-                        </span>
-                        <p className="font-medium capitalize text-gray-900 dark:text-gray-100">
-                          {calculationData.period === "monthly"
-                            ? "Mensual"
-                            : calculationData.period === "weekly"
-                            ? "Semanal"
-                            : "Diario"}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Fecha:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatDate(new Date().toISOString())}
-                        </p>
+                        {groupedBreakdown.remaining.map((c, idx) => (
+                          <div
+                            key={`r-${idx}`}
+                            className="rounded-xl border border-gray-200 dark:border-gray-700 p-3"
+                          >
+                            <div className="font-semibold text-gray-900 dark:text-gray-100">
+                              {c.name}
+                            </div>
+                            <div className="mt-2 flex items-center justify-between text-sm">
+                              <span>Horas</span>
+                              <span className="font-medium">
+                                {formatHours(c.hours)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                              <span>Importe</span>
+                              <span className="font-semibold">
+                                {formatCurrency(c.amount)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
-              </div>
-            )}
-          </CardContent>
+              )}
+            </CardContent>
+          )}
         </Card>
 
         {/* Results */}
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-              <DollarSign
-                size={20}
-                className="mr-2 text-green-600 dark:text-green-400"
-              />
-              Resultados del Cálculo
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <DollarSign
+                  size={20}
+                  className="mr-2 text-green-600 dark:text-green-400"
+                />
+                Resultados del Cálculo
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsResultsCollapsed((v) => !v)}
+                className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              >
+                <ChevronDown
+                  size={18}
+                  className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                    isResultsCollapsed ? "" : "rotate-180"
+                  }`}
+                />
+              </button>
+            </div>
           </CardHeader>
-          <CardContent>
-            {!results ? (
-              <div className="text-center py-8">
-                <Calculator size={48} className="mx-auto text-gray-400 mb-4" />
-                <p className="text-gray-500 dark:text-gray-400">
-                  Selecciona un trabajador y completa los datos para ver los
-                  resultados
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {selectedWorker && (
-                  <div className="text-center mb-6">
-                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                      {selectedWorker.name}
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Cálculo{" "}
-                      {calculationData.period === "monthly"
-                        ? "mensual"
-                        : calculationData.period === "weekly"
-                        ? "semanal"
-                        : "diario"}
-                    </p>
-                  </div>
-                )}
-
+          {!isResultsCollapsed && (
+            <CardContent>
+              {!results ? (
+                <div className="text-center py-8">
+                  <Calculator
+                    size={48}
+                    className="mx-auto text-gray-400 mb-4"
+                  />
+                  <p className="text-gray-500 dark:text-gray-400">
+                    Selecciona un trabajador y completa los datos para ver los
+                    resultados
+                  </p>
+                </div>
+              ) : (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between rounded-lg bg-green-50 p-3 dark:bg-green-900/20">
-                    <div>
-                      <span className="font-medium text-green-800 dark:text-green-300">
-                        Importe calculado
-                      </span>
-                    </div>
-                    <span className="text-xl font-bold text-green-900 dark:text-green-100">
-                      {formatCurrency(results.totalAmount)}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-gray-700">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-medium text-gray-900 dark:text-white">
-                        Detalle por empresa
-                      </h4>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {results.usesCalendarHours
-                          ? "Horas provenientes del calendario del mes"
-                          : "Horas distribuidas manualmente por contrato"}
-                      </span>
-                    </div>
-
-                    {results.companyBreakdown.length === 0 ? (
+                  {selectedWorker && (
+                    <div className="text-center mb-6">
+                      <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+                        {selectedWorker.name}
+                      </h3>
                       <p className="text-sm text-gray-500 dark:text-gray-400">
-                        No hay horas registradas para este período.
+                        Cálculo{" "}
+                        {calculationData.period === "monthly"
+                          ? "mensual"
+                          : calculationData.period === "weekly"
+                          ? "semanal"
+                          : "diario"}
                       </p>
-                    ) : (
-                      <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="grid grid-cols-3 gap-2 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                          <span>Empresa</span>
-                          <span className="text-right">Horas</span>
-                          <span className="text-right">Importe</span>
-                        </div>
-                        {results.companyBreakdown.map((company) => (
-                          <div
-                            key={`${company.companyId ?? "sin"}-${
-                              company.name ?? "empresa"
-                            }`}
-                            className="grid grid-cols-3 gap-2 border-t border-gray-100 px-3 py-2 text-sm dark:border-gray-700/70"
-                          >
-                            <span className="text-gray-700 dark:text-gray-200">
-                              {company.name ?? "Sin empresa"}
+                    </div>
+                  )}
+
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between rounded-lg bg-green-50 p-3 dark:bg-green-900/20">
+                      <div>
+                        <span className="font-medium text-green-800 dark:text-green-300">
+                          Importe calculado
+                        </span>
+                      </div>
+                      <span className="text-xl font-bold text-green-900 dark:text-green-100">
+                        {formatCurrency(results.totalAmount)}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-gray-700">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-gray-900 dark:text-white">
+                          Detalle por empresa
+                        </h4>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {results.usesCalendarHours
+                            ? "Horas provenientes del calendario del mes"
+                            : "Horas distribuidas manualmente por contrato"}
+                        </span>
+                      </div>
+
+                      {results.companyBreakdown.length === 0 ? (
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          No hay horas registradas para este período.
+                        </p>
+                      ) : (
+                        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                          <div className="grid grid-cols-4 gap-2 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                            <span>Empresa</span>
+                            <span className="text-right">Horas</span>
+                            <span className="text-center">Forma</span>
+                            <span className="text-right">Importe</span>
+                          </div>
+                          {(() => {
+                            const haveGroups =
+                              companyGroups.length > 0 && groupedBreakdown;
+                            const rows = haveGroups
+                              ? [
+                                  ...groupedBreakdown!.groups.map((g) => ({
+                                    id: g.id,
+                                    name: g.name,
+                                    hours: g.hours,
+                                    amount: g.amount,
+                                    method: g.paymentMethod,
+                                    isGroup: true,
+                                    color: g.color,
+                                    items: g.items,
+                                  })),
+                                  ...groupedBreakdown!.remaining.map((r) => ({
+                                    name: r.name,
+                                    hours: r.hours,
+                                    amount: r.amount,
+                                    method: undefined,
+                                    isGroup: false,
+                                  })),
+                                ]
+                              : results.companyBreakdown.map((c) => ({
+                                  name: c.name ?? "Sin empresa",
+                                  hours: c.hours,
+                                  amount: c.amount,
+                                  method: undefined,
+                                  isGroup: false,
+                                }));
+                            return rows.flatMap((company, idx) => {
+                              const isGroup = company.isGroup;
+                              const groupId = (company as any).id as
+                                | string
+                                | undefined;
+                              const expanded = groupId
+                                ? expandedResultGroups[groupId]
+                                : false;
+                              const mainRow = (
+                                <div
+                                  key={`row-${idx}-${company.name}`}
+                                  className={`grid grid-cols-4 gap-2 border-t border-gray-100 px-3 py-2 text-sm dark:border-gray-700/70 ${
+                                    isGroup
+                                      ? "bg-gray-50/60 dark:bg-gray-800/40"
+                                      : ""
+                                  }`}
+                                >
+                                  <span className="text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                                    {isGroup ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          groupId &&
+                                          setExpandedResultGroups((p) => ({
+                                            ...p,
+                                            [groupId]: !p[groupId],
+                                          }))
+                                        }
+                                        className="inline-flex items-center gap-1 text-gray-700 dark:text-gray-200 hover:text-gray-900"
+                                        title={
+                                          expanded ? "Contraer" : "Desplegar"
+                                        }
+                                      >
+                                        {expanded ? (
+                                          <ChevronUp size={16} />
+                                        ) : (
+                                          <ChevronDown size={16} />
+                                        )}
+                                        <span className="font-semibold">
+                                          {company.name}
+                                        </span>
+                                      </button>
+                                    ) : (
+                                      <span>{company.name}</span>
+                                    )}
+                                  </span>
+                                  <span className="text-right text-gray-700 dark:text-gray-200">
+                                    {formatHours(company.hours)}
+                                  </span>
+                                  <span className="text-center">
+                                    {company.method === "bank" ? (
+                                      <span className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300">
+                                        <Landmark size={16} /> Banco
+                                      </span>
+                                    ) : company.method === "cash" ? (
+                                      <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                                        <Banknote size={16} /> Efectivo
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-400">-</span>
+                                    )}
+                                  </span>
+                                  <span className="text-right font-medium text-gray-900 dark:text-gray-100">
+                                    {formatCurrency(company.amount)}
+                                  </span>
+                                </div>
+                              );
+
+                              if (!isGroup || !expanded) {
+                                return [mainRow];
+                              }
+
+                              // Detail rows for group members
+                              const detail = (
+                                <div
+                                  key={`row-${idx}-${company.name}-detail`}
+                                  className="border-t border-gray-100 dark:border-gray-700/70 px-3 py-2"
+                                  style={{
+                                    background: `${
+                                      (company as any).color ?? "#2563eb"
+                                    }10`,
+                                  }}
+                                >
+                                  <div
+                                    className="pl-3 border-l-4"
+                                    style={{
+                                      borderLeftColor:
+                                        (company as any).color || "#2563eb",
+                                    }}
+                                  >
+                                    <div className="grid grid-cols-4 gap-2 text-sm">
+                                      <span className="font-medium text-gray-700 dark:text-gray-200">
+                                        Empresa
+                                      </span>
+                                      <span className="text-right font-medium text-gray-700 dark:text-gray-200">
+                                        Horas
+                                      </span>
+                                      <span></span>
+                                      <span className="text-right font-medium text-gray-700 dark:text-gray-200">
+                                        Importe
+                                      </span>
+                                      {(company as any).items?.map(
+                                        (it: any, i: number) => (
+                                          <React.Fragment
+                                            key={`it-${i}-${it.name}`}
+                                          >
+                                            <span className="text-gray-700 dark:text-gray-200">
+                                              {it.name}
+                                            </span>
+                                            <span className="text-right text-gray-700 dark:text-gray-200">
+                                              {formatHours(it.hours)}
+                                            </span>
+                                            <span></span>
+                                            <span className="text-right text-gray-900 dark:text-gray-100">
+                                              {formatCurrency(it.amount)}
+                                            </span>
+                                          </React.Fragment>
+                                        )
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                              return [mainRow, detail];
+                            });
+                          })()}
+                          <div className="grid grid-cols-4 gap-2 bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-900 dark:bg-gray-800 dark:text-gray-100">
+                            <span>Total</span>
+                            <span className="text-right">
+                              {formatHours(results.totalHours)}
                             </span>
-                            <span className="text-right text-gray-700 dark:text-gray-200">
-                              {formatHours(company.hours)}
-                            </span>
-                            <span className="text-right font-medium text-gray-900 dark:text-gray-100">
-                              {formatCurrency(company.amount)}
+                            <span />
+                            <span className="text-right">
+                              {formatCurrency(results.totalAmount)}
                             </span>
                           </div>
-                        ))}
-                        <div className="grid grid-cols-3 gap-2 bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-900 dark:bg-gray-800 dark:text-gray-100">
-                          <span>Total</span>
-                          <span className="text-right">
-                            {formatHours(results.totalHours)}
-                          </span>
-                          <span className="text-right">
-                            {formatCurrency(results.totalAmount)}
-                          </span>
                         </div>
-                      </div>
-                    )}
-                  </div>
+                      )}
+                    </div>
 
-                  <div className="mt-6 rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-                    <h4 className="mb-3 font-medium text-gray-900 dark:text-white">
-                      Resumen
-                    </h4>
-                    <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Horas regulares:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatHours(results.regularHours)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Horas extra:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatHours(results.overtimeHours)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Horas totales:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatHours(results.totalHours)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Importe total:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatCurrency(results.totalAmount)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Período:
-                        </span>
-                        <p className="font-medium capitalize text-gray-900 dark:text-gray-100">
-                          {calculationData.period === "monthly"
-                            ? "Mensual"
-                            : calculationData.period === "weekly"
-                            ? "Semanal"
-                            : "Diario"}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          Fecha:
-                        </span>
-                        <p className="font-medium text-gray-900 dark:text-gray-100">
-                          {formatDate(new Date().toISOString())}
-                        </p>
+                    <div className="mt-6 rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
+                      <h4 className="mb-3 font-medium text-gray-900 dark:text-white">
+                        Resumen
+                      </h4>
+                      <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                        <div>
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Horas regulares:
+                          </span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">
+                            {formatHours(results.regularHours)}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Horas extra:
+                          </span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">
+                            {formatHours(results.overtimeHours)}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Horas totales:
+                          </span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">
+                            {formatHours(results.totalHours)}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Importe total:
+                          </span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">
+                            {formatCurrency(results.totalAmount)}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Período:
+                          </span>
+                          <p className="font-medium capitalize text-gray-900 dark:text-gray-100">
+                            {calculationData.period === "monthly"
+                              ? "Mensual"
+                              : calculationData.period === "weekly"
+                              ? "Semanal"
+                              : "Diario"}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Fecha:
+                          </span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">
+                            {formatDate(new Date().toISOString())}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </CardContent>
+              )}
+            </CardContent>
+          )}
         </Card>
       </div>
 
@@ -3741,8 +4272,12 @@ export const SalaryCalculatorPage: React.FC = () => {
                 variant="outline"
                 leftIcon={<FileText size={16} />}
                 onClick={() => {
-                  // TODO: Generate PDF report
-                  alert("Función de exportar PDF próximamente");
+                  ensureSeedTemplates();
+                  setSelectedTemplateId((prev) => {
+                    if (prev) return prev;
+                    return templates[0]?.id ?? null;
+                  });
+                  setShowTemplateModal(true);
                 }}
               >
                 Exportar PDF
@@ -3766,6 +4301,67 @@ export const SalaryCalculatorPage: React.FC = () => {
           </CardContent>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={showTemplateModal}
+        title="Seleccionar plantilla para PDF"
+        description={
+          <div className="space-y-3">
+            {templates.length === 0 ? (
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                Generando plantillas de prueba...
+              </p>
+            ) : (
+              <div className="max-h-64 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 rounded-md border border-gray-200 dark:border-gray-700">
+                {templates.map((tpl) => (
+                  <label
+                    key={tpl.id}
+                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
+                    <input
+                      type="radio"
+                      name="tpl"
+                      checked={selectedTemplateId === tpl.id}
+                      onChange={() => setSelectedTemplateId(tpl.id)}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-3 w-3 rounded"
+                          style={{ backgroundColor: tpl.accentColor }}
+                        />
+                        <span className="font-medium text-gray-900 dark:text-gray-100 truncate">
+                          {tpl.name}
+                        </span>
+                      </div>
+                      {tpl.description && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                          {tpl.description}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        {tpl.pageSize} · {tpl.orientation}
+                      </p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        }
+        confirmLabel="Generar PDF"
+        cancelLabel="Cancelar"
+        onCancel={() => setShowTemplateModal(false)}
+        onConfirm={() => {
+          if (selectedTemplateId) {
+            setActiveTemplate(selectedTemplateId);
+          }
+          setShowTemplateModal(false);
+          // Aquí iría la generación del PDF usando la plantilla seleccionada
+          // Por ahora solo mostramos una notificación ligera
+          alert("Se generará el PDF con la plantilla seleccionada.");
+        }}
+      />
     </div>
   );
 };

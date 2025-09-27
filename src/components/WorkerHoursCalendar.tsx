@@ -24,6 +24,7 @@ interface WorkerHoursCalendarProps {
   hoursByDate: Record<string, DayHoursSummary>;
   onMonthChange: (date: Date) => void;
   isLoading?: boolean;
+  hideTitle?: boolean;
 }
 
 interface CalendarDay {
@@ -67,6 +68,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   hoursByDate,
   onMonthChange,
   isLoading = false,
+  hideTitle = false,
 }) => {
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
@@ -210,19 +212,21 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex flex-col gap-2">
-          <div className="flex w-full flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <CalendarIcon
-                className="text-blue-600 dark:text-blue-400"
-                size={20}
-              />
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Calendario de Horas
-              </h2>
+      <CardHeader className="py-6">
+        <div className="flex flex-col gap-2 pb-4">
+          {!hideTitle && (
+            <div className="flex w-full flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <CalendarIcon
+                  className="text-blue-600 dark:text-blue-400"
+                  size={20}
+                />
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Calendario de Horas
+                </h2>
+              </div>
             </div>
-          </div>
+          )}
           <div className="flex w-full items-center justify-center gap-2">
             <Button
               type="button"
