@@ -31,9 +31,9 @@ import {
 import ReactDOMServer from "react-dom/server";
 
 const createGuid = () =>
-  (typeof crypto !== "undefined" && "randomUUID" in crypto
+  typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2, 10));
+    : Math.random().toString(36).slice(2, 10);
 
 interface TemplateRenderContext {
   worker: Worker | null;
@@ -168,9 +168,7 @@ const TemplateDocument: React.FC<{
     backgroundColor: "#ffffff",
     color: "#0f172a",
     padding: preview ? "48px" : "40px",
-    boxShadow: preview
-      ? "0 25px 60px rgba(15, 23, 42, 0.12)"
-      : undefined,
+    boxShadow: preview ? "0 25px 60px rgba(15, 23, 42, 0.12)" : undefined,
     borderRadius: preview ? "18px" : "0",
     display: "flex",
     flexDirection: "column",
@@ -228,7 +226,9 @@ const TemplateDocument: React.FC<{
     sections.map((section) => (
       <div key={section.id} style={sectionStyle}>
         {section.title ? (
-          <h3 style={sectionTitleStyle}>{replaceTokens(section.title, context)}</h3>
+          <h3 style={sectionTitleStyle}>
+            {replaceTokens(section.title, context)}
+          </h3>
         ) : null}
         <p style={textStyle}>{replaceTokens(section.body, context)}</p>
       </div>
@@ -306,7 +306,7 @@ const TemplateDocument: React.FC<{
               <div>
                 <div style={{ fontWeight: 600 }}>{context.period.label}</div>
                 <div style={{ color: "#64748b" }}>
-                  {context.totals.totalHours.toFixed(2)} h · {" "}
+                  {context.totals.totalHours.toFixed(2)} h ·{" "}
                   {context.totals.totalTrackedDays} días
                 </div>
               </div>
@@ -445,8 +445,11 @@ const TemplateDocument: React.FC<{
                     }}
                   >
                     {entry.companies
-                      .map((company) =>
-                        `${company.name ?? ""} (${company.hours.toFixed(2)} h)`
+                      .map(
+                        (company) =>
+                          `${company.name ?? ""} (${company.hours.toFixed(
+                            2
+                          )} h)`
                       )
                       .join(" · ") || "—"}
                   </td>
@@ -536,7 +539,9 @@ const TemplatesPage: React.FC = () => {
   const { externalJwt } = useAuthStore();
 
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [companyLookup, setCompanyLookup] = useState<Record<string, string>>({});
+  const [companyLookup, setCompanyLookup] = useState<Record<string, string>>(
+    {}
+  );
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(false);
   const [workersError, setWorkersError] = useState<string | null>(null);
 
@@ -546,9 +551,8 @@ const TemplatesPage: React.FC = () => {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
-  const [hoursSummary, setHoursSummary] = useState<WorkerHoursSummaryResult | null>(
-    null
-  );
+  const [hoursSummary, setHoursSummary] =
+    useState<WorkerHoursSummaryResult | null>(null);
   const [isLoadingHours, setIsLoadingHours] = useState(false);
   const [hoursError, setHoursError] = useState<string | null>(null);
 
@@ -645,7 +649,9 @@ const TemplatesPage: React.FC = () => {
     if (!activeTemplateId) {
       return templates[0];
     }
-    return templates.find((template) => template.id === activeTemplateId) ?? null;
+    return (
+      templates.find((template) => template.id === activeTemplateId) ?? null
+    );
   }, [activeTemplateId, templates]);
 
   useEffect(() => {
@@ -687,8 +693,16 @@ const TemplatesPage: React.FC = () => {
   }, [dailyEntries]);
 
   const renderContext: TemplateRenderContext = useMemo(() => {
-    const firstDay = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
-    const lastDay = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0);
+    const firstDay = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth(),
+      1
+    );
+    const lastDay = new Date(
+      selectedMonth.getFullYear(),
+      selectedMonth.getMonth() + 1,
+      0
+    );
 
     return {
       worker: selectedWorker,
@@ -775,7 +789,11 @@ const TemplatesPage: React.FC = () => {
     }
 
     const markup = ReactDOMServer.renderToString(
-      <TemplateDocument template={activeTemplate} context={renderContext} preview={false} />
+      <TemplateDocument
+        template={activeTemplate}
+        context={renderContext}
+        preview={false}
+      />
     );
 
     const docHtml = `<!DOCTYPE html>
@@ -839,7 +857,9 @@ const TemplatesPage: React.FC = () => {
               <div>
                 <h3 className="font-semibold mb-1">Configura tu conexión</h3>
                 <p className="text-sm text-amber-600">
-                  Debes iniciar sesión y configurar la variable <code>VITE_API_BASE_URL</code> para poder cargar trabajadores y horas reales.
+                  Debes iniciar sesión y configurar la variable{" "}
+                  <code>VITE_API_BASE_URL</code> para poder cargar trabajadores
+                  y horas reales.
                 </p>
               </div>
             </div>
@@ -855,7 +875,11 @@ const TemplatesPage: React.FC = () => {
                 <FileText size={16} />
                 Plantillas
               </div>
-              <Button size="sm" variant="outline" onClick={() => createTemplate()}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => createTemplate()}
+              >
                 <Plus size={14} className="mr-2" />
                 Nueva
               </Button>
@@ -925,7 +949,8 @@ const TemplatesPage: React.FC = () => {
                 </label>
                 {isLoadingWorkers ? (
                   <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <Loader2 className="animate-spin" size={16} /> Cargando trabajadores...
+                    <Loader2 className="animate-spin" size={16} /> Cargando
+                    trabajadores...
                   </div>
                 ) : workersError ? (
                   <div className="text-sm text-red-500">{workersError}</div>
@@ -956,7 +981,8 @@ const TemplatesPage: React.FC = () => {
 
               {isLoadingHours ? (
                 <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Loader2 className="animate-spin" size={16} /> Calculando horas...
+                  <Loader2 className="animate-spin" size={16} /> Calculando
+                  horas...
                 </div>
               ) : hoursError ? (
                 <div className="text-sm text-red-500">{hoursError}</div>
@@ -995,7 +1021,8 @@ const TemplatesPage: React.FC = () => {
                         Configuración de la plantilla
                       </div>
                       <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Personaliza el documento y usa tokens para inyectar datos dinámicos.
+                        Personaliza el documento y usa tokens para inyectar
+                        datos dinámicos.
                       </p>
                     </div>
                     <Button
@@ -1033,7 +1060,9 @@ const TemplatesPage: React.FC = () => {
                     label="Descripción"
                     value={activeTemplate.description ?? ""}
                     onChange={(e) =>
-                      handleTemplateChange(() => ({ description: e.target.value }))
+                      handleTemplateChange(() => ({
+                        description: e.target.value,
+                      }))
                     }
                     rows={3}
                   />
@@ -1138,7 +1167,8 @@ const TemplatesPage: React.FC = () => {
                           Secciones
                         </h3>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Usa tokens para inyectar datos dinámicos. Ej: {"{{worker.name}}"}
+                          Usa tokens para inyectar datos dinámicos. Ej:{" "}
+                          {"{{worker.name}}"}
                         </p>
                       </div>
                       <Button size="sm" variant="outline" onClick={addSection}>
@@ -1237,7 +1267,8 @@ const TemplatesPage: React.FC = () => {
                     Tokens disponibles
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Copia cualquiera de los siguientes tokens y pégalo dentro del contenido de tus secciones.
+                    Copia cualquiera de los siguientes tokens y pégalo dentro
+                    del contenido de tus secciones.
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1250,7 +1281,9 @@ const TemplatesPage: React.FC = () => {
                         {group.items.map((item) => (
                           <button
                             key={item.token}
-                            onClick={() => navigator.clipboard.writeText(`{{${item.token}}}`)}
+                            onClick={() =>
+                              navigator.clipboard.writeText(`{{${item.token}}}`)
+                            }
                             className="text-left text-xs border border-dashed border-gray-300 dark:border-dark-600 rounded-lg px-3 py-2 hover:border-blue-500 hover:bg-blue-50/70 dark:hover:bg-blue-500/10"
                             title="Copiar token"
                           >
@@ -1275,7 +1308,9 @@ const TemplatesPage: React.FC = () => {
                       Vista previa
                     </div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {selectedWorker ? selectedWorker.name : "Selecciona un trabajador"}
+                      {selectedWorker
+                        ? selectedWorker.name
+                        : "Selecciona un trabajador"}
                       {" · "}
                       {monthLabel(selectedMonth)}
                     </div>
@@ -1295,7 +1330,8 @@ const TemplatesPage: React.FC = () => {
           ) : (
             <Card>
               <CardContent className="p-8 text-center text-gray-500 dark:text-gray-400">
-                Crea tu primera plantilla para comenzar a diseñar documentos PDF personalizados.
+                Crea tu primera plantilla para comenzar a diseñar documentos PDF
+                personalizados.
               </CardContent>
             </Card>
           )}

@@ -9,6 +9,7 @@ import {
   Calculator,
   Search,
   User,
+  Clock,
   DollarSign,
   FileText,
   RefreshCw,
@@ -369,7 +370,7 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-hidden">
+        <div className="w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-hidden">
           {/* Results */}
           <div className="max-h-48 overflow-y-auto">
             {filteredWorkers.length === 0 ? (
@@ -2609,6 +2610,11 @@ export const SalaryCalculatorPage: React.FC = () => {
                     />
                     Selección de Trabajador
                   </h2>
+                  {lastFetchTime && (
+                    <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                      Actualizado: {lastFetchTime.toLocaleString("es-ES")}
+                    </div>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -2624,11 +2630,6 @@ export const SalaryCalculatorPage: React.FC = () => {
                     Actualizar
                   </Button>
                 </div>
-                {lastFetchTime && (
-                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                    Actualizado: {lastFetchTime.toLocaleString("es-ES")}
-                  </div>
-                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -2973,398 +2974,411 @@ export const SalaryCalculatorPage: React.FC = () => {
                   )}
                 </div>
               )}
+            </CardContent>
+          </Card>
 
-              {/* Calculation Form */}
-              <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                <h3 className="font-medium text-gray-900 dark:text-white">
-                  Datos para Cálculo
-                </h3>
+          {/* Calculation Form */}
+          <Card>
+            <CardHeader>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <Clock
+                  size={20}
+                  className="mr-2 text-blue-600 dark:text-blue-400"
+                />
+                Datos para Cálculo
+              </h2>
+            </CardHeader>
 
-                <div className="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
-                  <div className="flex items-center justify-between gap-3 px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setIsContractInputsOpen((current) => !current)
-                      }
-                      className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left transition hover:bg-gray-50 dark:hover:bg-gray-900/70 rounded-md px-1"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-900 dark:text-white">
-                          Horas y sueldos por contrato
-                        </p>
-                        <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
-                          {manualContractAggregates.hasEntries
-                            ? `Total horas: ${formatHours(
-                                manualContractAggregates.totalHours
-                              )} · Total sueldo: ${formatCurrency(
-                                manualContractAggregates.totalBaseAmount
-                              )}`
-                            : "Distribuye las horas y el sueldo base por empresa"}
-                        </p>
-                      </div>
-                      <ChevronDown
-                        size={18}
-                        className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
-                          isContractInputsOpen ? "rotate-180" : ""
-                        }`}
-                      />
-                    </button>
-                    {(() => {
-                      const groups = companyContractStructure.groups;
-                      const allEnabled =
-                        groups.length > 0 &&
-                        groups.every((g) =>
-                          Boolean(autoFillHoursMap[g.companyKey])
-                        );
-                      return (
-                        <label
-                          className="inline-flex items-center gap-2 px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-sm text-gray-700 dark:text-gray-200"
-                          title={
-                            allEnabled
-                              ? "Desactivar 'Usar registro' en todas"
-                              : "Activar 'Usar registro' en todas"
-                          }
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            aria-label="Usar registro en todas"
-                            checked={allEnabled}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              handleToggleAllAutoFill(e.target.checked);
-                            }}
-                          />
-                          <span>Usar registro</span>
-                        </label>
-                      );
-                    })()}
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
+                <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIsContractInputsOpen((current) => !current)
+                    }
+                    className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    <ChevronDown
+                      size={18}
+                      className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
+                        isContractInputsOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-900 dark:text-white">
+                      Horas y sueldos por contrato
+                    </p>
+                    <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+                      {manualContractAggregates.hasEntries
+                        ? `Total horas: ${formatHours(
+                            manualContractAggregates.totalHours
+                          )}`
+                        : ""}
+                    </p>
                   </div>
-                  {isContractInputsOpen && (
-                    <div className="border-t border-gray-200 dark:border-gray-700">
-                      {companyContractStructure.groups.length === 0 ? (
-                        <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
-                          No hay empresas asignadas al trabajador. Añade las
-                          horas y sueldos manualmente cuando estén disponibles.
-                        </div>
-                      ) : (
-                        <div className="space-y-4 px-4 py-5">
-                          {companyContractStructure.groups.map((group) => {
-                            const summary =
-                              manualContractAggregates.companyList.find(
-                                (company) =>
-                                  (group.companyId &&
-                                    company.companyId === group.companyId) ||
-                                  company.companyName === group.companyName
-                              );
-
-                            const totalCompanyHours = summary?.hours ?? 0;
-                            const totalCompanyBase = summary?.baseAmount ?? 0;
-                            const isAutoFillEnabled = Boolean(
-                              autoFillHoursMap[group.companyKey]
+                  {(() => {
+                    const groups = companyContractStructure.groups;
+                    const allEnabled =
+                      groups.length > 0 &&
+                      groups.every((g) =>
+                        Boolean(autoFillHoursMap[g.companyKey])
+                      );
+                    return (
+                      <label
+                        className="inline-flex items-center gap-2 px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-sm text-gray-700 dark:text-gray-200"
+                        title={
+                          allEnabled
+                            ? "Desactivar 'Usar registro' en todas"
+                            : "Activar 'Usar registro' en todas"
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          aria-label="Usar registro en todas"
+                          checked={allEnabled}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            handleToggleAllAutoFill(e.target.checked);
+                          }}
+                        />
+                        <span>Usar registro</span>
+                      </label>
+                    );
+                  })()}
+                  <p className="mt-1 truncate text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end">
+                    {manualContractAggregates.hasEntries
+                      ? `Total: ${formatCurrency(
+                          manualContractAggregates.totalBaseAmount
+                        )}`
+                      : ""}
+                  </p>
+                </div>
+                {isContractInputsOpen && (
+                  <div className="border-t border-gray-200 dark:border-gray-700">
+                    {companyContractStructure.groups.length === 0 ? (
+                      <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
+                        No hay empresas asignadas al trabajador. Añade las horas
+                        y sueldos manualmente cuando estén disponibles.
+                      </div>
+                    ) : (
+                      <div className="space-y-4 px-4 py-5">
+                        {companyContractStructure.groups.map((group) => {
+                          const summary =
+                            manualContractAggregates.companyList.find(
+                              (company) =>
+                                (group.companyId &&
+                                  company.companyId === group.companyId) ||
+                                company.companyName === group.companyName
                             );
-                            const calendarHoursForGroup =
-                              getCalendarHoursForCompany(
-                                group.companyId,
-                                group.companyName
-                              );
-                            const isExpanded =
-                              expandedCompanyInputs[group.companyKey] ?? false;
 
-                            return (
+                          const totalCompanyHours = summary?.hours ?? 0;
+                          const totalCompanyBase = summary?.baseAmount ?? 0;
+                          const isAutoFillEnabled = Boolean(
+                            autoFillHoursMap[group.companyKey]
+                          );
+                          const calendarHoursForGroup =
+                            getCalendarHoursForCompany(
+                              group.companyId,
+                              group.companyName
+                            );
+                          const isExpanded =
+                            expandedCompanyInputs[group.companyKey] ?? false;
+
+                          return (
+                            <div
+                              key={group.companyKey}
+                              className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
+                            >
                               <div
-                                key={group.companyKey}
-                                className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
+                                className="border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer"
+                                onClick={() =>
+                                  handleCompanyGroupToggle(group.companyKey)
+                                }
                               >
-                                <div
-                                  className="border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer"
-                                  onClick={() =>
-                                    handleCompanyGroupToggle(group.companyKey)
-                                  }
-                                >
-                                  <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,160px)] items-center gap-4">
-                                    <div className="flex items-start gap-2 min-w-[220px]">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleCompanyGroupToggle(
-                                            group.companyKey
-                                          );
-                                        }}
-                                        className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
-                                        aria-expanded={isExpanded}
-                                        aria-label={
-                                          isExpanded
-                                            ? "Contraer empresa"
-                                            : "Expandir empresa"
+                                <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,160px)] items-center gap-4">
+                                  <div className="flex items-start gap-2 min-w-[220px]">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCompanyGroupToggle(
+                                          group.companyKey
+                                        );
+                                      }}
+                                      className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                      aria-expanded={isExpanded}
+                                      aria-label={
+                                        isExpanded
+                                          ? "Contraer empresa"
+                                          : "Expandir empresa"
+                                      }
+                                    >
+                                      <ChevronDown
+                                        size={16}
+                                        className={`transition-transform ${
+                                          isExpanded ? "rotate-180" : ""
+                                        }`}
+                                      />
+                                    </button>
+                                    <div className="min-w-0 select-none">
+                                      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+                                        {group.companyName}
+                                      </p>
+                                      {(() => {
+                                        const isHoursDifferent =
+                                          calendarHoursForGroup > 0 &&
+                                          Math.abs(
+                                            totalCompanyHours -
+                                              calendarHoursForGroup
+                                          ) > 0.001;
+                                        const hoursClass = isHoursDifferent
+                                          ? "text-amber-700 dark:text-amber-300"
+                                          : "text-gray-600 dark:text-gray-300";
+                                        return (
+                                          <p
+                                            className={`text-xs font-medium mt-0.5 ${hoursClass}`}
+                                          >
+                                            {formatHours(totalCompanyHours)}{" "}
+                                            Horas
+                                          </p>
+                                        );
+                                      })()}
+                                    </div>
+                                  </div>
+                                  <div
+                                    className="flex items-center justify-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 min-w-[180px] justify-center"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        checked={isAutoFillEnabled}
+                                        onChange={(event) =>
+                                          handleAutoFillHoursToggle(
+                                            group,
+                                            event.target.checked
+                                          )
                                         }
-                                      >
-                                        <ChevronDown
-                                          size={16}
-                                          className={`transition-transform ${
-                                            isExpanded ? "rotate-180" : ""
-                                          }`}
-                                        />
-                                      </button>
-                                      <div className="min-w-0 select-none">
-                                        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                                          {group.companyName}
-                                        </p>
-                                        {(() => {
-                                          const isHoursDifferent =
-                                            calendarHoursForGroup > 0 &&
-                                            Math.abs(
-                                              totalCompanyHours -
-                                                calendarHoursForGroup
-                                            ) > 0.001;
-                                          const hoursClass = isHoursDifferent
-                                            ? "text-amber-700 dark:text-amber-300"
-                                            : "text-gray-600 dark:text-gray-300";
-                                          return (
-                                            <p
-                                              className={`text-xs font-medium mt-0.5 ${hoursClass}`}
-                                            >
-                                              {formatHours(totalCompanyHours)}{" "}
-                                              Horas
-                                            </p>
-                                          );
-                                        })()}
-                                      </div>
-                                    </div>
-                                    <div
-                                      className="flex items-center justify-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 min-w-[180px] justify-center"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
-                                        <input
-                                          type="checkbox"
-                                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                          checked={isAutoFillEnabled}
-                                          onChange={(event) =>
-                                            handleAutoFillHoursToggle(
-                                              group,
-                                              event.target.checked
-                                            )
-                                          }
-                                          onClick={(e) => e.stopPropagation()}
-                                        />
-                                        <span>Usar registro</span>
-                                      </label>
-                                    </div>
-                                    <div
-                                      className="text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {formatCurrency(totalCompanyBase)}
-                                    </div>
+                                        onClick={(e) => e.stopPropagation()}
+                                      />
+                                      <span>Usar registro</span>
+                                    </label>
+                                  </div>
+                                  <div
+                                    className="text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {formatCurrency(totalCompanyBase)}
                                   </div>
                                 </div>
+                              </div>
 
-                                {isExpanded && (
-                                  <div className="space-y-3 px-3 py-2.5">
-                                    {group.entries.map((entry) => {
-                                      const contractInput = calculationData
-                                        .companyContractInputs[
+                              {isExpanded && (
+                                <div className="space-y-3 px-3 py-2.5">
+                                  {group.entries.map((entry) => {
+                                    const contractInput = calculationData
+                                      .companyContractInputs[
+                                      entry.contractKey
+                                    ] ?? {
+                                      hours: "",
+                                      baseSalary: "",
+                                    };
+                                    const contractMeta =
+                                      companyContractStructure.contractMap.get(
                                         entry.contractKey
-                                      ] ?? {
-                                        hours: "",
-                                        baseSalary: "",
-                                      };
-                                      const contractMeta =
-                                        companyContractStructure.contractMap.get(
-                                          entry.contractKey
-                                        );
+                                      );
 
-                                      return (
-                                        <div
-                                          key={entry.contractKey}
-                                          className="rounded-md border border-dashed border-gray-300 p-2.5 dark:border-gray-600"
-                                        >
-                                          <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <div>
-                                              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                                                {entry.label}
+                                    return (
+                                      <div
+                                        key={entry.contractKey}
+                                        className="rounded-md border border-dashed border-gray-300 p-2.5 dark:border-gray-600"
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div>
+                                            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+                                              {entry.label}
+                                            </p>
+                                            {entry.description && (
+                                              <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
+                                                {entry.description}
                                               </p>
-                                              {entry.description && (
-                                                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
-                                                  {entry.description}
-                                                </p>
-                                              )}
-                                            </div>
-                                            {!entry.hasContract && (
-                                              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
-                                                Sin contrato
-                                              </span>
                                             )}
                                           </div>
-
-                                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                            <Input
-                                              type="number"
-                                              label="Horas"
-                                              placeholder="0"
-                                              value={contractInput.hours}
-                                              size="sm"
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "hours",
-                                                  event.target.value
-                                                )
-                                              }
-                                              min="0"
-                                              step="0.25"
-                                              fullWidth
-                                            />
-                                            <Input
-                                              type="number"
-                                              label="Precio/Hora (€)"
-                                              placeholder="0"
-                                              value={
-                                                contractInput.hourlyRate ??
-                                                (typeof contractMeta?.hourlyRate ===
-                                                "number"
-                                                  ? String(
-                                                      contractMeta.hourlyRate
-                                                    )
-                                                  : "")
-                                              }
-                                              size="sm"
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "hourlyRate",
-                                                  event.target.value
-                                                )
-                                              }
-                                              step="0.01"
-                                              fullWidth
-                                            />
-                                            <Input
-                                              type="number"
-                                              label="Sueldo base (€)"
-                                              placeholder="0"
-                                              value={contractInput.baseSalary}
-                                              size="sm"
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "baseSalary",
-                                                  event.target.value
-                                                )
-                                              }
-                                              step="0.01"
-                                              fullWidth
-                                            />
-                                          </div>
+                                          {!entry.hasContract && (
+                                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                                              Sin contrato
+                                            </span>
+                                          )}
                                         </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Select
-                    label="Período"
-                    value={calculationData.period}
-                    onChange={(value) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        period: value as CalculationFormState["period"],
-                      }))
-                    }
-                    options={[
-                      { value: "monthly", label: "Mensual" },
-                      { value: "weekly", label: "Semanal" },
-                      { value: "daily", label: "Diario" },
-                    ]}
-                    fullWidth
-                  />
+                                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                          <Input
+                                            type="number"
+                                            label="Horas"
+                                            placeholder="0"
+                                            value={contractInput.hours}
+                                            size="sm"
+                                            onChange={(event) =>
+                                              handleContractInputChange(
+                                                entry.contractKey,
+                                                "hours",
+                                                event.target.value
+                                              )
+                                            }
+                                            min="0"
+                                            step="0.25"
+                                            fullWidth
+                                          />
+                                          <Input
+                                            type="number"
+                                            label="Precio/Hora (€)"
+                                            placeholder="0"
+                                            value={
+                                              contractInput.hourlyRate ??
+                                              (typeof contractMeta?.hourlyRate ===
+                                              "number"
+                                                ? String(
+                                                    contractMeta.hourlyRate
+                                                  )
+                                                : "")
+                                            }
+                                            size="sm"
+                                            onChange={(event) =>
+                                              handleContractInputChange(
+                                                entry.contractKey,
+                                                "hourlyRate",
+                                                event.target.value
+                                              )
+                                            }
+                                            step="0.01"
+                                            fullWidth
+                                          />
+                                          <Input
+                                            type="number"
+                                            label="Sueldo base (€)"
+                                            placeholder="0"
+                                            value={contractInput.baseSalary}
+                                            size="sm"
+                                            onChange={(event) =>
+                                              handleContractInputChange(
+                                                entry.contractKey,
+                                                "baseSalary",
+                                                event.target.value
+                                              )
+                                            }
+                                            step="0.01"
+                                            fullWidth
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
-                  <Input
-                    type="number"
-                    label="Horas Extra"
-                    value={calculationData.overtimeHours}
-                    onChange={(e) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        overtimeHours: e.target.value,
-                      }))
-                    }
-                    placeholder="0"
-                    fullWidth
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    type="number"
-                    label="Bonificaciones (€)"
-                    value={calculationData.bonuses}
-                    onChange={(e) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        bonuses: e.target.value,
-                      }))
-                    }
-                    placeholder="0"
-                    fullWidth
-                  />
-
-                  <Input
-                    type="number"
-                    label="Deducciones (€)"
-                    value={calculationData.deductions}
-                    onChange={(e) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        deductions: e.target.value,
-                      }))
-                    }
-                    placeholder="0"
-                    fullWidth
-                  />
-                </div>
-
-                <Input
-                  label="Notas"
-                  value={calculationData.notes}
-                  onChange={(e) =>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Select
+                  label="Período"
+                  value={calculationData.period}
+                  onChange={(value) =>
                     setCalculationData((prev) => ({
                       ...prev,
-                      notes: e.target.value,
+                      period: value as CalculationFormState["period"],
                     }))
                   }
-                  placeholder="Notas adicionales..."
+                  options={[
+                    { value: "monthly", label: "Mensual" },
+                    { value: "weekly", label: "Semanal" },
+                    { value: "daily", label: "Diario" },
+                  ]}
                   fullWidth
                 />
 
-                <Button
-                  onClick={handleCalculate}
-                  disabled={
-                    !selectedWorker ||
-                    (!manualContractAggregates.hasEntries &&
-                      (!calculationData.baseSalary ||
-                        calculationData.baseSalary.trim().length === 0))
+                <Input
+                  type="number"
+                  label="Horas Extra"
+                  value={calculationData.overtimeHours}
+                  onChange={(e) =>
+                    setCalculationData((prev) => ({
+                      ...prev,
+                      overtimeHours: e.target.value,
+                    }))
                   }
-                  isLoading={isCalculating}
-                  leftIcon={<Calculator size={18} />}
-                  className="w-full"
-                >
-                  Calcular Sueldo
-                </Button>
+                  placeholder="0"
+                  fullWidth
+                />
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input
+                  type="number"
+                  label="Bonificaciones (€)"
+                  value={calculationData.bonuses}
+                  onChange={(e) =>
+                    setCalculationData((prev) => ({
+                      ...prev,
+                      bonuses: e.target.value,
+                    }))
+                  }
+                  placeholder="0"
+                  fullWidth
+                />
+
+                <Input
+                  type="number"
+                  label="Deducciones (€)"
+                  value={calculationData.deductions}
+                  onChange={(e) =>
+                    setCalculationData((prev) => ({
+                      ...prev,
+                      deductions: e.target.value,
+                    }))
+                  }
+                  placeholder="0"
+                  fullWidth
+                />
+              </div>
+
+              <Input
+                label="Notas"
+                value={calculationData.notes}
+                onChange={(e) =>
+                  setCalculationData((prev) => ({
+                    ...prev,
+                    notes: e.target.value,
+                  }))
+                }
+                placeholder="Notas adicionales..."
+                fullWidth
+              />
+
+              <Button
+                onClick={handleCalculate}
+                disabled={
+                  !selectedWorker ||
+                  (!manualContractAggregates.hasEntries &&
+                    (!calculationData.baseSalary ||
+                      calculationData.baseSalary.trim().length === 0))
+                }
+                isLoading={isCalculating}
+                leftIcon={<Calculator size={18} />}
+                className="w-full"
+              >
+                Calcular Sueldo
+              </Button>
             </CardContent>
           </Card>
 
@@ -3378,6 +3392,175 @@ export const SalaryCalculatorPage: React.FC = () => {
             />
           </div>
         </div>
+
+        {/* Results */}
+        <Card>
+          <CardHeader>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+              <Calculator
+                size={20}
+                className="mr-2 text-yellow-600 dark:text-yellow-400"
+              />
+              Otras operaciones de Cálculo
+            </h2>
+          </CardHeader>
+          <CardContent>
+            {!results ? (
+              <div className="text-center py-8">
+                <Calculator size={48} className="mx-auto text-gray-400 mb-4" />
+                <p className="text-gray-500 dark:text-gray-400">
+                  Selecciona un trabajador y completa los datos para ver los
+                  resultados
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {selectedWorker && (
+                  <div className="text-center mb-6">
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+                      {selectedWorker.name}
+                    </h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Cálculo{" "}
+                      {calculationData.period === "monthly"
+                        ? "mensual"
+                        : calculationData.period === "weekly"
+                        ? "semanal"
+                        : "diario"}
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between rounded-lg bg-green-50 p-3 dark:bg-green-900/20">
+                    <div>
+                      <span className="font-medium text-green-800 dark:text-green-300">
+                        Importe calculado
+                      </span>
+                    </div>
+                    <span className="text-xl font-bold text-green-900 dark:text-green-100">
+                      {formatCurrency(results.totalAmount)}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium text-gray-900 dark:text-white">
+                        Detalle por empresa
+                      </h4>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {results.usesCalendarHours
+                          ? "Horas provenientes del calendario del mes"
+                          : "Horas distribuidas manualmente por contrato"}
+                      </span>
+                    </div>
+
+                    {results.companyBreakdown.length === 0 ? (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        No hay horas registradas para este período.
+                      </p>
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                        <div className="grid grid-cols-3 gap-2 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                          <span>Empresa</span>
+                          <span className="text-right">Horas</span>
+                          <span className="text-right">Importe</span>
+                        </div>
+                        {results.companyBreakdown.map((company) => (
+                          <div
+                            key={`${company.companyId ?? "sin"}-${
+                              company.name ?? "empresa"
+                            }`}
+                            className="grid grid-cols-3 gap-2 border-t border-gray-100 px-3 py-2 text-sm dark:border-gray-700/70"
+                          >
+                            <span className="text-gray-700 dark:text-gray-200">
+                              {company.name ?? "Sin empresa"}
+                            </span>
+                            <span className="text-right text-gray-700 dark:text-gray-200">
+                              {formatHours(company.hours)}
+                            </span>
+                            <span className="text-right font-medium text-gray-900 dark:text-gray-100">
+                              {formatCurrency(company.amount)}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="grid grid-cols-3 gap-2 bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-900 dark:bg-gray-800 dark:text-gray-100">
+                          <span>Total</span>
+                          <span className="text-right">
+                            {formatHours(results.totalHours)}
+                          </span>
+                          <span className="text-right">
+                            {formatCurrency(results.totalAmount)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-6 rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
+                    <h4 className="mb-3 font-medium text-gray-900 dark:text-white">
+                      Resumen
+                    </h4>
+                    <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                      <div>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          Horas regulares:
+                        </span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
+                          {formatHours(results.regularHours)}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          Horas extra:
+                        </span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
+                          {formatHours(results.overtimeHours)}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          Horas totales:
+                        </span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
+                          {formatHours(results.totalHours)}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          Importe total:
+                        </span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
+                          {formatCurrency(results.totalAmount)}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          Período:
+                        </span>
+                        <p className="font-medium capitalize text-gray-900 dark:text-gray-100">
+                          {calculationData.period === "monthly"
+                            ? "Mensual"
+                            : calculationData.period === "weekly"
+                            ? "Semanal"
+                            : "Diario"}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          Fecha:
+                        </span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
+                          {formatDate(new Date().toISOString())}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Results */}
         <Card>
