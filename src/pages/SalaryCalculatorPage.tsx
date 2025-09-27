@@ -2028,6 +2028,35 @@ export const SalaryCalculatorPage: React.FC = () => {
     };
   }, [companyLookup, selectedWorker]);
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+  const allCompaniesAutoFillEnabled =
+    companyContractStructure.groups.length > 0 &&
+    companyContractStructure.groups.every((group) =>
+      Boolean(autoFillHoursMap[group.companyKey])
+    );
+=======
+=======
+>>>>>>> theirs
+  const allCompaniesAutoFillEnabled = useMemo(() => {
+    const groups = companyContractStructure.groups;
+    return (
+      groups.length > 0 &&
+      groups.every((group) => Boolean(autoFillHoursMap[group.companyKey]))
+    );
+  }, [autoFillHoursMap, companyContractStructure.groups]);
+<<<<<<< ours
+>>>>>>> theirs
+
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+
+>>>>>>> theirs
   useEffect(() => {
     setExpandedCompanyInputs((prev) => {
       const next = { ...prev };
@@ -2091,7 +2120,8 @@ export const SalaryCalculatorPage: React.FC = () => {
       const explicitBase = Number.isFinite(parsedBase) ? parsedBase : 0;
       const hourlyRate = Number.isFinite(parsedRateFromInput)
         ? parsedRateFromInput
-        : typeof meta?.hourlyRate === "number" && Number.isFinite(meta.hourlyRate)
+        : typeof meta?.hourlyRate === "number" &&
+          Number.isFinite(meta.hourlyRate)
         ? meta.hourlyRate
         : 0;
 
