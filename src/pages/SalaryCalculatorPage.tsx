@@ -120,6 +120,13 @@ interface CompanyContractInputState {
   hourlyRate?: string;
 }
 
+type CompanyKey = string;
+
+type PaymentMethod = "bank" | "cash";
+const SELF_TARGET_KEY = "__self__" as const;
+
+type SplitTargetKey = CompanyKey | typeof SELF_TARGET_KEY | null;
+
 interface CalculationFormState {
   baseSalary: string;
   hoursWorked: string;
@@ -138,11 +145,17 @@ interface CalculationResult {
   overtimeHours: number;
   companyBreakdown: Array<{
     companyId?: string;
+    companyKey?: CompanyKey;
     name?: string;
     hours: number;
     amount: number;
+    otherPayments?: OtherPaymentDetailSummary[];
   }>;
   usesCalendarHours: boolean;
+  otherPaymentsSummary: {
+    byCompany: CompanyOtherPaymentsSummary[];
+    unassigned: UnassignedOtherPaymentsSummary;
+  };
 }
 
 type OtherPaymentCategory =
@@ -156,6 +169,8 @@ interface OtherPaymentItem {
   id: string;
   label: string;
   amount: string;
+  companyKey: CompanyKey | null;
+  paymentMethod: PaymentMethod;
 }
 
 type OtherPaymentsState = Record<OtherPaymentCategory, OtherPaymentItem[]>;
@@ -186,22 +201,88 @@ const createEmptyOtherPaymentsState = (): OtherPaymentsState => ({
   deductions: [],
 });
 
-type CompanyKey = string;
+const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
+  { value: "bank", label: "Banco" },
+  { value: "cash", label: "Efectivo" },
+];
+
+type OtherPaymentFlow = "income" | "expense";
+
+interface OtherPaymentDetailSummary {
+  id: string;
+  label: string;
+  amount: number;
+  category: OtherPaymentCategory;
+  type: OtherPaymentFlow;
+  paymentMethod: PaymentMethod;
+}
+
+interface CompanyOtherPaymentsSummary {
+  companyKey: CompanyKey;
+  companyName: string;
+  companyId?: string;
+  incomes: number;
+  expenses: number;
+  total: number;
+  details: OtherPaymentDetailSummary[];
+}
+
+interface UnassignedOtherPaymentsSummary {
+  incomes: number;
+  expenses: number;
+  total: number;
+  details: OtherPaymentDetailSummary[];
+}
 
 interface SplitPaymentRule {
   id: string;
-  targetKey: CompanyKey | null;
+  targetKey: SplitTargetKey;
   mode: "percentage" | "amount";
   value: string;
-  method: "bank" | "cash";
+  method: PaymentMethod;
 }
 
 interface SplitConfig {
   mode: "keep" | "split";
   rules: SplitPaymentRule[];
+  remainderMethod: PaymentMethod;
 }
 
 type SplitConfigsState = Record<CompanyKey, SplitConfig>;
+
+interface TierPaymentRule {
+  id: string;
+  label: string;
+  mode: "amount" | "percentage";
+  value: string;
+  method: PaymentMethod;
+  applyToRemainder: boolean;
+}
+
+function createTierRule(
+  label: string,
+  method: PaymentMethod,
+  applyToRemainder: boolean
+): TierPaymentRule {
+  return {
+    id:
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    label,
+    mode: "amount",
+    value: "",
+    method,
+    applyToRemainder,
+  };
+}
+
+function createDefaultTierRules(): TierPaymentRule[] {
+  return [
+    createTierRule("Tramo 1", "cash", false),
+    createTierRule("Resto", "bank", true),
+  ];
+}
 
 const escapePdfText = (value: string) =>
   value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -630,7 +711,9 @@ export const SalaryCalculatorPage: React.FC = () => {
     createEmptyOtherPaymentsState()
   );
   const [splitConfigs, setSplitConfigs] = useState<SplitConfigsState>({});
-
+  const [tierPaymentRules, setTierPaymentRules] = useState<TierPaymentRule[]>(
+    () => createDefaultTierRules()
+  );
   // Collapsible modules state
   const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(true);
   const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
@@ -640,6 +723,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     useState(true);
   const [isSplitPaymentsCollapsed, setIsSplitPaymentsCollapsed] =
     useState(true);
+  const [isTierPaymentsCollapsed, setIsTierPaymentsCollapsed] = useState(true);
   const [isResultsCollapsed, setIsResultsCollapsed] = useState(true);
 
   // PDF export modal state
@@ -688,11 +772,20 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [results, setResults] = useState<CalculationResult | null>(null);
 
   const getCompanyKey = useCallback(
-    (entry: { companyId?: string; name?: string }) => {
-      return (
-        (entry.companyId && String(entry.companyId)) ||
-        (entry.name ? `name:${entry.name}` : "sin")
-      );
+    (entry: { companyId?: string; name?: string; companyKey?: CompanyKey }) => {
+      if (entry.companyKey) {
+        return entry.companyKey;
+      }
+
+      if (entry.companyId) {
+        return `id:${entry.companyId}`;
+      }
+
+      if (entry.name) {
+        return `name:${entry.name}`;
+      }
+
+      return "sin";
     },
     []
   );
@@ -704,6 +797,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         name: string;
         hours: number;
         amount: number;
+        otherPayments: OtherPaymentDetailSummary[];
       }>;
     return results.companyBreakdown
       .filter((c) => isValidCompanyName(c.name))
@@ -712,6 +806,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         name: c.name ?? "",
         hours: c.hours,
         amount: c.amount,
+        otherPayments: c.otherPayments ?? [],
       }));
   }, [results, getCompanyKey]);
 
@@ -723,14 +818,15 @@ export const SalaryCalculatorPage: React.FC = () => {
         const filteredRules =
           existing?.rules?.filter(
             (rule) =>
-              rule.targetKey &&
-              rule.targetKey !== company.key &&
+              rule.targetKey === null ||
+              rule.targetKey === SELF_TARGET_KEY ||
               availableCompanies.some((c) => c.key === rule.targetKey)
           ) ?? [];
 
         next[company.key] = {
           mode: existing?.mode ?? "keep",
           rules: filteredRules,
+          remainderMethod: existing?.remainderMethod ?? "bank",
         };
       });
       return next;
@@ -749,29 +845,6 @@ export const SalaryCalculatorPage: React.FC = () => {
     return assignments;
   }, [companyGroups]);
 
-  const otherPaymentsTotals = useMemo(() => {
-    let additions = 0;
-    let subtractions = 0;
-
-    (Object.keys(otherPayments) as OtherPaymentCategory[]).forEach(
-      (category) => {
-        otherPayments[category].forEach((item) => {
-          const amount = parseFloat(item.amount.replace(",", "."));
-          if (!Number.isFinite(amount)) {
-            return;
-          }
-          if (CREDIT_CATEGORIES.includes(category)) {
-            additions += amount;
-          } else {
-            subtractions += amount;
-          }
-        });
-      }
-    );
-
-    return { additions, subtractions };
-  }, [otherPayments]);
-
   const addOtherPayment = (category: OtherPaymentCategory) => {
     const newItem: OtherPaymentItem = {
       id:
@@ -780,6 +853,8 @@ export const SalaryCalculatorPage: React.FC = () => {
           : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       label: "",
       amount: "",
+      companyKey: null,
+      paymentMethod: "bank",
     };
 
     setOtherPayments((prev) => ({
@@ -791,14 +866,32 @@ export const SalaryCalculatorPage: React.FC = () => {
   const updateOtherPayment = (
     category: OtherPaymentCategory,
     id: string,
-    field: "label" | "amount",
+    field: "label" | "amount" | "companyKey" | "paymentMethod",
     value: string
   ) => {
     setOtherPayments((prev) => ({
       ...prev,
-      [category]: prev[category].map((item) =>
-        item.id === id ? { ...item, [field]: value } : item
-      ),
+      [category]: prev[category].map((item) => {
+        if (item.id !== id) {
+          return item;
+        }
+
+        if (field === "companyKey") {
+          return {
+            ...item,
+            companyKey: value ? (value as CompanyKey) : null,
+          };
+        }
+
+        if (field === "paymentMethod") {
+          return {
+            ...item,
+            paymentMethod: value === "cash" ? "cash" : "bank",
+          };
+        }
+
+        return { ...item, [field]: value };
+      }),
     }));
   };
 
@@ -809,9 +902,99 @@ export const SalaryCalculatorPage: React.FC = () => {
     }));
   };
 
+  const addTierPaymentRule = () => {
+    setTierPaymentRules((prev) => {
+      const label = `Tramo ${prev.length + 1}`;
+      const newRule = createTierRule(label, "cash", false);
+      const remainderIndex = prev.findIndex((rule) => rule.applyToRemainder);
+      if (remainderIndex === -1) {
+        return [...prev, newRule];
+      }
+      const next = [...prev];
+      next.splice(remainderIndex, 0, newRule);
+      return next;
+    });
+  };
+
+  const updateTierPaymentRule = <K extends keyof TierPaymentRule>(
+    id: string,
+    field: K,
+    value: TierPaymentRule[K]
+  ) => {
+    setTierPaymentRules((prev) => {
+      return prev.map((rule) => {
+        if (rule.id !== id) {
+          return rule;
+        }
+
+        if (field === "mode") {
+          const nextMode = value as TierPaymentRule["mode"];
+          return {
+            ...rule,
+            mode: nextMode,
+            value: rule.applyToRemainder ? "" : rule.value,
+          };
+        }
+
+        if (field === "method") {
+          return {
+            ...rule,
+            method: value === "cash" ? "cash" : "bank",
+          };
+        }
+
+        return {
+          ...rule,
+          [field]: value,
+        };
+      });
+    });
+  };
+
+  const removeTierPaymentRule = (id: string) => {
+    setTierPaymentRules((prev) => {
+      const filtered = prev.filter((rule) => rule.id !== id);
+      if (filtered.length === 0) {
+        return prev;
+      }
+      if (!filtered.some((rule) => rule.applyToRemainder)) {
+        const lastIndex = filtered.length - 1;
+        filtered[lastIndex] = {
+          ...filtered[lastIndex],
+          applyToRemainder: true,
+          mode: "amount",
+          value: "",
+        };
+      }
+      return filtered;
+    });
+  };
+
+  const setTierRuleAsRemainder = (id: string) => {
+    setTierPaymentRules((prev) => {
+      const target = prev.find((rule) => rule.id === id);
+      if (!target) {
+        return prev;
+      }
+      const others = prev
+        .filter((rule) => rule.id !== id)
+        .map((rule) => ({ ...rule, applyToRemainder: false }));
+      return [
+        ...others,
+        {
+          ...target,
+          applyToRemainder: true,
+          mode: "amount",
+          value: "",
+        },
+      ];
+    });
+  };
+
   const setSplitMode = (sourceKey: CompanyKey, mode: "keep" | "split") => {
     setSplitConfigs((prev) => {
-      const existing = prev[sourceKey] ?? { mode: "keep", rules: [] };
+      const existing =
+        prev[sourceKey] ?? { mode: "keep", rules: [], remainderMethod: "bank" };
       return {
         ...prev,
         [sourceKey]: {
@@ -826,30 +1009,32 @@ export const SalaryCalculatorPage: React.FC = () => {
     const candidateDestinations = availableCompanies.filter(
       (company) => company.key !== sourceKey
     );
-    if (candidateDestinations.length === 0) {
-      return;
-    }
-
-    const fallbackTarget = candidateDestinations[0].key;
-
     setSplitConfigs((prev) => {
-      const existing = prev[sourceKey] ?? { mode: "split", rules: [] };
+      const existing =
+        prev[sourceKey] ?? {
+          mode: "split",
+          rules: [],
+          remainderMethod: "bank",
+        };
       const existingTargets = new Set(
         existing.rules
           .map((rule) => rule.targetKey)
-          .filter((key): key is CompanyKey => Boolean(key))
+          .filter(
+            (key): key is CompanyKey =>
+              Boolean(key) && key !== SELF_TARGET_KEY
+          )
       );
       const defaultTarget =
         candidateDestinations.find(
           (company) => !existingTargets.has(company.key)
-        )?.key ?? fallbackTarget;
+        )?.key ?? (candidateDestinations[0]?.key ?? SELF_TARGET_KEY);
 
       const newRule: SplitPaymentRule = {
         id:
           typeof crypto !== "undefined" && "randomUUID" in crypto
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        targetKey: defaultTarget,
+        targetKey: defaultTarget ?? SELF_TARGET_KEY,
         mode: "percentage",
         value: "",
         method: "bank",
@@ -860,6 +1045,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         [sourceKey]: {
           mode: "split",
           rules: [...existing.rules, newRule],
+          remainderMethod: existing.remainderMethod ?? "bank",
         },
       };
     });
@@ -904,6 +1090,27 @@ export const SalaryCalculatorPage: React.FC = () => {
     });
   };
 
+  const setSplitRemainderMethod = (
+    sourceKey: CompanyKey,
+    method: PaymentMethod
+  ) => {
+    setSplitConfigs((prev) => {
+      const existing =
+        prev[sourceKey] ?? { mode: "keep", rules: [], remainderMethod: method };
+      if (existing.remainderMethod === method && prev[sourceKey]) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [sourceKey]: {
+          ...existing,
+          remainderMethod: method,
+        },
+      };
+    });
+  };
+
   const splitSummaries = useMemo(() => {
     const summaries = new Map<
       CompanyKey,
@@ -929,29 +1136,108 @@ export const SalaryCalculatorPage: React.FC = () => {
       }
 
       let distributed = 0;
+      let remaining = sourceAmount;
       const ruleAmounts = new Map<string, number>();
       config.rules.forEach((rule) => {
-        if (!rule.targetKey || rule.targetKey === company.key) {
+        if (!rule.targetKey) {
+          ruleAmounts.set(rule.id, 0);
           return;
         }
+
+        if (remaining <= 0) {
+          ruleAmounts.set(rule.id, 0);
+          return;
+        }
+
         const raw = parseFloat(rule.value.replace(",", "."));
         const numeric = Number.isFinite(raw) ? raw : 0;
-        const amount =
-          rule.mode === "percentage" ? (sourceAmount * numeric) / 100 : numeric;
+        if (numeric <= 0) {
+          ruleAmounts.set(rule.id, 0);
+          return;
+        }
+
+        const desired =
+          rule.mode === "percentage"
+            ? (sourceAmount * numeric) / 100
+            : numeric;
+        const amount = Math.max(0, Math.min(desired, remaining));
         distributed += amount;
+        remaining -= amount;
         ruleAmounts.set(rule.id, amount);
       });
 
       summaries.set(company.key, {
         sourceAmount,
         distributed,
-        remaining: sourceAmount - distributed,
+        remaining,
         ruleAmounts,
       });
     });
 
     return summaries;
   }, [availableCompanies, splitConfigs]);
+
+  const tieredPayments = useMemo(() => {
+    const total = results?.totalAmount ?? 0;
+    if (tierPaymentRules.length === 0) {
+      return {
+        total,
+        assigned: 0,
+        remaining: total,
+        items: [] as Array<{
+          id: string;
+          label: string;
+          amount: number;
+          method: PaymentMethod;
+          applyToRemainder: boolean;
+        }>,
+      };
+    }
+
+    let remaining = total;
+    const items = tierPaymentRules.map((rule) => {
+      let amount = 0;
+      if (remaining <= 0) {
+        amount = 0;
+      } else if (rule.applyToRemainder) {
+        amount = remaining;
+        remaining = 0;
+      } else {
+        const raw = parseFloat(rule.value.replace(",", "."));
+        const numeric = Number.isFinite(raw) ? raw : 0;
+        if (numeric > 0) {
+          const desired =
+            rule.mode === "percentage" ? (total * numeric) / 100 : numeric;
+          amount = Math.max(0, Math.min(desired, remaining));
+          remaining -= amount;
+        }
+      }
+
+      return {
+        id: rule.id,
+        label: rule.label.trim() || "Sin nombre",
+        amount,
+        method: rule.method,
+        applyToRemainder: rule.applyToRemainder,
+      };
+    });
+
+    const assigned = items.reduce((sum, item) => sum + item.amount, 0);
+    return {
+      total,
+      assigned,
+      remaining,
+      items,
+    };
+  }, [tierPaymentRules, results?.totalAmount]);
+
+  const tieredPaymentAmounts = useMemo(() => {
+    const map = new Map<string, number>();
+    tieredPayments.items.forEach((item) => {
+      map.set(item.id, item.amount);
+    });
+    return map;
+  }, [tieredPayments]);
 
   const renderSplitPaymentsSection = () => {
     if (availableCompanies.length === 0) {
@@ -1061,6 +1347,7 @@ export const SalaryCalculatorPage: React.FC = () => {
               const config = splitConfigs[company.key] ?? {
                 mode: "keep",
                 rules: [],
+                remainderMethod: "bank",
               };
               const summary =
                 splitSummaries.get(company.key) ??
@@ -1073,8 +1360,11 @@ export const SalaryCalculatorPage: React.FC = () => {
               const candidateDestinations = availableCompanies.filter(
                 (c) => c.key !== company.key
               );
-              const canAddRule = candidateDestinations.length > 0;
+              const canAddRule = true;
               const isSplit = config.mode === "split";
+              const remainderMethod = config.remainderMethod ?? "bank";
+              const remainderLabel =
+                remainderMethod === "cash" ? "Efectivo" : "Banco";
 
               return (
                 <div
@@ -1109,7 +1399,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                           }`}
                         >
                           <span className="h-2 w-2 rounded-full bg-current/60" />
-                          {formatCurrency(summary.remaining)} restante
+                          {formatCurrency(summary.remaining)} restante · {remainderLabel}
                         </span>
                       </div>
                     </div>
@@ -1180,6 +1470,34 @@ export const SalaryCalculatorPage: React.FC = () => {
                         config.rules.map((rule) => {
                           const computedAmount =
                             summary.ruleAmounts.get(rule.id) ?? 0;
+                          const destinationOptions = [
+                            {
+                              value: "",
+                              label: "Selecciona empresa destino",
+                            },
+                            {
+                              value: SELF_TARGET_KEY,
+                              label: `Mantener en ${company.name}`,
+                            },
+                            ...candidateDestinations.map((c) => ({
+                              value: c.key,
+                              label: `${c.name} (${formatCurrency(c.amount)})`,
+                            })),
+                          ];
+                          const handleTargetChange = (value: string) => {
+                            let next: SplitTargetKey = null;
+                            if (value === SELF_TARGET_KEY) {
+                              next = SELF_TARGET_KEY;
+                            } else if (value) {
+                              next = value as CompanyKey;
+                            }
+                            updateSplitPaymentRule(
+                              company.key,
+                              rule.id,
+                              "targetKey",
+                              next
+                            );
+                          };
                           return (
                             <div
                               key={rule.id}
@@ -1187,27 +1505,13 @@ export const SalaryCalculatorPage: React.FC = () => {
                             >
                               <div className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto] md:items-center md:gap-3">
                                 <Select
-                                  value={rule.targetKey ?? ""}
-                                  onChange={(value) =>
-                                    updateSplitPaymentRule(
-                                      company.key,
-                                      rule.id,
-                                      "targetKey",
-                                      value ? (value as CompanyKey) : null
-                                    )
+                                  value={
+                                    rule.targetKey === null
+                                      ? ""
+                                      : rule.targetKey
                                   }
-                                  options={[
-                                    {
-                                      value: "",
-                                      label: "Selecciona empresa destino",
-                                    },
-                                    ...candidateDestinations.map((c) => ({
-                                      value: c.key,
-                                      label: `${c.name} (${formatCurrency(
-                                        c.amount
-                                      )})`,
-                                    })),
-                                  ]}
+                                  onChange={handleTargetChange}
+                                  options={destinationOptions}
                                   aria-label="Empresa destino"
                                   fullWidth
                                 />
@@ -1346,6 +1650,48 @@ export const SalaryCalculatorPage: React.FC = () => {
                           );
                         })
                       )}
+                      <div className="border-t border-gray-100 px-4 py-4 dark:border-gray-800">
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1fr)] md:items-center">
+                          <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                            Resto del importe
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSplitRemainderMethod(company.key, "bank")
+                              }
+                              className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                                remainderMethod !== "cash"
+                                  ? "border-blue-500 bg-blue-600 text-white"
+                                  : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                              }`}
+                            >
+                              <div className="flex items-center justify-center gap-1">
+                                <Landmark size={14} /> Banco
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSplitRemainderMethod(company.key, "cash")
+                              }
+                              className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                                remainderMethod === "cash"
+                                  ? "border-blue-500 bg-blue-600 text-white"
+                                  : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                              }`}
+                            >
+                              <div className="flex items-center justify-center gap-1">
+                                <Banknote size={14} /> Efectivo
+                              </div>
+                            </button>
+                          </div>
+                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 text-right">
+                            {formatCurrency(summary.remaining)}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1361,6 +1707,220 @@ export const SalaryCalculatorPage: React.FC = () => {
                 El reparto solo se guarda en esta pantalla; si recalculas,
                 vuelve a confirmarlo antes de exportar.
               </span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderTierPaymentsSection = () => {
+    const totals = tieredPayments;
+    const chips = [
+      {
+        label: "Importe total",
+        className:
+          "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200",
+        value: formatCurrency(totals.total),
+      },
+      {
+        label: "Asignado",
+        className:
+          totals.assigned <= totals.total + 0.001
+            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
+            : "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200",
+        value: formatCurrency(totals.assigned),
+      },
+      {
+        label: "Restante",
+        className:
+          totals.remaining > 0.01
+            ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+            : "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300",
+        value: formatCurrency(totals.remaining),
+      },
+    ];
+
+    return (
+      <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 shadow-sm">
+        <div
+          className={`flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-4 ${
+            isTierPaymentsCollapsed
+              ? ""
+              : "border-b border-gray-200 dark:border-gray-700"
+          }`}
+        >
+          <div className="space-y-2">
+            <h4 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Pagos por tramos
+            </h4>
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Define cortes sobre el importe total para combinar métodos de pago
+              (por ejemplo, un tramo en efectivo y el resto en banco).
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2 text-xs">
+              {chips.map((chip) => (
+                <span
+                  key={chip.label}
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${chip.className}`}
+                >
+                  <span className="h-2 w-2 rounded-full bg-current/60" />
+                  {chip.value} · {chip.label}
+                </span>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsTierPaymentsCollapsed((prev) => !prev)}
+              className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              aria-label="Mostrar u ocultar pagos por tramos"
+            >
+              <ChevronDown
+                size={18}
+                className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                  isTierPaymentsCollapsed ? "" : "rotate-180"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        {!isTierPaymentsCollapsed && (
+          <div className="px-4 py-5 space-y-4">
+            <div className="flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300 sm:hidden">
+              {chips.map((chip) => (
+                <span
+                  key={`mobile-${chip.label}`}
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${chip.className}`}
+                >
+                  <span className="h-2 w-2 rounded-full bg-current/60" />
+                  {chip.value} · {chip.label}
+                </span>
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              {tierPaymentRules.map((rule, index) => {
+                const computed = tieredPaymentAmounts.get(rule.id) ?? 0;
+                return (
+                  <div
+                    key={rule.id}
+                    className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 shadow-sm dark:border-gray-700/60 dark:bg-gray-900/40"
+                  >
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1.1fr)_minmax(0,1fr)_auto_auto] md:items-center">
+                      <input
+                        value={rule.label}
+                        onChange={(e) =>
+                          updateTierPaymentRule(rule.id, "label", e.target.value)
+                        }
+                        placeholder={`Tramo ${index + 1}`}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                      />
+
+                      <Select
+                        value={rule.method}
+                        onChange={(value) =>
+                          updateTierPaymentRule(
+                            rule.id,
+                            "method",
+                            value === "cash" ? "cash" : "bank"
+                          )
+                        }
+                        options={PAYMENT_METHOD_OPTIONS}
+                        className="w-full"
+                      />
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => updateTierPaymentRule(rule.id, "mode", "amount")}
+                          className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                            rule.mode === "amount"
+                              ? "border-indigo-500 bg-indigo-600 text-white"
+                              : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                          }`}
+                          disabled={rule.applyToRemainder}
+                        >
+                          €
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateTierPaymentRule(rule.id, "mode", "percentage")}
+                          className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                            rule.mode === "percentage"
+                              ? "border-indigo-500 bg-indigo-600 text-white"
+                              : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                          }`}
+                          disabled={rule.applyToRemainder}
+                        >
+                          %
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          min="0"
+                          value={rule.value}
+                          onChange={(e) =>
+                            updateTierPaymentRule(rule.id, "value", e.target.value)
+                          }
+                          placeholder={rule.mode === "percentage" ? "0" : "0,00"}
+                          className="w-28 rounded-lg border border-gray-300 bg-white px-3 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                          disabled={rule.applyToRemainder}
+                        />
+                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                          {rule.applyToRemainder
+                            ? "Resto"
+                            : rule.mode === "percentage"
+                            ? "%"
+                            : "€"}
+                        </span>
+                        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                          {formatCurrency(computed)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setTierRuleAsRemainder(rule.id)}
+                          className={`rounded-md border px-3 py-2 text-xs font-medium transition ${
+                            rule.applyToRemainder
+                              ? "border-blue-500 bg-blue-600 text-white"
+                              : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                          }`}
+                        >
+                          Aplicar al resto
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeTierPaymentRule(rule.id)}
+                          className="inline-flex items-center justify-center rounded-md border border-red-200 px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
+                          title="Eliminar tramo"
+                          disabled={tierPaymentRules.length <= 1}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-gray-600 dark:text-gray-400">
+                Los tramos se aplican en orden. El primero que marque "Aplicar al
+                resto" absorberá el importe disponible restante.
+              </div>
+              <Button variant="outline" size="sm" onClick={addTierPaymentRule}>
+                Añadir tramo
+              </Button>
             </div>
           </div>
         )}
@@ -1450,30 +2010,60 @@ export const SalaryCalculatorPage: React.FC = () => {
         lines.push(` ${company.name} (${formatCurrency(sourceAmount)})`);
 
         config?.rules.forEach((rule, index) => {
-          const destination = availableCompanies.find(
-            (candidate) => candidate.key === rule.targetKey
-          );
+          const destination =
+            rule.targetKey && rule.targetKey !== SELF_TARGET_KEY
+              ? availableCompanies.find(
+                  (candidate) => candidate.key === rule.targetKey
+                )
+              : null;
           const methodLabel = rule.method === "cash" ? "Efectivo" : "Banco";
           const baseValueLabel =
             rule.mode === "percentage"
               ? `${rule.value || "0"}%`
               : formatCurrency(Number(rule.value || 0));
           const computed = summary?.ruleAmounts.get(rule.id) ?? 0;
+          const destinationLabel =
+            rule.targetKey === SELF_TARGET_KEY
+              ? `${company.name} (mismo origen)`
+              : destination?.name ?? "Destino sin asignar";
           lines.push(
-            `   ${index + 1}. ${
-              destination?.name ?? "Destino sin asignar"
-            } · ${methodLabel} → ${formatCurrency(
+            `   ${index + 1}. ${destinationLabel} · ${methodLabel} → ${formatCurrency(
               computed
             )} (base ${baseValueLabel})`
           );
         });
 
         if (summary && Math.abs(summary.remaining) > 0.01) {
+          const remainderMethodLabel =
+            (config?.remainderMethod ?? "bank") === "cash"
+              ? "Efectivo"
+              : "Banco";
           lines.push(
-            `   Restante sin distribuir: ${formatCurrency(summary.remaining)}`
+            `   Resto → ${remainderMethodLabel}: ${formatCurrency(
+              summary.remaining
+            )}`
           );
         }
       });
+    }
+
+    if (tierPaymentRules.length > 0) {
+      lines.push(" ");
+      lines.push("Pagos por tramos:");
+      tieredPayments.items.forEach((item, index) => {
+        const methodLabel = item.method === "cash" ? "Efectivo" : "Banco";
+        const remainderNote = item.applyToRemainder ? " · Resto" : "";
+        lines.push(
+          ` ${index + 1}. ${item.label} · ${methodLabel}${remainderNote}: ${formatCurrency(
+            item.amount
+          )}`
+        );
+      });
+      if (tieredPayments.remaining > 0.01) {
+        lines.push(
+          `   Resto sin asignar: ${formatCurrency(tieredPayments.remaining)}`
+        );
+      }
     }
 
     lines.push(" ");
@@ -1574,24 +2164,46 @@ export const SalaryCalculatorPage: React.FC = () => {
     if (!results) return null;
     const byKey = new Map<
       CompanyKey,
-      { name: string; hours: number; amount: number }
+      {
+        name: string;
+        hours: number;
+        amount: number;
+        otherPayments: OtherPaymentDetailSummary[];
+      }
     >();
     availableCompanies.forEach((c) =>
-      byKey.set(c.key, { name: c.name, hours: c.hours, amount: c.amount })
+      byKey.set(c.key, {
+        name: c.name,
+        hours: c.hours,
+        amount: c.amount,
+        otherPayments: c.otherPayments,
+      })
     );
 
     const used = new Set<CompanyKey>();
     const groups = companyGroups.map((g) => {
       let hours = 0;
       let amount = 0;
-      const items: Array<{ name: string; hours: number; amount: number }> = [];
+      const items: Array<{
+        key: CompanyKey;
+        name: string;
+        hours: number;
+        amount: number;
+        otherPayments: OtherPaymentDetailSummary[];
+      }> = [];
       g.companies.forEach((k) => {
         const v = byKey.get(k);
         if (v) {
           hours += v.hours;
           amount += v.amount;
           used.add(k);
-          items.push({ name: v.name, hours: v.hours, amount: v.amount });
+          items.push({
+            key: k,
+            name: v.name,
+            hours: v.hours,
+            amount: v.amount,
+            otherPayments: v.otherPayments,
+          });
         }
       });
       return {
@@ -1608,7 +2220,13 @@ export const SalaryCalculatorPage: React.FC = () => {
 
     const remaining = availableCompanies
       .filter((c) => !used.has(c.key))
-      .map((c) => ({ name: c.name, hours: c.hours, amount: c.amount }));
+      .map((c) => ({
+        key: c.key,
+        name: c.name,
+        hours: c.hours,
+        amount: c.amount,
+        otherPayments: c.otherPayments,
+      }));
 
     return { groups, remaining };
   }, [results, availableCompanies, companyGroups]);
@@ -1617,6 +2235,14 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [expandedResultGroups, setExpandedResultGroups] = useState<
     Record<string, boolean>
   >({});
+
+  const [expandedCompanyAdjustments, setExpandedCompanyAdjustments] = useState<
+    Record<string, boolean>
+  >({});
+
+  useEffect(() => {
+    setExpandedCompanyAdjustments({});
+  }, [results]);
 
   // Persist and restore company groups per worker
   useEffect(() => {
@@ -2925,6 +3551,8 @@ export const SalaryCalculatorPage: React.FC = () => {
     setIsOtherPaymentsCollapsed(true);
     setSplitConfigs({});
     setIsSplitPaymentsCollapsed(true);
+    setTierPaymentRules(createDefaultTierRules());
+    setIsTierPaymentsCollapsed(true);
     setResults(null);
   };
 
@@ -3200,6 +3828,189 @@ export const SalaryCalculatorPage: React.FC = () => {
       contractMap,
     };
   }, [companyLookup, selectedWorker]);
+
+  const companyKeyToInfo = useMemo(() => {
+    const map = new Map<
+      CompanyKey,
+      {
+        companyName: string;
+        companyId?: string;
+      }
+    >();
+
+    companyContractStructure.groups.forEach((group) => {
+      map.set(group.companyKey, {
+        companyName: group.companyName,
+        companyId: group.companyId,
+      });
+    });
+
+    return map;
+  }, [companyContractStructure]);
+
+  const otherPaymentsCompanyOptions = useMemo(() => {
+    const options = Array.from(companyKeyToInfo.entries())
+      .map(([key, info]) => ({
+        value: key,
+        label: info.companyName,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" }));
+
+    return [{ value: "", label: "Sin empresa" }, ...options];
+  }, [companyKeyToInfo]);
+
+  useEffect(() => {
+    setOtherPayments((prev) => {
+      let changed = false;
+
+      const next: OtherPaymentsState = Object.fromEntries(
+        (Object.keys(prev) as OtherPaymentCategory[]).map((category) => {
+          const updatedItems = prev[category].map((item) => {
+            if (item.companyKey && !companyKeyToInfo.has(item.companyKey)) {
+              changed = true;
+              return {
+                ...item,
+                companyKey: null,
+                paymentMethod:
+                  item.paymentMethod === "cash" || item.paymentMethod === "bank"
+                    ? item.paymentMethod
+                    : "bank",
+              };
+            }
+            if (item.paymentMethod !== "cash" && item.paymentMethod !== "bank") {
+              changed = true;
+              return {
+                ...item,
+                paymentMethod: "bank",
+              };
+            }
+            return item;
+          });
+
+          return [category, updatedItems];
+        })
+      ) as OtherPaymentsState;
+
+      return changed ? next : prev;
+    });
+  }, [companyKeyToInfo]);
+
+  const otherPaymentsAllocation = useMemo(() => {
+    let additions = 0;
+    let subtractions = 0;
+
+    const perCompany = new Map<CompanyKey, CompanyOtherPaymentsSummary>();
+    const unassigned: UnassignedOtherPaymentsSummary = {
+      incomes: 0,
+      expenses: 0,
+      total: 0,
+      details: [],
+    };
+
+    (Object.keys(otherPayments) as OtherPaymentCategory[]).forEach(
+      (category) => {
+        const items = otherPayments[category];
+        const isCredit = CREDIT_CATEGORIES.includes(category);
+
+        items.forEach((item) => {
+          const parsed = parseFloat(item.amount.replace(",", "."));
+          if (!Number.isFinite(parsed) || parsed === 0) {
+            return;
+          }
+
+          let signedAmount = parsed;
+          if (!isCredit && parsed > 0) {
+            signedAmount = -parsed;
+          }
+
+          const flow: OtherPaymentFlow = signedAmount >= 0 ? "income" : "expense";
+          const magnitude = Math.abs(signedAmount);
+
+          if (flow === "income") {
+            additions += magnitude;
+          } else {
+            subtractions += magnitude;
+          }
+
+          const detail: OtherPaymentDetailSummary = {
+            id: item.id,
+            label:
+              item.label.trim().length > 0
+                ? item.label.trim()
+                : OTHER_PAYMENTS_LABELS[category],
+            amount: magnitude,
+            category,
+            type: flow,
+            paymentMethod:
+              item.paymentMethod === "cash" || item.paymentMethod === "bank"
+                ? item.paymentMethod
+                : "bank",
+          };
+
+          const targetKey =
+            item.companyKey && companyKeyToInfo.has(item.companyKey)
+              ? item.companyKey
+              : null;
+
+          if (targetKey) {
+            const info = companyKeyToInfo.get(targetKey);
+            if (!info) {
+              unassigned.details.push(detail);
+              if (flow === "income") {
+                unassigned.incomes += magnitude;
+              } else {
+                unassigned.expenses += magnitude;
+              }
+              unassigned.total += signedAmount;
+              return;
+            }
+
+            const existing = perCompany.get(targetKey);
+            if (existing) {
+              existing.details.push(detail);
+              if (flow === "income") {
+                existing.incomes += magnitude;
+              } else {
+                existing.expenses += magnitude;
+              }
+              existing.total += signedAmount;
+            } else {
+              perCompany.set(targetKey, {
+                companyKey: targetKey,
+                companyName: info.companyName,
+                companyId: info.companyId,
+                incomes: flow === "income" ? magnitude : 0,
+                expenses: flow === "expense" ? magnitude : 0,
+                total: signedAmount,
+                details: [detail],
+              });
+            }
+          } else {
+            unassigned.details.push(detail);
+            if (flow === "income") {
+              unassigned.incomes += magnitude;
+            } else {
+              unassigned.expenses += magnitude;
+            }
+            unassigned.total += signedAmount;
+          }
+        });
+      }
+    );
+
+    const perCompanyArray = Array.from(perCompany.values()).sort((a, b) =>
+      a.companyName.localeCompare(b.companyName, "es", { sensitivity: "base" })
+    );
+
+    return {
+      totals: { additions, subtractions },
+      perCompany,
+      perCompanyArray,
+      unassigned,
+    };
+  }, [otherPayments, companyKeyToInfo]);
+
+  const otherPaymentsTotals = otherPaymentsAllocation.totals;
 
   useEffect(() => {
     setExpandedCompanyInputs((prev) => {
@@ -3545,11 +4356,45 @@ export const SalaryCalculatorPage: React.FC = () => {
       const totalAmount = amountBeforeAdjustments + bonuses - deductions;
       const extras = totalAmount - baseAmountTotal;
 
-      const companyCount = filteredCompanies.length;
+      const baseKeys = filteredCompanies.map((company) =>
+        company.companyId ? `id:${company.companyId}` : `name:${company.companyName}`
+      );
 
-      const companyBreakdown = filteredCompanies.map((company) => {
-        const baseShare = company.baseAmount;
-        const hoursShare = company.hours;
+      const baseCompanyMap = new Map<CompanyKey, (typeof filteredCompanies)[number]>();
+      baseKeys.forEach((key, index) => {
+        baseCompanyMap.set(key, filteredCompanies[index]);
+      });
+
+      const adjustmentsMap = otherPaymentsAllocation.perCompany;
+      const assignedExtrasTotal = Array.from(adjustmentsMap.values()).reduce(
+        (sum, entry) => sum + entry.total,
+        0
+      );
+
+      const generalExtras = extras - assignedExtrasTotal;
+
+      const additionalKeys = Array.from(adjustmentsMap.keys()).filter(
+        (key) => !baseCompanyMap.has(key)
+      );
+      additionalKeys.sort((a, b) => {
+        const infoA = adjustmentsMap.get(a);
+        const infoB = adjustmentsMap.get(b);
+        return (infoA?.companyName ?? "").localeCompare(
+          infoB?.companyName ?? "",
+          "es",
+          { sensitivity: "base" }
+        );
+      });
+
+      const orderedKeys = [...baseKeys, ...additionalKeys];
+      const companyCount = orderedKeys.length;
+
+      const companyBreakdown = orderedKeys.map((companyKey) => {
+        const baseEntry = baseCompanyMap.get(companyKey);
+        const adjustmentEntry = adjustmentsMap.get(companyKey);
+
+        const baseShare = baseEntry?.baseAmount ?? 0;
+        const hoursShare = baseEntry?.hours ?? 0;
 
         let weight = 0;
         if (baseAmountTotal > 0) {
@@ -3560,13 +4405,16 @@ export const SalaryCalculatorPage: React.FC = () => {
           weight = 1 / companyCount;
         }
 
-        const amount = baseShare + extras * weight;
+        const amount =
+          baseShare + generalExtras * weight + (adjustmentEntry?.total ?? 0);
 
         return {
-          companyId: company.companyId,
-          name: company.companyName,
+          companyId: baseEntry?.companyId ?? adjustmentEntry?.companyId,
+          companyKey,
+          name: baseEntry?.companyName ?? adjustmentEntry?.companyName,
           hours: hoursShare,
           amount,
+          otherPayments: adjustmentEntry?.details ?? undefined,
         };
       });
 
@@ -3592,6 +4440,10 @@ export const SalaryCalculatorPage: React.FC = () => {
         overtimeHours,
         companyBreakdown,
         usesCalendarHours: false,
+        otherPaymentsSummary: {
+          byCompany: otherPaymentsAllocation.perCompanyArray,
+          unassigned: otherPaymentsAllocation.unassigned,
+        },
       });
       return;
     }
@@ -3603,6 +4455,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     const overtimePay =
       overtimeHours * (baseSalary > 0 ? (baseSalary / 160) * 1.5 : 0);
     const totalAmount = regularPay + overtimePay + bonuses - deductions;
+    const extras = totalAmount - regularPay;
 
     const companyHoursMap = new Map<
       string,
@@ -3668,10 +4521,71 @@ export const SalaryCalculatorPage: React.FC = () => {
 
     const breakdownSource = usesCalendarHours ? companyHoursList : [];
 
-    const companyBreakdown = breakdownSource.map((item) => ({
-      ...item,
-      amount: regularHours > 0 ? (item.hours / regularHours) * totalAmount : 0,
-    }));
+    const baseKeys = breakdownSource.map((item) =>
+      item.companyId ? `id:${item.companyId}` : `name:${item.name ?? ""}`
+    );
+    const baseCompanyMap = new Map<CompanyKey, typeof breakdownSource[number]>();
+    baseKeys.forEach((key, index) => {
+      baseCompanyMap.set(key, breakdownSource[index]);
+    });
+
+    const adjustmentsMap = otherPaymentsAllocation.perCompany;
+    const assignedExtrasTotal = Array.from(adjustmentsMap.values()).reduce(
+      (sum, entry) => sum + entry.total,
+      0
+    );
+
+    const generalExtras = extras - assignedExtrasTotal;
+
+    const additionalKeys = Array.from(adjustmentsMap.keys()).filter(
+      (key) => !baseCompanyMap.has(key)
+    );
+    additionalKeys.sort((a, b) => {
+      const infoA = adjustmentsMap.get(a);
+      const infoB = adjustmentsMap.get(b);
+      return (infoA?.companyName ?? "").localeCompare(
+        infoB?.companyName ?? "",
+        "es",
+        { sensitivity: "base" }
+      );
+    });
+
+    const orderedKeys = [...baseKeys, ...additionalKeys];
+    const companyCount = orderedKeys.length;
+
+    const companyBreakdown = orderedKeys.map((companyKey) => {
+      const baseEntry = baseCompanyMap.get(companyKey);
+      const adjustmentEntry = adjustmentsMap.get(companyKey);
+      const hoursShare = baseEntry?.hours ?? 0;
+
+      let baseShare = 0;
+      if (regularPay > 0) {
+        if (regularHours > 0) {
+          baseShare = (hoursShare / regularHours) * regularPay;
+        } else if (companyCount > 0) {
+          baseShare = regularPay / companyCount;
+        }
+      }
+
+      let weight = 0;
+      if (regularHours > 0) {
+        weight = hoursShare / regularHours;
+      } else if (companyCount > 0) {
+        weight = 1 / companyCount;
+      }
+
+      const amount =
+        baseShare + generalExtras * weight + (adjustmentEntry?.total ?? 0);
+
+      return {
+        companyId: baseEntry?.companyId ?? adjustmentEntry?.companyId,
+        companyKey,
+        name: baseEntry?.name ?? adjustmentEntry?.companyName,
+        hours: hoursShare,
+        amount,
+        otherPayments: adjustmentEntry?.details ?? undefined,
+      };
+    });
 
     const computedSum = companyBreakdown.reduce(
       (acc, item) => acc + item.amount,
@@ -3693,6 +4607,10 @@ export const SalaryCalculatorPage: React.FC = () => {
       overtimeHours,
       companyBreakdown,
       usesCalendarHours,
+      otherPaymentsSummary: {
+        byCompany: otherPaymentsAllocation.perCompanyArray,
+        unassigned: otherPaymentsAllocation.unassigned,
+      },
     });
   };
 
@@ -5030,22 +5948,48 @@ export const SalaryCalculatorPage: React.FC = () => {
                                   {items.map((item) => (
                                     <div
                                       key={item.id}
-                                      className="flex flex-col gap-2 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 shadow-sm dark:border-gray-700/60 dark:bg-gray-900/40 md:flex-row md:items-center md:gap-3"
+                                      className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 shadow-sm dark:border-gray-700/60 dark:bg-gray-900/40"
                                     >
-                                      <input
-                                        value={item.label}
-                                        onChange={(e) =>
-                                          updateOtherPayment(
-                                            category,
-                                            item.id,
-                                            "label",
-                                            e.target.value
-                                          )
-                                        }
-                                        placeholder="Concepto"
-                                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
-                                      />
-                                      <div className="flex items-center gap-2 md:ml-auto">
+                                      <div className="grid gap-2 md:grid-cols-[minmax(0,1.9fr)_minmax(0,1.1fr)_minmax(0,1.3fr)_minmax(0,0.8fr)_auto] md:items-center">
+                                        <input
+                                          value={item.label}
+                                          onChange={(e) =>
+                                            updateOtherPayment(
+                                              category,
+                                              item.id,
+                                              "label",
+                                              e.target.value
+                                            )
+                                          }
+                                          placeholder="Concepto"
+                                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                                        />
+                                        <Select
+                                          value={item.paymentMethod}
+                                          onChange={(value) =>
+                                            updateOtherPayment(
+                                              category,
+                                              item.id,
+                                              "paymentMethod",
+                                              value
+                                            )
+                                          }
+                                          options={PAYMENT_METHOD_OPTIONS}
+                                          className="w-full"
+                                        />
+                                        <Select
+                                          value={item.companyKey ?? ""}
+                                          onChange={(value) =>
+                                            updateOtherPayment(
+                                              category,
+                                              item.id,
+                                              "companyKey",
+                                              value
+                                            )
+                                          }
+                                          options={otherPaymentsCompanyOptions}
+                                          className="w-full"
+                                        />
                                         <input
                                           type="number"
                                           inputMode="decimal"
@@ -5060,7 +6004,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                                             )
                                           }
                                           placeholder="0,00"
-                                          className="w-28 rounded-lg border border-gray-300 bg-white px-3 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
                                         />
                                         <button
                                           type="button"
@@ -5070,7 +6014,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                                               item.id
                                             )
                                           }
-                                          className="inline-flex items-center justify-center rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
+                                          className="inline-flex items-center justify-center rounded-md border border-red-200 px-2 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
                                           title="Eliminar movimiento"
                                         >
                                           <X size={14} />
@@ -5088,6 +6032,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                   </div>
 
                   {renderSplitPaymentsSection()}
+
+                  {renderTierPaymentsSection()}
                 </div>
               )}
             </CardContent>
@@ -5207,6 +6153,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                                     amount: r.amount,
                                     method: undefined,
                                     isGroup: false,
+                                    companyKey: r.key,
+                                    otherPayments: r.otherPayments,
                                   })),
                                 ]
                               : results.companyBreakdown
@@ -5217,6 +6165,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                                     amount: c.amount,
                                     method: undefined,
                                     isGroup: false,
+                                    companyKey: c.companyKey ?? getCompanyKey(c),
+                                    otherPayments: c.otherPayments ?? [],
                                   }));
                             return rows.flatMap((company, idx) => {
                               const isGroup = company.isGroup;
@@ -5226,6 +6176,31 @@ export const SalaryCalculatorPage: React.FC = () => {
                               const expanded = groupId
                                 ? expandedResultGroups[groupId]
                                 : false;
+                              const companyKey = (company as any)
+                                .companyKey as string | undefined;
+                              const otherPayments = (company as any)
+                                .otherPayments as
+                                | OtherPaymentDetailSummary[]
+                                | undefined;
+                              const hasAdjustments =
+                                !!otherPayments && otherPayments.length > 0;
+                              const adjustmentsExpanded =
+                                !!companyKey &&
+                                expandedCompanyAdjustments[companyKey];
+                              const adjustmentsNet = hasAdjustments
+                                ? otherPayments!.reduce((acc, item) => {
+                                    const signed =
+                                      item.type === "income"
+                                        ? item.amount
+                                        : -item.amount;
+                                    return acc + signed;
+                                  }, 0)
+                                : 0;
+                              const adjustmentBadgeClass =
+                                adjustmentsNet >= 0
+                                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200"
+                                  : "bg-rose-50 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200";
+
                               const mainRow = (
                                 <div
                                   key={`row-${idx}-${company.name}`}
@@ -5261,7 +6236,38 @@ export const SalaryCalculatorPage: React.FC = () => {
                                         </span>
                                       </button>
                                     ) : (
-                                      <span>{company.name}</span>
+                                      <>
+                                        <span>{company.name}</span>
+                                        {hasAdjustments && companyKey && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setExpandedCompanyAdjustments(
+                                                (prev) => ({
+                                                  ...prev,
+                                                  [companyKey]: !adjustmentsExpanded,
+                                                })
+                                              )
+                                            }
+                                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold transition ${adjustmentBadgeClass}`}
+                                            title="Ver otros pagos asignados"
+                                          >
+                                            <span>Otros pagos</span>
+                                            <span>
+                                              {adjustmentsNet > 0 ? "+" : ""}
+                                              {formatCurrency(adjustmentsNet)}
+                                            </span>
+                                            <ChevronDown
+                                              size={12}
+                                              className={`transition-transform ${
+                                                adjustmentsExpanded
+                                                  ? "rotate-180"
+                                                  : ""
+                                              }`}
+                                            />
+                                          </button>
+                                        )}
+                                      </>
                                     )}
                                   </span>
                                   <span className="text-right text-gray-700 dark:text-gray-200">
@@ -5286,8 +6292,75 @@ export const SalaryCalculatorPage: React.FC = () => {
                                 </div>
                               );
 
+                              const rowsWithDetails = [mainRow];
+
+                              if (
+                                !isGroup &&
+                                hasAdjustments &&
+                                adjustmentsExpanded &&
+                                companyKey
+                              ) {
+                                rowsWithDetails.push(
+                                  <div
+                                    key={`row-${idx}-${company.name}-adjustments`}
+                                    className="border-t border-gray-100 bg-gray-50 px-3 py-3 text-sm dark:border-gray-700/60 dark:bg-gray-800/40"
+                                  >
+                                    <div className="space-y-2">
+                                      <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                        Otros pagos asignados
+                                      </div>
+                                      {otherPayments!.map((item) => {
+                                        const signed =
+                                          item.type === "income"
+                                            ? item.amount
+                                            : -item.amount;
+                                        const amountClass =
+                                          item.type === "income"
+                                            ? "text-emerald-600 dark:text-emerald-300"
+                                            : "text-rose-600 dark:text-rose-300";
+                                        return (
+                                          <div
+                                            key={item.id}
+                                            className="grid grid-cols-3 gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-700/60 dark:bg-gray-900/40 items-center"
+                                          >
+                                            <p className="font-medium text-gray-800 dark:text-gray-100 text-left">
+                                              {item.label}
+                                            </p>
+                                        <div className="flex flex-col gap-1 text-left">
+                                          <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                                            {item.paymentMethod === "cash" ? (
+                                              <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
+                                            ) : (
+                                              <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
+                                            )}
+                                            {item.paymentMethod === "cash"
+                                              ? "Efectivo"
+                                              : "Banco"}
+                                          </span>
+                                          <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            {item.type === "income"
+                                              ? "Ingreso"
+                                              : "Gasto"}
+                                            {" · "}
+                                            {OTHER_PAYMENTS_LABELS[item.category]}
+                                          </span>
+                                        </div>
+                                            <span
+                                              className={`text-sm font-semibold ${amountClass} text-right justify-self-end`}
+                                            >
+                                              {item.type === "income" ? "+" : ""}
+                                              {formatCurrency(signed)}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              }
+
                               if (!isGroup || !expanded) {
-                                return [mainRow];
+                                return rowsWithDetails;
                               }
 
                               // Detail rows for group members
@@ -5320,7 +6393,16 @@ export const SalaryCalculatorPage: React.FC = () => {
                                         Importe
                                       </span>
                                       {(company as any).items?.map(
-                                        (it: any, i: number) => (
+                                        (
+                                          it: {
+                                            key: CompanyKey;
+                                            name: string;
+                                            hours: number;
+                                            amount: number;
+                                            otherPayments?: OtherPaymentDetailSummary[];
+                                          },
+                                          i: number
+                                        ) => (
                                           <React.Fragment
                                             key={`it-${i}-${it.name}`}
                                           >
@@ -5334,6 +6416,75 @@ export const SalaryCalculatorPage: React.FC = () => {
                                             <span className="text-right text-gray-900 dark:text-gray-100">
                                               {formatCurrency(it.amount)}
                                             </span>
+                                            {it.otherPayments &&
+                                              it.otherPayments.length > 0 && (
+                                                <div className="col-span-4 mt-2 rounded-lg bg-white px-3 py-2 text-xs text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                                                  <div className="font-semibold uppercase tracking-wide text-[11px] text-gray-500 dark:text-gray-400">
+                                                    Otros pagos asignados
+                                                  </div>
+                                                  <div className="mt-2 space-y-1">
+                                                    {it.otherPayments.map(
+                                                      (item) => {
+                                                        const signed =
+                                                          item.type ===
+                                                          "income"
+                                                            ? item.amount
+                                                            : -item.amount;
+                                                        const amountClass =
+                                                          item.type ===
+                                                          "income"
+                                                            ? "text-emerald-600 dark:text-emerald-300"
+                                                            : "text-rose-600 dark:text-rose-300";
+                                                        return (
+                                                          <div
+                                                            key={item.id}
+                                                            className="grid grid-cols-3 gap-2 items-center"
+                                                          >
+                                                            <span className="font-medium text-gray-700 dark:text-gray-200 text-left">
+                                                              {item.label}
+                                                            </span>
+                                                            <div className="flex flex-col gap-1 text-left">
+                                                              <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                                                                {item.paymentMethod === "cash" ? (
+                                                                  <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
+                                                                ) : (
+                                                                  <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
+                                                                )}
+                                                                {item.paymentMethod === "cash"
+                                                                  ? "Efectivo"
+                                                                  : "Banco"}
+                                                              </span>
+                                                              <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                                                {item.type ===
+                                                                "income"
+                                                                  ? "Ingreso"
+                                                                  : "Gasto"}
+                                                                {" · "}
+                                                                {
+                                                                  OTHER_PAYMENTS_LABELS[
+                                                                    item.category
+                                                                  ]
+                                                                }
+                                                              </span>
+                                                            </div>
+                                                            <span
+                                                              className={`text-sm font-semibold ${amountClass} text-right justify-self-end`}
+                                                            >
+                                                              {item.type ===
+                                                              "income"
+                                                                ? "+"
+                                                                : ""}
+                                                              {formatCurrency(
+                                                                signed
+                                                              )}
+                                                            </span>
+                                                          </div>
+                                                        );
+                                                      }
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              )}
                                           </React.Fragment>
                                         )
                                       )}
@@ -5341,7 +6492,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                                   </div>
                                 </div>
                               );
-                              return [mainRow, detail];
+                              rowsWithDetails.push(detail);
+                              return rowsWithDetails;
                             });
                           })()}
                           <div className="grid grid-cols-4 gap-2 bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-900 dark:bg-gray-800 dark:text-gray-100">
@@ -5357,6 +6509,134 @@ export const SalaryCalculatorPage: React.FC = () => {
                         </div>
                       )}
                     </div>
+
+                    {(() => {
+                      const unassigned =
+                        results.otherPaymentsSummary.unassigned;
+                      if (!unassigned.details.length) {
+                        return null;
+                      }
+
+                      const totalClass =
+                        unassigned.total >= 0
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-rose-700 dark:text-rose-300";
+
+                      return (
+                        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm dark:border-gray-700 dark:bg-gray-900/40">
+                          <div className="mb-2 flex items-center justify-between">
+                            <h5 className="font-semibold text-gray-900 dark:text-gray-100">
+                              Otros pagos sin empresa
+                            </h5>
+                            <span className={`text-sm font-semibold ${totalClass}`}>
+                              {unassigned.total > 0 ? "+" : ""}
+                              {formatCurrency(unassigned.total)}
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {unassigned.details.map((item) => {
+                              const signed =
+                                item.type === "income"
+                                  ? item.amount
+                                  : -item.amount;
+                              const amountClass =
+                                item.type === "income"
+                                  ? "text-emerald-600 dark:text-emerald-300"
+                                  : "text-rose-600 dark:text-rose-300";
+                              return (
+                                <div
+                                  key={`unassigned-${item.id}`}
+                                  className="grid grid-cols-3 gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700/60 dark:bg-gray-800/40 items-center"
+                                >
+                                  <p className="font-medium text-gray-800 dark:text-gray-100 text-left">
+                                    {item.label}
+                                  </p>
+                                  <div className="flex flex-col gap-1 text-left">
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                                      {item.paymentMethod === "cash" ? (
+                                        <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
+                                      ) : (
+                                        <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
+                                      )}
+                                      {item.paymentMethod === "cash" ? "Efectivo" : "Banco"}
+                                    </span>
+                                    <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                      {item.type === "income" ? "Ingreso" : "Gasto"}
+                                      {" · "}
+                                      {OTHER_PAYMENTS_LABELS[item.category]}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={`text-sm font-semibold ${amountClass} text-right justify-self-end`}
+                                  >
+                                    {item.type === "income" ? "+" : ""}
+                                    {formatCurrency(signed)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {tierPaymentRules.length > 0 && (
+                      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm dark:border-gray-700 dark:bg-gray-900/40">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <h5 className="font-semibold text-gray-900 dark:text-gray-100">
+                            Pagos por tramos
+                          </h5>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                            <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                              <span className="h-2 w-2 rounded-full bg-blue-400 dark:bg-blue-300" />
+                              {formatCurrency(tieredPayments.total)} total
+                            </span>
+                            <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
+                              <span className="h-2 w-2 rounded-full bg-current/60" />
+                              {formatCurrency(tieredPayments.assigned)} asignado
+                            </span>
+                            <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+                              <span className="h-2 w-2 rounded-full bg-current/60" />
+                              {formatCurrency(tieredPayments.remaining)} resto
+                            </span>
+                          </div>
+                        </div>
+                        {tieredPayments.items.length === 0 ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Configura uno o más tramos para repartir el importe.
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {tieredPayments.items.map((item, idx) => (
+                              <div
+                                key={`tier-result-${item.id}`}
+                                className="grid grid-cols-3 gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-700/50 dark:bg-gray-800/40 items-center"
+                              >
+                                <span className="font-medium text-gray-800 dark:text-gray-100">
+                                  {idx + 1}. {item.label}
+                                </span>
+                                <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                                  {item.method === "cash" ? (
+                                    <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
+                                  ) : (
+                                    <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
+                                  )}
+                                  {item.method === "cash" ? "Efectivo" : "Banco"}
+                                  {item.applyToRemainder && (
+                                    <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                      Resto
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="text-right font-semibold text-gray-900 dark:text-gray-100">
+                                  {formatCurrency(item.amount)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="mt-6 rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
                       <h4 className="mb-3 font-medium text-gray-900 dark:text-white">
