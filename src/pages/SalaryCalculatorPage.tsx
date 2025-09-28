@@ -56,6 +56,12 @@ const buildWhatsAppLink = (phone: string) => {
   return digitsOnly ? `https://wa.me/${digitsOnly}` : null;
 };
 
+const isValidCompanyName = (name?: string | null) => {
+  const n = (name ?? "").trim().toLowerCase();
+  if (!n) return false;
+  return n !== "empresa sin nombre" && n !== "sin empresa";
+};
+
 const copyTextToClipboard = async (text: string): Promise<boolean> => {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return false;
@@ -563,12 +569,14 @@ export const SalaryCalculatorPage: React.FC = () => {
         hours: number;
         amount: number;
       }>;
-    return results.companyBreakdown.map((c) => ({
-      key: getCompanyKey(c),
-      name: c.name ?? "Sin empresa",
-      hours: c.hours,
-      amount: c.amount,
-    }));
+    return results.companyBreakdown
+      .filter((c) => isValidCompanyName(c.name))
+      .map((c) => ({
+        key: getCompanyKey(c),
+        name: c.name ?? "",
+        hours: c.hours,
+        amount: c.amount,
+      }));
   }, [results, getCompanyKey]);
 
   const colorsPalette = [
@@ -2131,20 +2139,32 @@ export const SalaryCalculatorPage: React.FC = () => {
 
     if (Array.isArray(selectedWorker.companyNames)) {
       selectedWorker.companyNames.forEach((name) => {
-        if (typeof name === "string" && name.trim().length > 0) {
+        if (
+          typeof name === "string" &&
+          name.trim().length > 0 &&
+          isValidCompanyName(name)
+        ) {
           knownCompanyNames.add(name);
         }
       });
     }
 
     Object.keys(companyContracts).forEach((name) => {
-      if (typeof name === "string" && name.trim().length > 0) {
+      if (
+        typeof name === "string" &&
+        name.trim().length > 0 &&
+        isValidCompanyName(name)
+      ) {
         knownCompanyNames.add(name);
       }
     });
 
     Object.keys(companyStats).forEach((name) => {
-      if (typeof name === "string" && name.trim().length > 0) {
+      if (
+        typeof name === "string" &&
+        name.trim().length > 0 &&
+        isValidCompanyName(name)
+      ) {
         knownCompanyNames.add(name);
       }
     });
@@ -2164,10 +2184,12 @@ export const SalaryCalculatorPage: React.FC = () => {
         const preferredCompanyId = statsForCompany?.companyId;
         const resolvedCompanyName =
           (trimmedName.length > 0 ? trimmedName : undefined) ??
-          (preferredCompanyId
-            ? companyLookup[preferredCompanyId]
-            : undefined) ??
-          "Sin empresa";
+          (preferredCompanyId ? companyLookup[preferredCompanyId] : undefined);
+
+        if (!isValidCompanyName(resolvedCompanyName)) {
+          // Skip unnamed companies entirely
+          return;
+        }
 
         const companyKeyBase =
           preferredCompanyId ??
@@ -2558,8 +2580,11 @@ export const SalaryCalculatorPage: React.FC = () => {
     const deductions = parseFloat(calculationData.deductions) || 0;
 
     if (manualContractAggregates.hasEntries) {
-      const regularHours = manualContractAggregates.totalHours;
-      const baseAmountTotal = manualContractAggregates.totalBaseAmount;
+      // Recalcular solo con empresas con nombre válido
+      const filteredCompanies = manualContractAggregates.companyList.filter((c) => isValidCompanyName(c.companyName));
+
+      const regularHours = filteredCompanies.reduce((acc, c) => acc + (c.hours || 0), 0);
+      const baseAmountTotal = filteredCompanies.reduce((acc, c) => acc + (c.baseAmount || 0), 0);
 
       const averageRate =
         regularHours > 0 && baseAmountTotal > 0
@@ -2574,9 +2599,9 @@ export const SalaryCalculatorPage: React.FC = () => {
       const totalAmount = amountBeforeAdjustments + bonuses - deductions;
       const extras = totalAmount - baseAmountTotal;
 
-      const companyCount = manualContractAggregates.companyList.length;
+      const companyCount = filteredCompanies.length;
 
-      const companyBreakdown = manualContractAggregates.companyList.map(
+      const companyBreakdown = filteredCompanies.map(
         (company) => {
           const baseShare = company.baseAmount;
           const hoursShare = company.hours;
@@ -2646,16 +2671,20 @@ export const SalaryCalculatorPage: React.FC = () => {
           return;
         }
 
-        const mapKey = company.companyId ?? company.name ?? "sin-empresa";
+        // Resolve a usable name from id lookup or provided name
+        const resolvedName =
+          company.name?.trim() ||
+          (company.companyId ? companyLookup[company.companyId] : undefined);
+        if (!isValidCompanyName(resolvedName)) {
+          // Ignore unnamed companies completely (do not count hours)
+          return;
+        }
+
+        const mapKey = company.companyId ?? resolvedName;
         if (!companyHoursMap.has(mapKey)) {
           companyHoursMap.set(mapKey, {
             companyId: company.companyId ?? undefined,
-            name:
-              company.name?.trim() ||
-              (company.companyId
-                ? companyLookup[company.companyId]
-                : undefined) ||
-              (company.companyId ?? "Sin empresa"),
+            name: resolvedName,
             hours: 0,
           });
         }
@@ -2668,16 +2697,13 @@ export const SalaryCalculatorPage: React.FC = () => {
         entry.hours += company.hours;
 
         if (!entry.name || entry.name.trim().length === 0) {
-          entry.name =
-            company.name?.trim() ||
-            (entry.companyId ? companyLookup[entry.companyId] : undefined) ||
-            (entry.companyId ?? "Sin empresa");
+          entry.name = resolvedName;
         }
       });
     });
 
     const companyHoursList = Array.from(companyHoursMap.values()).filter(
-      (item) => item.hours > 0
+      (item) => item.hours > 0 && isValidCompanyName(item.name)
     );
 
     companyHoursList.sort((a, b) =>
@@ -2698,14 +2724,6 @@ export const SalaryCalculatorPage: React.FC = () => {
 
     const breakdownSource = usesCalendarHours
       ? companyHoursList
-      : hoursWorked > 0
-      ? [
-          {
-            companyId: undefined,
-            name: "Sin empresa",
-            hours: hoursWorked,
-          },
-        ]
       : [];
 
     const companyBreakdown = breakdownSource.map((item) => ({
@@ -2990,6 +3008,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                           {selectedWorker.companyNames
                             .filter(
                               (name) =>
+                                isValidCompanyName(name) &&
                                 (selectedWorker.companyStats?.[name]
                                   ?.contractCount ?? 0) > 0
                             )
@@ -3295,7 +3314,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                         </div>
                       ) : (
                         <div className="space-y-4 px-4 py-5">
-                          {companyContractStructure.groups.map((group) => {
+                          {companyContractStructure.groups
+                            .filter((g) => isValidCompanyName(g.companyName))
+                            .map((group) => {
                             const summary =
                               manualContractAggregates.companyList.find(
                                 (company) =>
@@ -4049,8 +4070,10 @@ export const SalaryCalculatorPage: React.FC = () => {
                                     isGroup: false,
                                   })),
                                 ]
-                              : results.companyBreakdown.map((c) => ({
-                                  name: c.name ?? "Sin empresa",
+                              : results.companyBreakdown
+                                  .filter((c) => isValidCompanyName(c.name))
+                                  .map((c) => ({
+                                  name: c.name ?? "",
                                   hours: c.hours,
                                   amount: c.amount,
                                   method: undefined,
