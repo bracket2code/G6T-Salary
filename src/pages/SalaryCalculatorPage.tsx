@@ -41,7 +41,7 @@ import {
   type DayHoursSummary,
 } from "../components/WorkerHoursCalendar";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
-import { useTemplatesStore } from "../store/templatesStore";
+import { useTemplatesStore, type PdfTemplate } from "../store/templatesStore";
 import {
   useGroupingStore,
   type CompanyGroup as StoredCompanyGroup,
@@ -168,10 +168,7 @@ const OTHER_PAYMENTS_LABELS: Record<OtherPaymentCategory, string> = {
   deductions: "Deducciones",
 };
 
-const CREDIT_CATEGORIES: OtherPaymentCategory[] = [
-  "supplements",
-  "bonuses",
-];
+const CREDIT_CATEGORIES: OtherPaymentCategory[] = ["supplements", "bonuses"];
 
 const OTHER_PAYMENTS_CATEGORY_ORDER: OtherPaymentCategory[] = [
   "supplements",
@@ -198,6 +195,79 @@ interface SplitPaymentRule {
   value: string;
   method: "bank" | "cash";
 }
+
+interface SplitConfig {
+  mode: "keep" | "split";
+  rules: SplitPaymentRule[];
+}
+
+type SplitConfigsState = Record<CompanyKey, SplitConfig>;
+
+const escapePdfText = (value: string) =>
+  value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+
+const createSimplePdfBlob = (lines: string[]): Blob => {
+  const encoder = new TextEncoder();
+  const objects: Array<{ id: number; body: string }> = [];
+
+  const addObject = (body: string) => {
+    const id = objects.length + 1;
+    objects.push({ id, body });
+    return id;
+  };
+
+  const fontObjectId = addObject(
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+  );
+
+  let content = "BT\n/F1 16 Tf\n72 770 Td\n";
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      content += "0 -18 Td\n";
+    }
+    const text = line.trim().length > 0 ? line : " ";
+    content += `(${escapePdfText(text)}) Tj\n`;
+  });
+  content += "ET";
+
+  const contentBytes = encoder.encode(content);
+  const contentObjectId = addObject(
+    `<< /Length ${contentBytes.length} >>\nstream\n${content}\nendstream`
+  );
+
+  const pagesObjectId = objects.length + 2;
+  const pageObjectId = addObject(
+    `<< /Type /Page /Parent ${pagesObjectId} 0 R /MediaBox [0 0 612 792] /Contents ${contentObjectId} 0 R /Resources << /Font << /F1 ${fontObjectId} 0 R >> >> >>`
+  );
+  addObject(`<< /Type /Pages /Kids [${pageObjectId} 0 R] /Count 1 >>`);
+  const catalogObjectId = addObject(
+    `<< /Type /Catalog /Pages ${pagesObjectId} 0 R >>`
+  );
+
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [0];
+  let currentLength = encoder.encode(pdf).length;
+
+  objects.forEach(({ id, body }) => {
+    offsets[id] = currentLength;
+    const objStr = `${id} 0 obj\n${body}\nendobj\n`;
+    pdf += objStr;
+    currentLength += encoder.encode(objStr).length;
+  });
+
+  const xrefOffset = currentLength;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let i = 1; i <= objects.length; i++) {
+    pdf += `${offsets[i].toString().padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${
+    objects.length + 1
+  } /Root ${catalogObjectId} 0 R >>\n`;
+  pdf += `startxref\n${xrefOffset}\n%%EOF`;
+
+  return new Blob([pdf], { type: "application/pdf" });
+};
 
 const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
   workers,
@@ -556,15 +626,10 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [companyAssignmentWarning, setCompanyAssignmentWarning] = useState<
     string | null
   >(null);
-  const [otherPayments, setOtherPayments] = useState<OtherPaymentsState>(
-    () => createEmptyOtherPaymentsState()
+  const [otherPayments, setOtherPayments] = useState<OtherPaymentsState>(() =>
+    createEmptyOtherPaymentsState()
   );
-  const [splitPaymentRules, setSplitPaymentRules] = useState<
-    SplitPaymentRule[]
-  >([]);
-  const [splitSourceCompany, setSplitSourceCompany] = useState<
-    CompanyKey | null
-  >(null);
+  const [splitConfigs, setSplitConfigs] = useState<SplitConfigsState>({});
 
   // Collapsible modules state
   const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(true);
@@ -651,16 +716,24 @@ export const SalaryCalculatorPage: React.FC = () => {
   }, [results, getCompanyKey]);
 
   useEffect(() => {
-    if (availableCompanies.length === 0) {
-      setSplitSourceCompany(null);
-      return;
-    }
+    setSplitConfigs((prev) => {
+      const next: SplitConfigsState = {};
+      availableCompanies.forEach((company) => {
+        const existing = prev[company.key];
+        const filteredRules =
+          existing?.rules?.filter(
+            (rule) =>
+              rule.targetKey &&
+              rule.targetKey !== company.key &&
+              availableCompanies.some((c) => c.key === rule.targetKey)
+          ) ?? [];
 
-    setSplitSourceCompany((prev) => {
-      if (prev && availableCompanies.some((c) => c.key === prev)) {
-        return prev;
-      }
-      return availableCompanies[0].key;
+        next[company.key] = {
+          mode: existing?.mode ?? "keep",
+          rules: filteredRules,
+        };
+      });
+      return next;
     });
   }, [availableCompanies]);
 
@@ -736,79 +809,691 @@ export const SalaryCalculatorPage: React.FC = () => {
     }));
   };
 
-  const addSplitPaymentRule = () => {
-    const newRule: SplitPaymentRule = {
-      id:
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      targetKey: null,
-      mode: "percentage",
-      value: "",
-      method: "bank",
-    };
+  const setSplitMode = (sourceKey: CompanyKey, mode: "keep" | "split") => {
+    setSplitConfigs((prev) => {
+      const existing = prev[sourceKey] ?? { mode: "keep", rules: [] };
+      return {
+        ...prev,
+        [sourceKey]: {
+          ...existing,
+          mode,
+        },
+      };
+    });
+  };
 
-    setSplitPaymentRules((prev) => [...prev, newRule]);
+  const addSplitPaymentRule = (sourceKey: CompanyKey) => {
+    const candidateDestinations = availableCompanies.filter(
+      (company) => company.key !== sourceKey
+    );
+    if (candidateDestinations.length === 0) {
+      return;
+    }
+
+    const fallbackTarget = candidateDestinations[0].key;
+
+    setSplitConfigs((prev) => {
+      const existing = prev[sourceKey] ?? { mode: "split", rules: [] };
+      const existingTargets = new Set(
+        existing.rules
+          .map((rule) => rule.targetKey)
+          .filter((key): key is CompanyKey => Boolean(key))
+      );
+      const defaultTarget =
+        candidateDestinations.find(
+          (company) => !existingTargets.has(company.key)
+        )?.key ?? fallbackTarget;
+
+      const newRule: SplitPaymentRule = {
+        id:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        targetKey: defaultTarget,
+        mode: "percentage",
+        value: "",
+        method: "bank",
+      };
+
+      return {
+        ...prev,
+        [sourceKey]: {
+          mode: "split",
+          rules: [...existing.rules, newRule],
+        },
+      };
+    });
   };
 
   const updateSplitPaymentRule = <K extends keyof SplitPaymentRule>(
+    sourceKey: CompanyKey,
     id: string,
     field: K,
     value: SplitPaymentRule[K]
   ) => {
-    setSplitPaymentRules((prev) =>
-      prev.map((rule) =>
-        rule.id === id
-          ? {
-              ...rule,
-              [field]: value,
-            }
-          : rule
-      )
+    setSplitConfigs((prev) => {
+      const existing = prev[sourceKey];
+      if (!existing) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [sourceKey]: {
+          ...existing,
+          rules: existing.rules.map((rule) =>
+            rule.id === id ? { ...rule, [field]: value } : rule
+          ),
+        },
+      };
+    });
+  };
+
+  const removeSplitPaymentRule = (sourceKey: CompanyKey, id: string) => {
+    setSplitConfigs((prev) => {
+      const existing = prev[sourceKey];
+      if (!existing) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [sourceKey]: {
+          ...existing,
+          rules: existing.rules.filter((rule) => rule.id !== id),
+        },
+      };
+    });
+  };
+
+  const splitSummaries = useMemo(() => {
+    const summaries = new Map<
+      CompanyKey,
+      {
+        sourceAmount: number;
+        distributed: number;
+        remaining: number;
+        ruleAmounts: Map<string, number>;
+      }
+    >();
+
+    availableCompanies.forEach((company) => {
+      const config = splitConfigs[company.key];
+      const sourceAmount = company.amount;
+      if (!config || config.mode !== "split" || config.rules.length === 0) {
+        summaries.set(company.key, {
+          sourceAmount,
+          distributed: 0,
+          remaining: sourceAmount,
+          ruleAmounts: new Map(),
+        });
+        return;
+      }
+
+      let distributed = 0;
+      const ruleAmounts = new Map<string, number>();
+      config.rules.forEach((rule) => {
+        if (!rule.targetKey || rule.targetKey === company.key) {
+          return;
+        }
+        const raw = parseFloat(rule.value.replace(",", "."));
+        const numeric = Number.isFinite(raw) ? raw : 0;
+        const amount =
+          rule.mode === "percentage" ? (sourceAmount * numeric) / 100 : numeric;
+        distributed += amount;
+        ruleAmounts.set(rule.id, amount);
+      });
+
+      summaries.set(company.key, {
+        sourceAmount,
+        distributed,
+        remaining: sourceAmount - distributed,
+        ruleAmounts,
+      });
+    });
+
+    return summaries;
+  }, [availableCompanies, splitConfigs]);
+
+  const renderSplitPaymentsSection = () => {
+    if (availableCompanies.length === 0) {
+      return null;
+    }
+
+    const totals = Array.from(splitSummaries.values()).reduce(
+      (acc, summary) => {
+        acc.source += summary.sourceAmount;
+        acc.distributed += summary.distributed;
+        acc.remaining += summary.remaining;
+        return acc;
+      },
+      { source: 0, distributed: 0, remaining: 0 }
+    );
+
+    return (
+      <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 shadow-sm">
+        <div
+          className={`flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-4 ${
+            isSplitPaymentsCollapsed
+              ? ""
+              : "border-b border-gray-200 dark:border-gray-700"
+          }`}
+        >
+          <div className="space-y-2">
+            <h4 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Dividir Pagos
+            </h4>
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Revisa las asignaciones por empresa y decide si mantenerlas o
+              repartirlas manualmente.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300">
+              <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                <span className="h-2 w-2 rounded-full bg-blue-400 dark:bg-blue-300" />
+                {formatCurrency(totals.source)} origen total
+              </span>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                  totals.distributed <= totals.source + 0.001
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
+                    : "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-current/60" />
+                {formatCurrency(totals.distributed)} repartido
+              </span>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                  totals.remaining > 0
+                    ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+                    : "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-current/60" />
+                {formatCurrency(totals.remaining)} restante
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsSplitPaymentsCollapsed((prev) => !prev)}
+              className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              aria-label="Mostrar u ocultar división de pagos"
+            >
+              <ChevronDown
+                size={18}
+                className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                  isSplitPaymentsCollapsed ? "" : "rotate-180"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+        {!isSplitPaymentsCollapsed && (
+          <div className="px-4 py-5 space-y-5">
+            <div className="flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300 sm:hidden">
+              <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                <span className="h-2 w-2 rounded-full bg-blue-400 dark:bg-blue-300" />
+                {formatCurrency(totals.source)} origen total
+              </span>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                  totals.distributed <= totals.source + 0.001
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
+                    : "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-current/60" />
+                {formatCurrency(totals.distributed)} repartido
+              </span>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                  totals.remaining > 0
+                    ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+                    : "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-current/60" />
+                {formatCurrency(totals.remaining)} restante
+              </span>
+            </div>
+
+            {availableCompanies.map((company) => {
+              const config = splitConfigs[company.key] ?? {
+                mode: "keep",
+                rules: [],
+              };
+              const summary =
+                splitSummaries.get(company.key) ??
+                ({
+                  sourceAmount: company.amount,
+                  distributed: 0,
+                  remaining: company.amount,
+                  ruleAmounts: new Map<string, number>(),
+                } as const);
+              const candidateDestinations = availableCompanies.filter(
+                (c) => c.key !== company.key
+              );
+              const canAddRule = candidateDestinations.length > 0;
+              const isSplit = config.mode === "split";
+
+              return (
+                <div
+                  key={company.key}
+                  className="space-y-4 rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-900/40"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="space-y-1">
+                      <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        {company.name}
+                      </h5>
+                      <div className="flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300">
+                        <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                          <span className="h-2 w-2 rounded-full bg-blue-400 dark:bg-blue-300" />
+                          {formatCurrency(summary.sourceAmount)} origen
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                            summary.distributed <= summary.sourceAmount + 0.001
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
+                              : "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200"
+                          }`}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-current/60" />
+                          {formatCurrency(summary.distributed)} repartido
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                            summary.remaining > 0
+                              ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+                              : "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300"
+                          }`}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-current/60" />
+                          {formatCurrency(summary.remaining)} restante
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:items-end">
+                      <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setSplitMode(company.key, "keep")}
+                          className={`px-3 py-1.5 text-xs font-medium transition ${
+                            !isSplit
+                              ? "bg-blue-600 text-white"
+                              : "bg-transparent text-gray-600 dark:text-gray-300"
+                          }`}
+                        >
+                          Mantener asignación
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSplitMode(company.key, "split");
+                            if (config.rules.length === 0 && canAddRule) {
+                              addSplitPaymentRule(company.key);
+                            }
+                          }}
+                          className={`px-3 py-1.5 text-xs font-medium transition ${
+                            isSplit
+                              ? "bg-blue-600 text-white"
+                              : "bg-transparent text-gray-600 dark:text-gray-300"
+                          }`}
+                        >
+                          Dividir manualmente
+                        </button>
+                      </div>
+                      {isSplit && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => addSplitPaymentRule(company.key)}
+                          disabled={!canAddRule}
+                        >
+                          Añadir destino
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {!isSplit && (
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                      El importe se mantendrá asignado a {company.name} sin
+                      modificaciones.
+                    </p>
+                  )}
+
+                  {isSplit && (
+                    <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                      <div className="hidden md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto] md:items-center md:gap-3 bg-gray-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-900/60 dark:text-gray-400">
+                        <span>Destino</span>
+                        <span>Método</span>
+                        <span>Tipo</span>
+                        <span>Valor calculado</span>
+                        <span className="text-right">Acciones</span>
+                      </div>
+                      {config.rules.length === 0 ? (
+                        <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
+                          Añade destinos para repartir el importe.
+                        </div>
+                      ) : (
+                        config.rules.map((rule) => {
+                          const computedAmount =
+                            summary.ruleAmounts.get(rule.id) ?? 0;
+                          return (
+                            <div
+                              key={rule.id}
+                              className="border-t border-gray-100 px-4 py-4 dark:border-gray-800"
+                            >
+                              <div className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto] md:items-center md:gap-3">
+                                <Select
+                                  value={rule.targetKey ?? ""}
+                                  onChange={(value) =>
+                                    updateSplitPaymentRule(
+                                      company.key,
+                                      rule.id,
+                                      "targetKey",
+                                      value ? (value as CompanyKey) : null
+                                    )
+                                  }
+                                  options={[
+                                    {
+                                      value: "",
+                                      label: "Selecciona empresa destino",
+                                    },
+                                    ...candidateDestinations.map((c) => ({
+                                      value: c.key,
+                                      label: `${c.name} (${formatCurrency(
+                                        c.amount
+                                      )})`,
+                                    })),
+                                  ]}
+                                  aria-label="Empresa destino"
+                                  fullWidth
+                                />
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateSplitPaymentRule(
+                                        company.key,
+                                        rule.id,
+                                        "method",
+                                        "bank"
+                                      )
+                                    }
+                                    className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                                      rule.method !== "cash"
+                                        ? "border-blue-500 bg-blue-600 text-white"
+                                        : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-center gap-1">
+                                      <Landmark size={14} /> Banco
+                                    </div>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateSplitPaymentRule(
+                                        company.key,
+                                        rule.id,
+                                        "method",
+                                        "cash"
+                                      )
+                                    }
+                                    className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                                      rule.method === "cash"
+                                        ? "border-blue-500 bg-blue-600 text-white"
+                                        : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-center gap-1">
+                                      <Banknote size={14} /> Efectivo
+                                    </div>
+                                  </button>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateSplitPaymentRule(
+                                        company.key,
+                                        rule.id,
+                                        "mode",
+                                        "percentage"
+                                      )
+                                    }
+                                    className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                                      rule.mode === "percentage"
+                                        ? "border-indigo-500 bg-indigo-600 text-white"
+                                        : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                                    }`}
+                                  >
+                                    %
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateSplitPaymentRule(
+                                        company.key,
+                                        rule.id,
+                                        "mode",
+                                        "amount"
+                                      )
+                                    }
+                                    className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
+                                      rule.mode === "amount"
+                                        ? "border-indigo-500 bg-indigo-600 text-white"
+                                        : "border-gray-300 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                                    }`}
+                                  >
+                                    €
+                                  </button>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      inputMode="decimal"
+                                      step="0.01"
+                                      min="0"
+                                      value={rule.value}
+                                      onChange={(e) =>
+                                        updateSplitPaymentRule(
+                                          company.key,
+                                          rule.id,
+                                          "value",
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder={
+                                        rule.mode === "percentage"
+                                          ? "0"
+                                          : "0,00"
+                                      }
+                                      className="w-28 rounded-lg border border-gray-300 bg-white px-2 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                                    />
+                                    <span className="text-sm text-gray-500 dark:text-gray-400">
+                                      {rule.mode === "percentage" ? "%" : "€"}
+                                    </span>
+                                  </div>
+                                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                                    {formatCurrency(computedAmount)}
+                                  </span>
+                                </div>
+
+                                <div className="flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      removeSplitPaymentRule(
+                                        company.key,
+                                        rule.id
+                                      )
+                                    }
+                                    className="inline-flex items-center justify-center rounded-md border border-red-200 px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
+                                    title="Eliminar reparto"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+              <span>
+                Ajusta los valores hasta cubrir el importe del origen. Puedes
+                mezclar porcentajes e importes fijos.
+              </span>
+              <span>
+                El reparto solo se guarda en esta pantalla; si recalculas,
+                vuelve a confirmarlo antes de exportar.
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
     );
   };
 
-  const removeSplitPaymentRule = (id: string) => {
-    setSplitPaymentRules((prev) => prev.filter((rule) => rule.id !== id));
+  const exportResultsToPdf = (template?: PdfTemplate | null) => {
+    if (!results) {
+      alert("Calcula primero para poder exportar el PDF.");
+      return;
+    }
+
+    const lines: string[] = [];
+    const templateName = template?.name ?? "Resumen de salario";
+    lines.push(templateName);
+    if (selectedWorker) {
+      lines.push(`Trabajador: ${selectedWorker.name}`);
+    }
+
+    const periodText =
+      calculationData.period === "monthly"
+        ? "Mensual"
+        : calculationData.period === "weekly"
+        ? "Semanal"
+        : "Diario";
+
+    lines.push(`Período: ${periodText}`);
+    lines.push(`Horas totales: ${formatHours(results.totalHours)}`);
+    lines.push(`Importe total: ${formatCurrency(results.totalAmount)}`);
+    lines.push(`Generado: ${new Date().toLocaleString("es-ES")}`);
+    lines.push(" ");
+
+    if (companyGroups.length > 0 && groupedBreakdown) {
+      lines.push("Agrupaciones:");
+      groupedBreakdown.groups.forEach((group) => {
+        lines.push(
+          ` - ${group.name}: ${formatHours(group.hours)} h · ${formatCurrency(
+            group.amount
+          )}`
+        );
+        if (group.items?.length) {
+          group.items.forEach((item) => {
+            lines.push(
+              `    · ${item.name}: ${formatHours(
+                item.hours
+              )} h · ${formatCurrency(item.amount)}`
+            );
+          });
+        }
+      });
+      if (groupedBreakdown.remaining.length > 0) {
+        lines.push("Empresas sin agrupar:");
+        groupedBreakdown.remaining.forEach((item) => {
+          lines.push(
+            ` - ${item.name}: ${formatHours(item.hours)} h · ${formatCurrency(
+              item.amount
+            )}`
+          );
+        });
+      }
+    } else {
+      lines.push("Detalle por empresa:");
+      results.companyBreakdown
+        .filter((company) => isValidCompanyName(company.name))
+        .forEach((company) => {
+          lines.push(
+            ` - ${company.name ?? "Sin nombre"}: ${formatHours(
+              company.hours
+            )} h · ${formatCurrency(company.amount)}`
+          );
+        });
+    }
+
+    const splitEntries = availableCompanies.filter((company) => {
+      const config = splitConfigs[company.key];
+      return config && config.mode === "split" && config.rules.length > 0;
+    });
+
+    if (splitEntries.length > 0) {
+      lines.push(" ");
+      lines.push("Dividir pagos:");
+      splitEntries.forEach((company) => {
+        const config = splitConfigs[company.key];
+        const summary = splitSummaries.get(company.key);
+        const sourceAmount = summary?.sourceAmount ?? company.amount;
+        lines.push(` ${company.name} (${formatCurrency(sourceAmount)})`);
+
+        config?.rules.forEach((rule, index) => {
+          const destination = availableCompanies.find(
+            (candidate) => candidate.key === rule.targetKey
+          );
+          const methodLabel = rule.method === "cash" ? "Efectivo" : "Banco";
+          const baseValueLabel =
+            rule.mode === "percentage"
+              ? `${rule.value || "0"}%`
+              : formatCurrency(Number(rule.value || 0));
+          const computed = summary?.ruleAmounts.get(rule.id) ?? 0;
+          lines.push(
+            `   ${index + 1}. ${
+              destination?.name ?? "Destino sin asignar"
+            } · ${methodLabel} → ${formatCurrency(
+              computed
+            )} (base ${baseValueLabel})`
+          );
+        });
+
+        if (summary && Math.abs(summary.remaining) > 0.01) {
+          lines.push(
+            `   Restante sin distribuir: ${formatCurrency(summary.remaining)}`
+          );
+        }
+      });
+    }
+
+    lines.push(" ");
+    lines.push(`Plantilla utilizada: ${templateName}`);
+
+    const blob = createSimplePdfBlob(lines);
+    const fileNameBase = selectedWorker?.name
+      ? selectedWorker.name.replace(/\s+/g, "-")
+      : "calculo";
+    const fileName = `${fileNameBase.toLowerCase()}-${Date.now()}.pdf`;
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
-
-  const splitPaymentsSummary = useMemo(() => {
-    const source = splitSourceCompany
-      ? availableCompanies.find((c) => c.key === splitSourceCompany)
-      : null;
-    const sourceAmount = source?.amount ?? 0;
-
-    let distributed = 0;
-    const detailed = splitPaymentRules.map((rule) => {
-      const raw = parseFloat(rule.value.replace(",", "."));
-      const numeric = Number.isFinite(raw) ? raw : 0;
-      const amount =
-        rule.mode === "percentage"
-          ? (sourceAmount * numeric) / 100
-          : numeric;
-      distributed += amount;
-      return {
-        id: rule.id,
-        amount,
-      };
-    });
-
-    const remaining = sourceAmount - distributed;
-    return {
-      sourceAmount,
-      distributed,
-      remaining,
-      details: detailed,
-    };
-  }, [availableCompanies, splitPaymentRules, splitSourceCompany]);
-
-  const splitRuleComputedAmounts = useMemo(() => {
-    const map = new Map<string, number>();
-    splitPaymentsSummary.details.forEach((item) => {
-      map.set(item.id, item.amount);
-    });
-    return map;
-  }, [splitPaymentsSummary]);
 
   const colorsPalette = [
     "#2563eb",
@@ -869,9 +1554,7 @@ export const SalaryCalculatorPage: React.FC = () => {
 
       didChange = true;
       return prev.map((g) =>
-        g.id === groupId
-          ? { ...g, companies: [...g.companies, companyKey] }
-          : g
+        g.id === groupId ? { ...g, companies: [...g.companies, companyKey] } : g
       );
     });
 
@@ -2240,9 +2923,8 @@ export const SalaryCalculatorPage: React.FC = () => {
     });
     setOtherPayments(createEmptyOtherPaymentsState());
     setIsOtherPaymentsCollapsed(true);
-    setSplitPaymentRules([]);
+    setSplitConfigs({});
     setIsSplitPaymentsCollapsed(true);
-    setSplitSourceCompany(null);
     setResults(null);
   };
 
@@ -3089,387 +3771,384 @@ export const SalaryCalculatorPage: React.FC = () => {
       />
 
       <div className="space-y-6">
-        <div className="grid gap-6 items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:[&>*]:min-w-0">
-          {/* Worker Selection and Input Form */}
-          <Card className="h-full">
-            <CardHeader>
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-                    <User
-                      size={20}
-                      className="mr-2 text-blue-600 dark:text-blue-400"
+        {/* Worker Selection and Input Form */}
+        <Card className="h-full">
+          <CardHeader>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <User
+                    size={20}
+                    className="mr-2 text-blue-600 dark:text-blue-400"
+                  />
+                  Selección de Trabajador
+                </h2>
+                {lastFetchTime && (
+                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                    Actualizado: {lastFetchTime.toLocaleString("es-ES")}
+                  </div>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={refreshWorkers}
+                  disabled={isRefreshing}
+                  leftIcon={
+                    <RefreshCw
+                      size={16}
+                      className={isRefreshing ? "animate-spin" : ""}
                     />
-                    Selección de Trabajador
-                  </h2>
-                  {lastFetchTime && (
-                    <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                      Actualizado: {lastFetchTime.toLocaleString("es-ES")}
-                    </div>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={refreshWorkers}
-                    disabled={isRefreshing}
-                    leftIcon={
-                      <RefreshCw
-                        size={16}
-                        className={isRefreshing ? "animate-spin" : ""}
-                      />
-                    }
-                  >
-                    Actualizar
-                  </Button>
-                </div>
+                  }
+                >
+                  Actualizar
+                </Button>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Combined Search and Select */}
-              {isLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-                  <span className="ml-2 text-gray-600 dark:text-gray-400">
-                    Cargando trabajadores...
-                  </span>
-                </div>
-              ) : (
-                <WorkerSearchSelect
-                  workers={allWorkers}
-                  selectedWorkerId={selectedWorkerId}
-                  onWorkerSelect={setSelectedWorkerId}
-                  placeholder="Buscar y seleccionar trabajador..."
-                />
-              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Combined Search and Select */}
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+                <span className="ml-2 text-gray-600 dark:text-gray-400">
+                  Cargando trabajadores...
+                </span>
+              </div>
+            ) : (
+              <WorkerSearchSelect
+                workers={allWorkers}
+                selectedWorkerId={selectedWorkerId}
+                onWorkerSelect={setSelectedWorkerId}
+                placeholder="Buscar y seleccionar trabajador..."
+              />
+            )}
 
-              {/* Selected Worker Info */}
-              {selectedWorker && (
-                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
-                  <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
-                    {selectedWorker.name}
-                  </h3>
-                  <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                      <div className="space-y-1">
-                        <div>
-                          <span className="mr-1">Email:</span>
-                          {selectedWorker.email ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void handleEmailCopy(selectedWorker.email);
-                              }}
-                              className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
-                            >
-                              {selectedWorker.email}
-                            </button>
-                          ) : (
-                            "No disponible"
-                          )}
-                        </div>
-                        {selectedWorker.secondaryEmail && (
-                          <div>
-                            <span className="mr-1">Email 2:</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void handleEmailCopy(
-                                  selectedWorker.secondaryEmail
-                                );
-                              }}
-                              className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
-                            >
-                              {selectedWorker.secondaryEmail}
-                            </button>
-                          </div>
-                        )}
-                        {copyFeedback?.type === "email" && (
-                          <span className="ml-2 text-xs text-green-600 dark:text-green-300 inline-block">
-                            {copyFeedback.message}
-                            {copyFeedback.target
-                              ? ` (${copyFeedback.target})`
-                              : ""}
-                          </span>
-                        )}
-                      </div>
-                      {canLinkEmail && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          leftIcon={<Mail size={14} />}
-                          onClick={openEmailClient}
-                        >
-                          Enviar email
-                        </Button>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            {/* Selected Worker Info */}
+            {selectedWorker && (
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
+                <h3 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                  {selectedWorker.name}
+                </h3>
+                <div className="text-sm text-blue-700 dark:text-blue-300 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="space-y-1">
                       <div>
-                        <span className="mr-1">Teléfono:</span>
-                        {selectedWorker.phone ? (
+                        <span className="mr-1">Email:</span>
+                        {selectedWorker.email ? (
                           <button
                             type="button"
                             onClick={() => {
-                              void handlePhoneCopy();
+                              void handleEmailCopy(selectedWorker.email);
                             }}
                             className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
                           >
-                            {selectedWorker.phone}
+                            {selectedWorker.email}
                           </button>
                         ) : (
                           "No disponible"
                         )}
-                        {copyFeedback?.type === "phone" && (
-                          <span className="ml-2 text-xs text-green-600 dark:text-green-300">
-                            {copyFeedback.message}
-                          </span>
-                        )}
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedWorkerTelHref && (
-                          <Button
+                      {selectedWorker.secondaryEmail && (
+                        <div>
+                          <span className="mr-1">Email 2:</span>
+                          <button
                             type="button"
-                            variant="outline"
-                            size="sm"
-                            leftIcon={<Phone size={14} />}
-                            onClick={openPhoneDialer}
+                            onClick={() => {
+                              void handleEmailCopy(
+                                selectedWorker.secondaryEmail
+                              );
+                            }}
+                            className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
                           >
-                            Llamar
-                          </Button>
-                        )}
-                        {selectedWorkerWhatsappHref && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            leftIcon={<MessageCircle size={14} />}
-                            onClick={openWhatsAppConversation}
-                          >
-                            WhatsApp
-                          </Button>
-                        )}
-                      </div>
+                            {selectedWorker.secondaryEmail}
+                          </button>
+                        </div>
+                      )}
+                      {copyFeedback?.type === "email" && (
+                        <span className="ml-2 text-xs text-green-600 dark:text-green-300 inline-block">
+                          {copyFeedback.message}
+                          {copyFeedback.target
+                            ? ` (${copyFeedback.target})`
+                            : ""}
+                        </span>
+                      )}
                     </div>
+                    {canLinkEmail && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        leftIcon={<Mail size={14} />}
+                        onClick={openEmailClient}
+                      >
+                        Enviar email
+                      </Button>
+                    )}
                   </div>
 
-                  {selectedWorker.companyNames &&
-                    selectedWorker.companyNames.filter(
-                      (name) =>
-                        (selectedWorker.companyStats?.[name]?.contractCount ??
-                          0) > 0
-                    ).length > 0 && (
-                      <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
-                        <span className="mr-1 text-blue-900 dark:text-blue-100">
-                          Empresas asignadas:
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <span className="mr-1">Teléfono:</span>
+                      {selectedWorker.phone ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handlePhoneCopy();
+                          }}
+                          className="font-medium text-blue-800 dark:text-blue-200 underline hover:text-blue-900 dark:hover:text-blue-100"
+                        >
+                          {selectedWorker.phone}
+                        </button>
+                      ) : (
+                        "No disponible"
+                      )}
+                      {copyFeedback?.type === "phone" && (
+                        <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                          {copyFeedback.message}
                         </span>
-                        <div className="mt-1 flex flex-wrap gap-2">
-                          {selectedWorker.companyNames
-                            .filter(
-                              (name) =>
-                                isValidCompanyName(name) &&
-                                (selectedWorker.companyStats?.[name]
-                                  ?.contractCount ?? 0) > 0
-                            )
-                            .map((companyName) => {
-                              const isActive = expandedCompany === companyName;
-                              const companyStats =
-                                selectedWorker.companyStats?.[companyName];
-                              const contractCount =
-                                companyStats?.contractCount ?? 0;
-                              const assignmentCount =
-                                companyStats?.assignmentCount ?? 0;
-                              const hasContracts = contractCount > 0;
-                              const isAssignmentOnly =
-                                !hasContracts && assignmentCount > 0;
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedWorkerTelHref && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          leftIcon={<Phone size={14} />}
+                          onClick={openPhoneDialer}
+                        >
+                          Llamar
+                        </Button>
+                      )}
+                      {selectedWorkerWhatsappHref && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          leftIcon={<MessageCircle size={14} />}
+                          onClick={openWhatsAppConversation}
+                        >
+                          WhatsApp
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-                              const inactiveClass = isAssignmentOnly
-                                ? "border-amber-200 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:border-amber-500/60 dark:bg-amber-900/30 dark:text-amber-200"
-                                : "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-200 dark:hover:bg-blue-900/60";
-                              const activeClass = isAssignmentOnly
-                                ? "border-amber-500 bg-amber-500 text-white shadow-sm dark:border-amber-400 dark:bg-amber-500/80"
-                                : "border-blue-600 bg-blue-600 text-white shadow-sm dark:border-blue-500 dark:bg-blue-500";
+                {selectedWorker.companyNames &&
+                  selectedWorker.companyNames.filter(
+                    (name) =>
+                      (selectedWorker.companyStats?.[name]?.contractCount ??
+                        0) > 0
+                  ).length > 0 && (
+                    <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
+                      <span className="mr-1 text-blue-900 dark:text-blue-100">
+                        Empresas asignadas:
+                      </span>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {selectedWorker.companyNames
+                          .filter(
+                            (name) =>
+                              isValidCompanyName(name) &&
+                              (selectedWorker.companyStats?.[name]
+                                ?.contractCount ?? 0) > 0
+                          )
+                          .map((companyName) => {
+                            const isActive = expandedCompany === companyName;
+                            const companyStats =
+                              selectedWorker.companyStats?.[companyName];
+                            const contractCount =
+                              companyStats?.contractCount ?? 0;
+                            const assignmentCount =
+                              companyStats?.assignmentCount ?? 0;
+                            const hasContracts = contractCount > 0;
+                            const isAssignmentOnly =
+                              !hasContracts && assignmentCount > 0;
 
-                              return (
-                                <button
-                                  key={companyName}
-                                  type="button"
-                                  onClick={() =>
-                                    setExpandedCompany((current) =>
-                                      current === companyName
-                                        ? null
-                                        : companyName
-                                    )
-                                  }
-                                  aria-pressed={isActive}
-                                  aria-expanded={isActive}
-                                  className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 ${
-                                    isActive ? activeClass : inactiveClass
-                                  }`}
-                                >
-                                  <span>{companyName}</span>
-                                  {hasContracts && (
-                                    <span
-                                      title={
-                                        contractCount === 1
-                                          ? "1 contrato"
-                                          : `${contractCount} contratos`
-                                      }
-                                      className={`ml-1 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                                        isActive
-                                          ? "bg-white/20 text-white"
-                                          : "bg-blue-200 text-blue-800 dark:bg-blue-900/70 dark:text-blue-100"
-                                      }`}
-                                    >
-                                      {contractCount}
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })}
-                        </div>
+                            const inactiveClass = isAssignmentOnly
+                              ? "border-amber-200 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:border-amber-500/60 dark:bg-amber-900/30 dark:text-amber-200"
+                              : "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-200 dark:hover:bg-blue-900/60";
+                            const activeClass = isAssignmentOnly
+                              ? "border-amber-500 bg-amber-500 text-white shadow-sm dark:border-amber-400 dark:bg-amber-500/80"
+                              : "border-blue-600 bg-blue-600 text-white shadow-sm dark:border-blue-500 dark:bg-blue-500";
 
-                        {expandedCompany && (
-                          <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 p-3 text-sm text-blue-900 shadow-sm dark:border-blue-700/80 dark:bg-blue-900/20 dark:text-blue-100">
-                            <div className="mb-2 flex items-center justify-between">
-                              <span className="font-semibold">
-                                Contratos en {expandedCompany}
-                              </span>
+                            return (
                               <button
+                                key={companyName}
                                 type="button"
-                                onClick={() => setExpandedCompany(null)}
-                                className="text-xs text-blue-500 underline transition hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
+                                onClick={() =>
+                                  setExpandedCompany((current) =>
+                                    current === companyName ? null : companyName
+                                  )
+                                }
+                                aria-pressed={isActive}
+                                aria-expanded={isActive}
+                                className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-500 ${
+                                  isActive ? activeClass : inactiveClass
+                                }`}
                               >
-                                Cerrar
+                                <span>{companyName}</span>
+                                {hasContracts && (
+                                  <span
+                                    title={
+                                      contractCount === 1
+                                        ? "1 contrato"
+                                        : `${contractCount} contratos`
+                                    }
+                                    className={`ml-1 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                      isActive
+                                        ? "bg-white/20 text-white"
+                                        : "bg-blue-200 text-blue-800 dark:bg-blue-900/70 dark:text-blue-100"
+                                    }`}
+                                  >
+                                    {contractCount}
+                                  </span>
+                                )}
                               </button>
-                            </div>
-                            {expandedCompanyContracts.length === 0 ? (
-                              <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-                                No hay información de contratos para esta
-                                empresa.
-                              </div>
-                            ) : (
-                              <>
-                                {expandedContractsWithContract.length > 0 && (
-                                  <div className="space-y-3">
-                                    {expandedContractsWithContract.map(
-                                      (contract, index) => {
-                                        const startDateText = formatMaybeDate(
-                                          contract.startDate
-                                        );
-                                        const endDateText = formatMaybeDate(
-                                          contract.endDate
-                                        );
-                                        const contractLabel = `Contrato ${
-                                          index + 1
-                                        }`;
-                                        const contractTypeText =
-                                          contract.position || contract.label;
+                            );
+                          })}
+                      </div>
 
-                                        return (
-                                          <div
-                                            key={`${expandedCompany}-${contract.id}`}
-                                            className="rounded-md border border-blue-100 bg-white/80 p-3 text-xs shadow-sm dark:border-blue-700/60 dark:bg-blue-900/40"
-                                          >
-                                            <div className="flex items-center justify-between">
-                                              <span className="font-semibold">
-                                                {contractLabel}
+                      {expandedCompany && (
+                        <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 p-3 text-sm text-blue-900 shadow-sm dark:border-blue-700/80 dark:bg-blue-900/20 dark:text-blue-100">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="font-semibold">
+                              Contratos en {expandedCompany}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedCompany(null)}
+                              className="text-xs text-blue-500 underline transition hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
+                            >
+                              Cerrar
+                            </button>
+                          </div>
+                          {expandedCompanyContracts.length === 0 ? (
+                            <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                              No hay información de contratos para esta empresa.
+                            </div>
+                          ) : (
+                            <>
+                              {expandedContractsWithContract.length > 0 && (
+                                <div className="space-y-3">
+                                  {expandedContractsWithContract.map(
+                                    (contract, index) => {
+                                      const startDateText = formatMaybeDate(
+                                        contract.startDate
+                                      );
+                                      const endDateText = formatMaybeDate(
+                                        contract.endDate
+                                      );
+                                      const contractLabel = `Contrato ${
+                                        index + 1
+                                      }`;
+                                      const contractTypeText =
+                                        contract.position || contract.label;
+
+                                      return (
+                                        <div
+                                          key={`${expandedCompany}-${contract.id}`}
+                                          className="rounded-md border border-blue-100 bg-white/80 p-3 text-xs shadow-sm dark:border-blue-700/60 dark:bg-blue-900/40"
+                                        >
+                                          <div className="flex items-center justify-between">
+                                            <span className="font-semibold">
+                                              {contractLabel}
+                                            </span>
+                                            {contract.status && (
+                                              <span className="ml-2 rounded-full bg-blue-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:bg-blue-800/70 dark:text-blue-200">
+                                                {contract.status}
                                               </span>
-                                              {contract.status && (
-                                                <span className="ml-2 rounded-full bg-blue-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:bg-blue-800/70 dark:text-blue-200">
-                                                  {contract.status}
-                                                </span>
-                                              )}
+                                            )}
+                                          </div>
+                                          <div className="mt-2 space-y-1 text-blue-800 dark:text-blue-100">
+                                            <div>
+                                              <span className="font-medium">
+                                                Precio por hora:
+                                              </span>{" "}
+                                              {typeof contract.hourlyRate ===
+                                              "number"
+                                                ? formatCurrency(
+                                                    contract.hourlyRate
+                                                  )
+                                                : "No especificado"}
                                             </div>
-                                            <div className="mt-2 space-y-1 text-blue-800 dark:text-blue-100">
+                                            {contractTypeText && (
                                               <div>
                                                 <span className="font-medium">
-                                                  Precio por hora:
+                                                  Contrato:
                                                 </span>{" "}
-                                                {typeof contract.hourlyRate ===
-                                                "number"
-                                                  ? formatCurrency(
-                                                      contract.hourlyRate
-                                                    )
-                                                  : "No especificado"}
+                                                {contractTypeText}
                                               </div>
-                                              {contractTypeText && (
-                                                <div>
-                                                  <span className="font-medium">
-                                                    Contrato:
-                                                  </span>{" "}
-                                                  {contractTypeText}
-                                                </div>
-                                              )}
-                                              {startDateText && (
-                                                <div>
-                                                  <span className="font-medium">
-                                                    Inicio:
-                                                  </span>{" "}
-                                                  {startDateText}
-                                                </div>
-                                              )}
-                                              {endDateText && (
-                                                <div>
-                                                  <span className="font-medium">
-                                                    Fin:
-                                                  </span>{" "}
-                                                  {endDateText}
-                                                </div>
-                                              )}
-                                              {contract.description && (
-                                                <div>
-                                                  <span className="font-medium">
-                                                    Descripción:
-                                                  </span>{" "}
-                                                  {contract.description}
-                                                </div>
-                                              )}
-                                            </div>
+                                            )}
+                                            {startDateText && (
+                                              <div>
+                                                <span className="font-medium">
+                                                  Inicio:
+                                                </span>{" "}
+                                                {startDateText}
+                                              </div>
+                                            )}
+                                            {endDateText && (
+                                              <div>
+                                                <span className="font-medium">
+                                                  Fin:
+                                                </span>{" "}
+                                                {endDateText}
+                                              </div>
+                                            )}
+                                            {contract.description && (
+                                              <div>
+                                                <span className="font-medium">
+                                                  Descripción:
+                                                </span>{" "}
+                                                {contract.description}
+                                              </div>
+                                            )}
                                           </div>
-                                        );
-                                      }
-                                    )}
+                                        </div>
+                                      );
+                                    }
+                                  )}
+                                </div>
+                              )}
+
+                              {expandedContractCount === 0 &&
+                                expandedAssignmentCount > 0 && (
+                                  <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                    Esta empresa está asignada pero no tiene
+                                    contrato asociado.
                                   </div>
                                 )}
 
-                                {expandedContractCount === 0 &&
-                                  expandedAssignmentCount > 0 && (
-                                    <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-                                      Esta empresa está asignada pero no tiene
-                                      contrato asociado.
-                                    </div>
-                                  )}
-
-                                {expandedContractCount > 0 &&
-                                  expandedAssignmentCount > 0 && (
-                                    <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-                                      Además, hay {expandedAssignmentCount}{" "}
-                                      {expandedAssignmentCount === 1
-                                        ? "asignación"
-                                        : "asignaciones"}{" "}
-                                      sin contrato asociado.
-                                    </div>
-                                  )}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                  {selectedWorker.department && (
-                    <p>Departamento: {selectedWorker.department}</p>
+                              {expandedContractCount > 0 &&
+                                expandedAssignmentCount > 0 && (
+                                  <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                    Además, hay {expandedAssignmentCount}{" "}
+                                    {expandedAssignmentCount === 1
+                                      ? "asignación"
+                                      : "asignaciones"}{" "}
+                                    sin contrato asociado.
+                                  </div>
+                                )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
-                  {selectedWorker.position && (
-                    <p>Posición: {selectedWorker.position}</p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
 
+                {selectedWorker.department && (
+                  <p>Departamento: {selectedWorker.department}</p>
+                )}
+                {selectedWorker.position && (
+                  <p>Posición: {selectedWorker.position}</p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-6 items-start lg:grid-cols-2 lg:[&>*]:min-w-0">
           {/* Calculation Form */}
           <Card>
             <CardHeader>
@@ -3805,69 +4484,6 @@ export const SalaryCalculatorPage: React.FC = () => {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Select
-                    label="Período"
-                    value={calculationData.period}
-                    onChange={(value) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        period: value as CalculationFormState["period"],
-                      }))
-                    }
-                    options={[
-                      { value: "monthly", label: "Mensual" },
-                      { value: "weekly", label: "Semanal" },
-                      { value: "daily", label: "Diario" },
-                    ]}
-                    fullWidth
-                  />
-
-                  <Input
-                    type="number"
-                    label="Horas Extra"
-                    value={calculationData.overtimeHours}
-                    onChange={(e) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        overtimeHours: e.target.value,
-                      }))
-                    }
-                    placeholder="0"
-                    fullWidth
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    type="number"
-                    label="Bonificaciones (€)"
-                    value={calculationData.bonuses}
-                    onChange={(e) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        bonuses: e.target.value,
-                      }))
-                    }
-                    placeholder="0"
-                    fullWidth
-                  />
-
-                  <Input
-                    type="number"
-                    label="Deducciones (€)"
-                    value={calculationData.deductions}
-                    onChange={(e) =>
-                      setCalculationData((prev) => ({
-                        ...prev,
-                        deductions: e.target.value,
-                      }))
-                    }
-                    placeholder="0"
-                    fullWidth
-                  />
-                </div>
-
                 <Input
                   label="Notas"
                   value={calculationData.notes}
@@ -3925,7 +4541,7 @@ export const SalaryCalculatorPage: React.FC = () => {
             </CardHeader>
             {!isCalendarCollapsed && (
               <CardContent>
-                <div className="min-w-0 h-full">
+                <div className="min-w-0 h-full text-xs">
                   <WorkerHoursCalendar
                     worker={selectedWorker}
                     selectedMonth={calendarMonth}
@@ -3992,7 +4608,8 @@ export const SalaryCalculatorPage: React.FC = () => {
 
                   {companyAssignments.size > 0 && (
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      Las empresas en gris ya pertenecen a otro grupo. Quítalas antes de asignarlas a uno nuevo.
+                      Las empresas en gris ya pertenecen a otro grupo. Quítalas
+                      antes de asignarlas a uno nuevo.
                     </p>
                   )}
 
@@ -4051,167 +4668,174 @@ export const SalaryCalculatorPage: React.FC = () => {
                         <div className="grid gap-3 md:grid-cols-2">
                           {companyGroups.length > 0 &&
                             companyGroups.map((g) => (
-                            <div
-                              key={g.id}
-                              className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 shadow-sm"
-                            >
                               <div
-                                className="flex items-start justify-between gap-3 px-3 py-3"
-                                style={{ borderTop: `4px solid ${g.color}` }}
+                                key={g.id}
+                                className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 shadow-sm"
                               >
-                                <div className="flex flex-col gap-1 flex-1">
-                                  <input
-                                    value={g.name}
-                                    onChange={(e) =>
-                                      setCompanyGroups((prev) =>
-                                        prev.map((x) =>
-                                          x.id === g.id
-                                            ? { ...x, name: e.target.value }
-                                            : x
+                                <div
+                                  className="flex items-start justify-between gap-3 px-3 py-3"
+                                  style={{ borderTop: `4px solid ${g.color}` }}
+                                >
+                                  <div className="flex flex-col gap-1 flex-1">
+                                    <input
+                                      value={g.name}
+                                      onChange={(e) =>
+                                        setCompanyGroups((prev) =>
+                                          prev.map((x) =>
+                                            x.id === g.id
+                                              ? { ...x, name: e.target.value }
+                                              : x
+                                          )
                                         )
-                                      )
-                                    }
-                                    className="bg-transparent font-semibold text-gray-900 dark:text-gray-100 outline-none focus:ring-0"
-                                  />
-                                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                                    <span className="inline-flex items-center gap-1">
-                                      <span
-                                        className="h-2 w-2 rounded-full"
-                                        style={{ backgroundColor: g.color }}
-                                      />
-                                      {g.companies.length} empresas en el grupo
+                                      }
+                                      className="bg-transparent font-semibold text-gray-900 dark:text-gray-100 outline-none focus:ring-0"
+                                    />
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                      <span className="inline-flex items-center gap-1">
+                                        <span
+                                          className="h-2 w-2 rounded-full"
+                                          style={{ backgroundColor: g.color }}
+                                        />
+                                        {g.companies.length} empresas en el
+                                        grupo
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="color"
+                                      value={g.color}
+                                      onChange={(e) =>
+                                        setCompanyGroups((prev) =>
+                                          prev.map((x) =>
+                                            x.id === g.id
+                                              ? { ...x, color: e.target.value }
+                                              : x
+                                          )
+                                        )
+                                      }
+                                      title="Color del grupo"
+                                      className="h-8 w-8 cursor-pointer rounded-md border border-gray-200 bg-transparent dark:border-gray-700"
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => removeGroup(g.id)}
+                                    >
+                                      Eliminar
+                                    </Button>
+                                  </div>
+                                </div>
+                                <div className="px-3 pb-3">
+                                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                    <span className="text-gray-600 dark:text-gray-300">
+                                      Forma de pago
                                     </span>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="color"
-                                    value={g.color}
-                                    onChange={(e) =>
-                                      setCompanyGroups((prev) =>
-                                        prev.map((x) =>
-                                          x.id === g.id
-                                            ? { ...x, color: e.target.value }
-                                            : x
-                                        )
-                                      )
-                                    }
-                                    title="Color del grupo"
-                                    className="h-8 w-8 cursor-pointer rounded-md border border-gray-200 bg-transparent dark:border-gray-700"
-                                  />
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => removeGroup(g.id)}
-                                  >
-                                    Eliminar
-                                  </Button>
-                                </div>
-                              </div>
-                              <div className="px-3 pb-3">
-                                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-                                  <span className="text-gray-600 dark:text-gray-300">
-                                    Forma de pago
-                                  </span>
-                                  <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setCompanyGroups((prev) =>
-                                          prev.map((x) =>
-                                            x.id === g.id
-                                              ? { ...x, paymentMethod: "bank" }
-                                              : x
-                                          )
-                                        )
-                                      }
-                                      className={`px-2 py-1 flex items-center gap-1 ${
-                                        g.paymentMethod !== "cash"
-                                          ? "bg-blue-600 text-white"
-                                          : "bg-transparent text-gray-700 dark:text-gray-300"
-                                      }`}
-                                      title="Banco"
-                                    >
-                                      <Landmark size={14} /> Banco
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setCompanyGroups((prev) =>
-                                          prev.map((x) =>
-                                            x.id === g.id
-                                              ? { ...x, paymentMethod: "cash" }
-                                              : x
-                                          )
-                                        )
-                                      }
-                                      className={`px-2 py-1 flex items-center gap-1 ${
-                                        g.paymentMethod === "cash"
-                                          ? "bg-blue-600 text-white"
-                                          : "bg-transparent text-gray-700 dark:text-gray-300"
-                                      }`}
-                                      title="Efectivo"
-                                    >
-                                      <Banknote size={14} /> Efectivo
-                                    </button>
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  {availableCompanies.map((c) => {
-                                    const assignedGroup = companyAssignments.get(
-                                      c.key
-                                    );
-                                    const isInCurrentGroup =
-                                      g.companies.includes(c.key);
-                                    const isAssignedElsewhere = Boolean(
-                                      assignedGroup &&
-                                        assignedGroup.id !== g.id
-                                    );
-                                    const buttonClasses = `px-2.5 py-1 rounded-full border text-xs transition ${
-                                      isInCurrentGroup
-                                        ? "border-transparent text-white"
-                                        : "border-gray-300 text-gray-700 dark:text-gray-300"
-                                    } ${
-                                      isAssignedElsewhere && !isInCurrentGroup
-                                        ? "cursor-not-allowed opacity-60 bg-gray-100 text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500"
-                                        : ""
-                                    }`;
-
-                                    return (
+                                    <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
                                       <button
                                         type="button"
-                                        key={`${g.id}-${c.key}`}
                                         onClick={() =>
-                                          toggleCompanyInGroup(g.id, c.key)
+                                          setCompanyGroups((prev) =>
+                                            prev.map((x) =>
+                                              x.id === g.id
+                                                ? {
+                                                    ...x,
+                                                    paymentMethod: "bank",
+                                                  }
+                                                : x
+                                            )
+                                          )
                                         }
-                                        disabled={isAssignedElsewhere}
-                                        className={buttonClasses}
-                                        style={
-                                          isInCurrentGroup
-                                            ? { backgroundColor: g.color }
-                                            : undefined
+                                        className={`px-2 py-1 flex items-center gap-1 ${
+                                          g.paymentMethod !== "cash"
+                                            ? "bg-blue-600 text-white"
+                                            : "bg-transparent text-gray-700 dark:text-gray-300"
+                                        }`}
+                                        title="Banco"
+                                      >
+                                        <Landmark size={14} /> Banco
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCompanyGroups((prev) =>
+                                            prev.map((x) =>
+                                              x.id === g.id
+                                                ? {
+                                                    ...x,
+                                                    paymentMethod: "cash",
+                                                  }
+                                                : x
+                                            )
+                                          )
                                         }
-                                        title={
-                                          isAssignedElsewhere && assignedGroup
-                                            ? `Ya está en "${assignedGroup.name}"`
-                                            : isInCurrentGroup
+                                        className={`px-2 py-1 flex items-center gap-1 ${
+                                          g.paymentMethod === "cash"
+                                            ? "bg-blue-600 text-white"
+                                            : "bg-transparent text-gray-700 dark:text-gray-300"
+                                        }`}
+                                        title="Efectivo"
+                                      >
+                                        <Banknote size={14} /> Efectivo
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {availableCompanies.map((c) => {
+                                      const assignedGroup =
+                                        companyAssignments.get(c.key);
+                                      const isInCurrentGroup =
+                                        g.companies.includes(c.key);
+                                      const isAssignedElsewhere = Boolean(
+                                        assignedGroup &&
+                                          assignedGroup.id !== g.id
+                                      );
+                                      const buttonClasses = `px-2.5 py-1 rounded-full border text-xs transition ${
+                                        isInCurrentGroup
+                                          ? "border-transparent text-white"
+                                          : "border-gray-300 text-gray-700 dark:text-gray-300"
+                                      } ${
+                                        isAssignedElsewhere && !isInCurrentGroup
+                                          ? "cursor-not-allowed opacity-60 bg-gray-100 text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500"
+                                          : ""
+                                      }`;
+
+                                      return (
+                                        <button
+                                          type="button"
+                                          key={`${g.id}-${c.key}`}
+                                          onClick={() =>
+                                            toggleCompanyInGroup(g.id, c.key)
+                                          }
+                                          disabled={isAssignedElsewhere}
+                                          className={buttonClasses}
+                                          style={
+                                            isInCurrentGroup
+                                              ? { backgroundColor: g.color }
+                                              : undefined
+                                          }
+                                          title={
+                                            isAssignedElsewhere && assignedGroup
+                                              ? `Ya está en "${assignedGroup.name}"`
+                                              : isInCurrentGroup
                                               ? "Quitar del grupo"
                                               : "Añadir al grupo"
-                                        }
-                                      >
-                                        <span>{c.name}</span>
-                                        {isAssignedElsewhere && assignedGroup && (
-                                          <span className="ml-1 text-[10px] text-gray-500 dark:text-gray-400">
-                                            ({assignedGroup.name})
-                                          </span>
-                                        )}
-                                      </button>
-                                    );
-                                  })}
+                                          }
+                                        >
+                                          <span>{c.name}</span>
+                                          {isAssignedElsewhere &&
+                                            assignedGroup && (
+                                              <span className="ml-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                                ({assignedGroup.name})
+                                              </span>
+                                            )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
                         </div>
                         {groupedBreakdown && (
                           <div className="space-y-3">
@@ -4294,262 +4918,6 @@ export const SalaryCalculatorPage: React.FC = () => {
                   <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 shadow-sm">
                     <div
                       className={`flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-4 ${
-                        isSplitPaymentsCollapsed
-                          ? ""
-                          : "border-b border-gray-200 dark:border-gray-700"
-                      }`}
-                    >
-                      <div className="space-y-2">
-                        <h4 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                          Dividir Pagos
-                        </h4>
-                        <p className="text-sm text-gray-600 dark:text-gray-300">
-                          Reparte el importe de una empresa hacia otros destinos con importes manuales o porcentajes.
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                          <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-                            <span className="h-2 w-2 rounded-full bg-blue-400 dark:bg-blue-300" />
-                            {formatCurrency(splitPaymentsSummary.sourceAmount)} origen
-                          </span>
-                          <span
-                            className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
-                              splitPaymentsSummary.distributed <=
-                                splitPaymentsSummary.sourceAmount + 0.001
-                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
-                                : "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200"
-                            }`}
-                          >
-                            <span className="h-2 w-2 rounded-full bg-current/60" />
-                            {formatCurrency(splitPaymentsSummary.distributed)} repartido
-                          </span>
-                          <span
-                            className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
-                              splitPaymentsSummary.remaining > 0
-                                ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
-                                : "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300"
-                            }`}
-                          >
-                            <span className="h-2 w-2 rounded-full bg-current/60" />
-                            {formatCurrency(splitPaymentsSummary.remaining)} restante
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            if (isSplitPaymentsCollapsed) {
-                              setIsSplitPaymentsCollapsed(false);
-                            }
-                            addSplitPaymentRule();
-                          }}
-                          disabled={availableCompanies.length <= 1}
-                        >
-                          Nuevo reparto
-                        </Button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setIsSplitPaymentsCollapsed((prev) => !prev)
-                          }
-                          className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
-                          aria-label="Mostrar u ocultar división de pagos"
-                        >
-                          <ChevronDown
-                            size={18}
-                            className={`text-gray-600 dark:text-gray-300 transition-transform ${
-                              isSplitPaymentsCollapsed ? "" : "rotate-180"
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-                    {!isSplitPaymentsCollapsed && (
-                      <div className="px-4 py-4 space-y-4">
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <Select
-                            label="Empresa origen"
-                            value={splitSourceCompany ?? ""}
-                            onChange={(value) =>
-                              setSplitSourceCompany(
-                                value ? (value as CompanyKey) : null
-                              )
-                            }
-                            options={availableCompanies.map((c) => ({
-                              value: c.key,
-                              label: `${c.name} (${formatCurrency(c.amount)})`,
-                            }))}
-                            placeholder="Selecciona empresa"
-                            fullWidth
-                            disabled={availableCompanies.length === 0}
-                          />
-                          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
-                            Los importes se calculan con los resultados actuales. Si vuelves a calcular, revisa que los repartos sigan siendo válidos.
-                          </div>
-                        </div>
-                        {splitPaymentRules.length === 0 ? (
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            Añade repartos para dividir el pago en porcentajes o importes fijos a otras empresas o cuentas.
-                          </p>
-                        ) : (
-                          <div className="space-y-3">
-                            {splitPaymentRules.map((rule) => {
-                              const computedAmount =
-                                splitRuleComputedAmounts.get(rule.id) ?? 0;
-                              return (
-                                <div
-                                  key={rule.id}
-                                  className="space-y-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 shadow-sm dark:border-gray-700/60 dark:bg-gray-900/40"
-                                >
-                                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                                    <Select
-                                      label="Destino"
-                                      value={rule.targetKey ?? ""}
-                                      onChange={(value) =>
-                                        updateSplitPaymentRule(
-                                          rule.id,
-                                          "targetKey",
-                                          value ? (value as CompanyKey) : null
-                                        )
-                                      }
-                                      options={availableCompanies
-                                        .filter((c) => c.key !== splitSourceCompany)
-                                        .map((c) => ({
-                                          value: c.key,
-                                          label: `${c.name} (${formatCurrency(
-                                            c.amount
-                                          )})`,
-                                        }))}
-                                      placeholder="Selecciona empresa destino"
-                                      fullWidth
-                                    />
-                                    <div className="flex flex-wrap items-center gap-2 justify-end">
-                                      <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            updateSplitPaymentRule(
-                                              rule.id,
-                                              "method",
-                                              "bank"
-                                            )
-                                          }
-                                          className={`px-2 py-1 flex items-center gap-1 text-xs ${
-                                            rule.method !== "cash"
-                                              ? "bg-blue-600 text-white"
-                                              : "bg-transparent text-gray-700 dark:text-gray-300"
-                                          }`}
-                                          title="Banco"
-                                        >
-                                          <Landmark size={14} /> Banco
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            updateSplitPaymentRule(
-                                              rule.id,
-                                              "method",
-                                              "cash"
-                                            )
-                                          }
-                                          className={`px-2 py-1 flex items-center gap-1 text-xs ${
-                                            rule.method === "cash"
-                                              ? "bg-blue-600 text-white"
-                                              : "bg-transparent text-gray-700 dark:text-gray-300"
-                                          }`}
-                                          title="Efectivo"
-                                        >
-                                          <Banknote size={14} /> Efectivo
-                                        </button>
-                                      </div>
-                                      <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            updateSplitPaymentRule(
-                                              rule.id,
-                                              "mode",
-                                              "percentage"
-                                            )
-                                          }
-                                          className={`px-2 py-1 text-xs ${
-                                            rule.mode === "percentage"
-                                              ? "bg-indigo-600 text-white"
-                                              : "bg-transparent text-gray-700 dark:text-gray-300"
-                                          }`}
-                                        >
-                                          %
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            updateSplitPaymentRule(
-                                              rule.id,
-                                              "mode",
-                                              "amount"
-                                            )
-                                          }
-                                          className={`px-2 py-1 text-xs ${
-                                            rule.mode === "amount"
-                                              ? "bg-indigo-600 text-white"
-                                              : "bg-transparent text-gray-700 dark:text-gray-300"
-                                          }`}
-                                        >
-                                          €
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <div className="flex items-center gap-1">
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.01"
-                                        min="0"
-                                        value={rule.value}
-                                        onChange={(e) =>
-                                          updateSplitPaymentRule(
-                                            rule.id,
-                                            "value",
-                                            e.target.value
-                                          )
-                                        }
-                                        placeholder="0"
-                                        className="w-28 rounded-lg border border-gray-300 bg-white px-2 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
-                                      />
-                                      <span className="text-sm text-gray-500 dark:text-gray-400">
-                                        {rule.mode === "percentage" ? "%" : "€"}
-                                      </span>
-                                    </div>
-                                    <div className="text-sm text-gray-600 dark:text-gray-300">
-                                      Resultado: <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(computedAmount)}</span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeSplitPaymentRule(rule.id)}
-                                      className="inline-flex items-center justify-center rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
-                                      title="Eliminar reparto"
-                                    >
-                                      <X size={14} />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
-                          Ajusta los importes hasta distribuir el total. Puedes combinar estos repartos con las agrupaciones configuradas arriba.
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 shadow-sm">
-                    <div
-                      className={`flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-4 ${
                         isOtherPaymentsCollapsed
                           ? ""
                           : "border-b border-gray-200 dark:border-gray-700"
@@ -4560,19 +4928,24 @@ export const SalaryCalculatorPage: React.FC = () => {
                           Otros pagos
                         </h4>
                         <p className="text-sm text-gray-600 dark:text-gray-300">
-                          Añade suplementos, bonificaciones y ajustes negativos como descuentos o deudas.
+                          Añade suplementos, bonificaciones y ajustes negativos
+                          como descuentos o deudas.
                         </p>
                         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                           {otherPaymentsTotals.additions > 0 && (
                             <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
                               <span className="h-2 w-2 rounded-full bg-emerald-400 dark:bg-emerald-300" />
-                              +{formatCurrency(otherPaymentsTotals.additions)} extras
+                              +{formatCurrency(otherPaymentsTotals.additions)}{" "}
+                              extras
                             </span>
                           )}
                           {otherPaymentsTotals.subtractions > 0 && (
                             <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
                               <span className="h-2 w-2 rounded-full bg-rose-400 dark:bg-rose-300" />
-                              {formatCurrency(-otherPaymentsTotals.subtractions)} ajustes
+                              {formatCurrency(
+                                -otherPaymentsTotals.subtractions
+                              )}{" "}
+                              ajustes
                             </span>
                           )}
                           {otherPaymentsTotals.additions === 0 &&
@@ -4587,7 +4960,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setIsOtherPaymentsCollapsed((prev) => !prev)}
+                          onClick={() =>
+                            setIsOtherPaymentsCollapsed((prev) => !prev)
+                          }
                           className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
                           aria-label="Mostrar u ocultar otros pagos"
                         >
@@ -4605,7 +4980,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                         {OTHER_PAYMENTS_CATEGORY_ORDER.map((category) => {
                           const items = otherPayments[category];
                           const categoryTotal = items.reduce((acc, item) => {
-                            const amount = parseFloat(item.amount.replace(",", "."));
+                            const amount = parseFloat(
+                              item.amount.replace(",", ".")
+                            );
                             if (!Number.isFinite(amount)) return acc;
                             return acc + amount;
                           }, 0);
@@ -4627,7 +5004,12 @@ export const SalaryCalculatorPage: React.FC = () => {
                                 <div className="flex items-center gap-2">
                                   {items.length > 0 && (
                                     <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
-                                      Total: {formatCurrency(isCredit ? categoryTotal : -categoryTotal)}
+                                      Total:{" "}
+                                      {formatCurrency(
+                                        isCredit
+                                          ? categoryTotal
+                                          : -categoryTotal
+                                      )}
                                     </span>
                                   )}
                                   <Button
@@ -4683,7 +5065,10 @@ export const SalaryCalculatorPage: React.FC = () => {
                                         <button
                                           type="button"
                                           onClick={() =>
-                                            removeOtherPayment(category, item.id)
+                                            removeOtherPayment(
+                                              category,
+                                              item.id
+                                            )
                                           }
                                           className="inline-flex items-center justify-center rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
                                           title="Eliminar movimiento"
@@ -4701,6 +5086,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                       </div>
                     )}
                   </div>
+
+                  {renderSplitPaymentsSection()}
                 </div>
               )}
             </CardContent>
@@ -5131,10 +5518,12 @@ export const SalaryCalculatorPage: React.FC = () => {
           if (selectedTemplateId) {
             setActiveTemplate(selectedTemplateId);
           }
+          const template = templates.find(
+            (tpl) => tpl.id === selectedTemplateId
+          );
+          exportResultsToPdf(template);
           setShowTemplateModal(false);
-          // Aquí iría la generación del PDF usando la plantilla seleccionada
-          // Por ahora solo mostramos una notificación ligera
-          alert("Se generará el PDF con la plantilla seleccionada.");
+          alert("PDF generado. Revisa tus descargas.");
         }}
       />
     </div>
