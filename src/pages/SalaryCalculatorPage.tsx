@@ -243,9 +243,14 @@ interface SplitPaymentRule {
 }
 
 interface SplitConfig {
-  mode: "keep" | "split";
+  mode: "keep" | "split" | "auto";
   rules: SplitPaymentRule[];
   remainderMethod: PaymentMethod;
+  autoConfig: {
+    basis: "hours" | "count";
+    method: PaymentMethod;
+    targets: SplitTargetKey[];
+  };
 }
 
 type SplitConfigsState = Record<CompanyKey, SplitConfig>;
@@ -282,6 +287,19 @@ function createDefaultTierRules(): TierPaymentRule[] {
     createTierRule("Tramo 1", "cash", false),
     createTierRule("Resto", "bank", true),
   ];
+}
+
+function createDefaultSplitConfig(): SplitConfig {
+  return {
+    mode: "keep",
+    rules: [],
+    remainderMethod: "bank",
+    autoConfig: {
+      basis: "hours",
+      method: "bank",
+      targets: [],
+    },
+  };
 }
 
 const escapePdfText = (value: string) =>
@@ -814,19 +832,29 @@ export const SalaryCalculatorPage: React.FC = () => {
     setSplitConfigs((prev) => {
       const next: SplitConfigsState = {};
       availableCompanies.forEach((company) => {
-        const existing = prev[company.key];
-        const filteredRules =
-          existing?.rules?.filter(
-            (rule) =>
-              rule.targetKey === null ||
-              rule.targetKey === SELF_TARGET_KEY ||
-              availableCompanies.some((c) => c.key === rule.targetKey)
-          ) ?? [];
+        const existing = prev[company.key] ?? createDefaultSplitConfig();
+        const filteredRules = existing.rules.filter(
+          (rule) =>
+            rule.targetKey === null ||
+            rule.targetKey === SELF_TARGET_KEY ||
+            availableCompanies.some((c) => c.key === rule.targetKey)
+        );
+
+        const autoTargets = (existing.autoConfig.targets ?? []).filter(
+          (target) =>
+            target !== SELF_TARGET_KEY &&
+            availableCompanies.some((c) => c.key === target)
+        );
 
         next[company.key] = {
-          mode: existing?.mode ?? "keep",
+          mode: existing.mode,
           rules: filteredRules,
-          remainderMethod: existing?.remainderMethod ?? "bank",
+          remainderMethod: existing.remainderMethod,
+          autoConfig: {
+            basis: existing.autoConfig.basis ?? "hours",
+            method: existing.autoConfig.method ?? "bank",
+            targets: autoTargets,
+          },
         };
       });
       return next;
@@ -991,15 +1019,31 @@ export const SalaryCalculatorPage: React.FC = () => {
     });
   };
 
-  const setSplitMode = (sourceKey: CompanyKey, mode: "keep" | "split") => {
+  const setSplitMode = (
+    sourceKey: CompanyKey,
+    mode: "keep" | "split" | "auto"
+  ) => {
     setSplitConfigs((prev) => {
-      const existing =
-        prev[sourceKey] ?? { mode: "keep", rules: [], remainderMethod: "bank" };
+      const existing = prev[sourceKey] ?? createDefaultSplitConfig();
+      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      let targets = existingAuto.targets.filter((target) => target !== SELF_TARGET_KEY);
+      if (mode === "auto" && targets.length === 0) {
+        const defaults = availableCompanies
+          .filter((company) => company.key !== sourceKey)
+          .slice(0, 2)
+          .map((company) => company.key);
+        targets = defaults;
+      }
       return {
         ...prev,
         [sourceKey]: {
           ...existing,
           mode,
+          autoConfig: {
+            basis: existingAuto.basis ?? "hours",
+            method: existingAuto.method ?? "bank",
+            targets,
+          },
         },
       };
     });
@@ -1010,12 +1054,7 @@ export const SalaryCalculatorPage: React.FC = () => {
       (company) => company.key !== sourceKey
     );
     setSplitConfigs((prev) => {
-      const existing =
-        prev[sourceKey] ?? {
-          mode: "split",
-          rules: [],
-          remainderMethod: "bank",
-        };
+      const existing = prev[sourceKey] ?? createDefaultSplitConfig();
       const existingTargets = new Set(
         existing.rules
           .map((rule) => rule.targetKey)
@@ -1043,9 +1082,9 @@ export const SalaryCalculatorPage: React.FC = () => {
       return {
         ...prev,
         [sourceKey]: {
+          ...existing,
           mode: "split",
           rules: [...existing.rules, newRule],
-          remainderMethod: existing.remainderMethod ?? "bank",
         },
       };
     });
@@ -1090,13 +1129,83 @@ export const SalaryCalculatorPage: React.FC = () => {
     });
   };
 
+  const setAutoSplitBasis = (
+    sourceKey: CompanyKey,
+    basis: "hours" | "count"
+  ) => {
+    setSplitConfigs((prev) => {
+      const existing = prev[sourceKey] ?? createDefaultSplitConfig();
+      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      return {
+        ...prev,
+        [sourceKey]: {
+          ...existing,
+          autoConfig: {
+            ...existingAuto,
+            basis,
+          },
+        },
+      };
+    });
+  };
+
+  const setAutoSplitMethod = (sourceKey: CompanyKey, method: PaymentMethod) => {
+    setSplitConfigs((prev) => {
+      const existing = prev[sourceKey] ?? createDefaultSplitConfig();
+      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      return {
+        ...prev,
+        [sourceKey]: {
+          ...existing,
+          autoConfig: {
+            ...existingAuto,
+            method,
+          },
+        },
+      };
+    });
+  };
+
+  const toggleAutoSplitTarget = (
+    sourceKey: CompanyKey,
+    targetKey: SplitTargetKey
+  ) => {
+    setSplitConfigs((prev) => {
+      const existing = prev[sourceKey] ?? createDefaultSplitConfig();
+      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      if (targetKey === SELF_TARGET_KEY) {
+        return prev;
+      }
+      const currentTargets = new Set(
+        existingAuto.targets.filter((target) => target !== SELF_TARGET_KEY)
+      );
+      if (currentTargets.has(targetKey)) {
+        currentTargets.delete(targetKey);
+        if (currentTargets.size === 0) {
+          return prev;
+        }
+      } else {
+        currentTargets.add(targetKey);
+      }
+      return {
+        ...prev,
+        [sourceKey]: {
+          ...existing,
+          autoConfig: {
+            ...existingAuto,
+            targets: Array.from(currentTargets),
+          },
+        },
+      };
+    });
+  };
+
   const setSplitRemainderMethod = (
     sourceKey: CompanyKey,
     method: PaymentMethod
   ) => {
     setSplitConfigs((prev) => {
-      const existing =
-        prev[sourceKey] ?? { mode: "keep", rules: [], remainderMethod: method };
+      const existing = prev[sourceKey] ?? createDefaultSplitConfig();
       if (existing.remainderMethod === method && prev[sourceKey]) {
         return prev;
       }
@@ -1119,58 +1228,141 @@ export const SalaryCalculatorPage: React.FC = () => {
         distributed: number;
         remaining: number;
         ruleAmounts: Map<string, number>;
+        autoDistribution?: Array<{
+          targetKey: SplitTargetKey;
+          amount: number;
+          method: PaymentMethod;
+        }>;
+        autoBasis?: "hours" | "count";
+        autoMethod?: PaymentMethod;
       }
     >();
 
+    const companyMap = new Map<CompanyKey, (typeof availableCompanies)[number]>();
+    availableCompanies.forEach((item) => companyMap.set(item.key, item));
+
     availableCompanies.forEach((company) => {
-      const config = splitConfigs[company.key];
+      const config = splitConfigs[company.key] ?? createDefaultSplitConfig();
       const sourceAmount = company.amount;
-      if (!config || config.mode !== "split" || config.rules.length === 0) {
+
+      if (config.mode === "split" && config.rules.length > 0) {
+        let distributed = 0;
+        let remaining = sourceAmount;
+        const ruleAmounts = new Map<string, number>();
+        config.rules.forEach((rule) => {
+          if (!rule.targetKey) {
+            ruleAmounts.set(rule.id, 0);
+            return;
+          }
+
+          if (remaining <= 0) {
+            ruleAmounts.set(rule.id, 0);
+            return;
+          }
+
+          const raw = parseFloat(rule.value.replace(",", "."));
+          const numeric = Number.isFinite(raw) ? raw : 0;
+          if (numeric <= 0) {
+            ruleAmounts.set(rule.id, 0);
+            return;
+          }
+
+          const desired =
+            rule.mode === "percentage"
+              ? (sourceAmount * numeric) / 100
+              : numeric;
+          const amount = Math.max(0, Math.min(desired, remaining));
+          distributed += amount;
+          remaining -= amount;
+          ruleAmounts.set(rule.id, amount);
+        });
+
         summaries.set(company.key, {
           sourceAmount,
-          distributed: 0,
-          remaining: sourceAmount,
-          ruleAmounts: new Map(),
+          distributed,
+          remaining,
+          ruleAmounts,
         });
         return;
       }
 
-      let distributed = 0;
-      let remaining = sourceAmount;
-      const ruleAmounts = new Map<string, number>();
-      config.rules.forEach((rule) => {
-        if (!rule.targetKey) {
-          ruleAmounts.set(rule.id, 0);
-          return;
+      if (config.mode === "auto") {
+        const autoConfig = config.autoConfig ?? createDefaultSplitConfig().autoConfig;
+        const explicitTargets = (autoConfig.targets ?? []).filter(
+          (target) => target && target !== SELF_TARGET_KEY
+        ) as CompanyKey[];
+        const targets = explicitTargets.length
+          ? explicitTargets
+          : availableCompanies
+              .filter((candidate) => candidate.key !== company.key)
+              .map((candidate) => candidate.key);
+
+        const weights = targets
+          .map((targetKey) => {
+            const targetCompany = companyMap.get(targetKey);
+            if (!targetCompany) {
+              return null;
+            }
+            const weight =
+              autoConfig.basis === "hours" ? targetCompany.hours || 0 : 1;
+            return {
+              key: targetKey as SplitTargetKey,
+              weight: weight > 0 ? weight : 0,
+            };
+          })
+          .filter((entry): entry is { key: SplitTargetKey; weight: number } =>
+            Boolean(entry)
+          );
+
+        let totalWeight = weights.reduce((sum, entry) => sum + entry.weight, 0);
+        if (totalWeight <= 0 && weights.length > 0) {
+          weights.forEach((entry) => (entry.weight = 1));
+          totalWeight = weights.length;
         }
 
-        if (remaining <= 0) {
-          ruleAmounts.set(rule.id, 0);
-          return;
-        }
+        let distributed = 0;
+        const autoDistribution: Array<{
+          targetKey: SplitTargetKey;
+          amount: number;
+          method: PaymentMethod;
+        }> = [];
 
-        const raw = parseFloat(rule.value.replace(",", "."));
-        const numeric = Number.isFinite(raw) ? raw : 0;
-        if (numeric <= 0) {
-          ruleAmounts.set(rule.id, 0);
-          return;
-        }
+        weights.forEach((entry, index) => {
+          if (totalWeight <= 0) {
+            return;
+          }
+          let amount = (sourceAmount * entry.weight) / totalWeight;
+          if (index === weights.length - 1) {
+            amount = sourceAmount - distributed;
+          }
+          amount = Math.max(0, amount);
+          distributed += amount;
+          autoDistribution.push({
+            targetKey: entry.key,
+            amount,
+            method: autoConfig.method ?? "bank",
+          });
+        });
 
-        const desired =
-          rule.mode === "percentage"
-            ? (sourceAmount * numeric) / 100
-            : numeric;
-        const amount = Math.max(0, Math.min(desired, remaining));
-        distributed += amount;
-        remaining -= amount;
-        ruleAmounts.set(rule.id, amount);
-      });
+        const remaining = sourceAmount - distributed;
+
+        summaries.set(company.key, {
+          sourceAmount,
+          distributed,
+          remaining,
+          ruleAmounts: new Map(),
+          autoDistribution,
+          autoBasis: autoConfig.basis ?? "hours",
+          autoMethod: autoConfig.method ?? "bank",
+        });
+        return;
+      }
 
       summaries.set(company.key, {
         sourceAmount,
-        distributed,
-        remaining,
-        ruleAmounts,
+        distributed: 0,
+        remaining: sourceAmount,
+        ruleAmounts: new Map(),
       });
     });
 
@@ -1344,11 +1536,7 @@ export const SalaryCalculatorPage: React.FC = () => {
             </div>
 
             {availableCompanies.map((company) => {
-              const config = splitConfigs[company.key] ?? {
-                mode: "keep",
-                rules: [],
-                remainderMethod: "bank",
-              };
+              const config = splitConfigs[company.key] ?? createDefaultSplitConfig();
               const summary =
                 splitSummaries.get(company.key) ??
                 ({
@@ -1362,9 +1550,15 @@ export const SalaryCalculatorPage: React.FC = () => {
               );
               const canAddRule = true;
               const isSplit = config.mode === "split";
+              const isAuto = config.mode === "auto";
               const remainderMethod = config.remainderMethod ?? "bank";
               const remainderLabel =
                 remainderMethod === "cash" ? "Efectivo" : "Banco";
+              const autoTargetsSet = new Set(
+                (config.autoConfig?.targets ?? []).filter(
+                  (target) => target !== SELF_TARGET_KEY
+                )
+              );
 
               return (
                 <div
@@ -1409,7 +1603,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                           type="button"
                           onClick={() => setSplitMode(company.key, "keep")}
                           className={`px-3 py-1.5 text-xs font-medium transition ${
-                            !isSplit
+                            config.mode === "keep"
                               ? "bg-blue-600 text-white"
                               : "bg-transparent text-gray-600 dark:text-gray-300"
                           }`}
@@ -1432,6 +1626,17 @@ export const SalaryCalculatorPage: React.FC = () => {
                         >
                           Dividir manualmente
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setSplitMode(company.key, "auto")}
+                          className={`px-3 py-1.5 text-xs font-medium transition ${
+                            isAuto
+                              ? "bg-blue-600 text-white"
+                              : "bg-transparent text-gray-600 dark:text-gray-300"
+                          }`}
+                        >
+                          Dividir proporcionalmente
+                        </button>
                       </div>
                       {isSplit && (
                         <Button
@@ -1446,11 +1651,181 @@ export const SalaryCalculatorPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {!isSplit && (
+                  {config.mode === "keep" && (
                     <p className="text-xs text-gray-600 dark:text-gray-400">
                       El importe se mantendrá asignado a {company.name} sin
                       modificaciones.
                     </p>
+                  )}
+
+                  {isAuto && (
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                      El importe se repartirá automáticamente entre las
+                      empresas seleccionadas según el criterio elegido.
+                    </p>
+                  )}
+
+                  {isAuto && (
+                    <div className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-4 dark:border-gray-700 dark:bg-gray-900/30">
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)] md:items-center">
+                        <div className="space-y-1">
+                          <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                            Criterio
+                          </span>
+                          <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setAutoSplitBasis(company.key, "hours")}
+                              className={`px-3 py-1.5 text-xs font-medium transition ${
+                                config.autoConfig?.basis !== "count"
+                                  ? "bg-indigo-600 text-white"
+                                  : "bg-transparent text-gray-600 dark:text-gray-300"
+                              }`}
+                            >
+                              Horas registradas
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAutoSplitBasis(company.key, "count")}
+                              className={`px-3 py-1.5 text-xs font-medium transition ${
+                                config.autoConfig?.basis === "count"
+                                  ? "bg-indigo-600 text-white"
+                                  : "bg-transparent text-gray-600 dark:text-gray-300"
+                              }`}
+                            >
+                              Nº de empresas
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                            Método
+                          </span>
+                          <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setAutoSplitMethod(company.key, "bank")}
+                              className={`px-3 py-1.5 text-xs font-medium transition ${
+                                config.autoConfig?.method !== "cash"
+                                  ? "bg-blue-600 text-white"
+                                  : "bg-transparent text-gray-600 dark:text-gray-300"
+                              }`}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                <Landmark size={14} /> Banco
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAutoSplitMethod(company.key, "cash")}
+                              className={`px-3 py-1.5 text-xs font-medium transition ${
+                                config.autoConfig?.method === "cash"
+                                  ? "bg-blue-600 text-white"
+                                  : "bg-transparent text-gray-600 dark:text-gray-300"
+                              }`}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                <Banknote size={14} /> Efectivo
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                            Tramos generados
+                          </span>
+                          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                            {formatCurrency(summary.autoDistribution?.reduce(
+                              (sum, entry) => sum + entry.amount,
+                              0
+                            ) ?? 0)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                          Selecciona empresas a repartir
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {candidateDestinations.map((candidate) => {
+                            const selected = autoTargetsSet.has(candidate.key);
+                            return (
+                              <button
+                                key={candidate.key}
+                                type="button"
+                                onClick={() =>
+                                  toggleAutoSplitTarget(company.key, candidate.key)
+                                }
+                                className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium transition ${
+                                  selected
+                                    ? "bg-blue-600 text-white"
+                                    : "border border-gray-300 bg-white text-gray-600 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300"
+                                }`}
+                              >
+                                <Check
+                                  size={12}
+                                  className={`transition ${
+                                    selected ? "opacity-100" : "opacity-0"
+                                  }`}
+                                />
+                                {candidate.name}
+                              </button>
+                            );
+                          })}
+                          {candidateDestinations.length === 0 && (
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              No hay otras empresas disponibles.
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {summary.autoDistribution &&
+                        summary.autoDistribution.length > 0 && (
+                          <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                            <div className="hidden md:grid md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-900/40 dark:text-gray-400">
+                              <span>Destino</span>
+                              <span>Método</span>
+                              <span className="text-right">Importe</span>
+                            </div>
+                            {summary.autoDistribution.map((entry, idx) => {
+                              const destination = candidateDestinations.find(
+                                (candidate) => candidate.key === entry.targetKey
+                              );
+                              const destinationLabel =
+                                destination?.name ?? "Destino sin asignar";
+                              const methodLabel =
+                                entry.method === "cash" ? "Efectivo" : "Banco";
+                              return (
+                                <div
+                                  key={`${company.key}-auto-${idx}`}
+                                  className="border-t border-gray-100 px-4 py-3 text-sm dark:border-gray-800"
+                                >
+                                  <div className="grid gap-3 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)] md:items-center">
+                                    <span className="text-gray-700 dark:text-gray-200">
+                                      {destinationLabel}
+                                    </span>
+                                    <span className="text-gray-600 dark:text-gray-300">
+                                      {methodLabel}
+                                    </span>
+                                    <span className="text-right font-medium text-gray-900 dark:text-gray-100">
+                                      {formatCurrency(entry.amount)}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Ajusta empresas y método para repartir automáticamente. El
+                        resto seguirá la forma de pago seleccionada arriba.
+                      </p>
+                    </div>
                   )}
 
                   {isSplit && (
@@ -6168,7 +6543,32 @@ export const SalaryCalculatorPage: React.FC = () => {
                                     companyKey: c.companyKey ?? getCompanyKey(c),
                                     otherPayments: c.otherPayments ?? [],
                                   }));
-                            return rows.flatMap((company, idx) => {
+                            const filteredRows = rows
+                              .map((company) => {
+                                if (company.isGroup) {
+                                  const items = ((company as any).items ?? []).filter(
+                                    (item: any) =>
+                                      Math.abs(item.amount) > 0.01 ||
+                                      Math.abs(item.hours) > 0.01
+                                  );
+                                  (company as any).items = items;
+                                  const hasTotals =
+                                    Math.abs(company.amount ?? 0) > 0.01 ||
+                                    Math.abs(company.hours ?? 0) > 0.01;
+                                  return hasTotals || items.length > 0
+                                    ? company
+                                    : null;
+                                }
+                                const hasData =
+                                  Math.abs(company.amount ?? 0) > 0.01 ||
+                                  Math.abs(company.hours ?? 0) > 0.01;
+                                return hasData ? company : null;
+                              })
+                              .filter((company): company is typeof rows[number] =>
+                                company !== null
+                              );
+
+                            return filteredRows.flatMap((company, idx) => {
                               const isGroup = company.isGroup;
                               const groupId = (company as any).id as
                                 | string
