@@ -276,11 +276,21 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
               {days.map((day, index) => {
                 const isSelectableDay = day.isCurrentMonth;
                 const dayNumberClasses = day.isCurrentMonth
-                  ? "text-gray-900 dark:text-gray-100"
+                  ? day.isWeekend
+                    ? "text-red-600 dark:text-red-400"
+                    : "text-gray-900 dark:text-gray-100"
                   : "text-gray-400 dark:text-gray-600";
                 const hoursClasses = day.isCurrentMonth
                   ? "text-blue-600 dark:text-blue-400"
                   : "text-blue-400 dark:text-blue-500/70";
+
+                const nonCurrentMonthClasses =
+                  "border-gray-100 bg-gray-50 text-gray-400 cursor-default dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-500";
+                const currentMonthBaseClasses =
+                  "border-gray-200 text-gray-900 cursor-pointer dark:border-gray-700 dark:text-gray-100";
+                const currentMonthBackground = day.hasNotes
+                  ? "bg-amber-50 dark:bg-amber-900/30"
+                  : "bg-white hover:border-blue-300 hover:bg-blue-50/60 dark:bg-gray-800 dark:hover:border-blue-500 dark:hover:bg-blue-900/40";
 
                 return (
                   <div
@@ -296,8 +306,8 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                     }}
                     className={`relative min-h-[64px] px-2.5 pb-1 pt-2.5 flex flex-col items-center gap-1 rounded-xl border transition text-center ${
                       day.isCurrentMonth
-                        ? "border-gray-200 bg-white text-gray-900 hover:border-blue-300 hover:bg-blue-50/60 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:border-blue-500 dark:hover:bg-blue-900/40 cursor-pointer"
-                        : "border-gray-100 bg-gray-50 text-gray-400 cursor-default dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-500"
+                        ? `${currentMonthBaseClasses} ${currentMonthBackground}`
+                        : nonCurrentMonthClasses
                     } ${
                       day.isToday && day.isCurrentMonth
                         ? "ring-1 ring-blue-400"
@@ -318,9 +328,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                     >
                       {day.hours !== null ? `${day.hours.toFixed(1)}h` : "-"}
                     </span>
-                    {day.hasNotes && day.isCurrentMonth && (
-                      <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-amber-400 dark:bg-amber-500" />
-                    )}
+                    {/* Nota: el sombreado ámbar de la celda indica notas */}
                   </div>
                 );
               })}
@@ -414,15 +422,14 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                 </div>
               )}
             </div>
-
-            {worker.companyNames && worker.companyNames.length > 0 && (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                <span className="font-medium text-gray-700 dark:text-gray-200">
-                  Empresas asociadas:
-                </span>{" "}
-                {worker.companyNames.join(", ")}
-              </div>
-            )}
+          </div>
+        )}
+        {worker?.companyNames && worker.companyNames.length > 0 && (
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="font-medium text-gray-700 dark:text-gray-200">
+              Empresas asociadas:
+            </span>{" "}
+            {worker.companyNames.join(", ")}
           </div>
         )}
       </CardContent>

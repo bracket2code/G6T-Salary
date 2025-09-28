@@ -21,6 +21,7 @@ import {
   Mail,
   Phone,
   MessageCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { Landmark, Banknote } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
@@ -142,6 +143,60 @@ interface CalculationResult {
     amount: number;
   }>;
   usesCalendarHours: boolean;
+}
+
+type OtherPaymentCategory =
+  | "supplements"
+  | "bonuses"
+  | "discounts"
+  | "debts"
+  | "deductions";
+
+interface OtherPaymentItem {
+  id: string;
+  label: string;
+  amount: string;
+}
+
+type OtherPaymentsState = Record<OtherPaymentCategory, OtherPaymentItem[]>;
+
+const OTHER_PAYMENTS_LABELS: Record<OtherPaymentCategory, string> = {
+  supplements: "Suplementos",
+  bonuses: "Bonificaciones",
+  discounts: "Descuentos",
+  debts: "Deudas",
+  deductions: "Deducciones",
+};
+
+const CREDIT_CATEGORIES: OtherPaymentCategory[] = [
+  "supplements",
+  "bonuses",
+];
+
+const OTHER_PAYMENTS_CATEGORY_ORDER: OtherPaymentCategory[] = [
+  "supplements",
+  "bonuses",
+  "discounts",
+  "debts",
+  "deductions",
+];
+
+const createEmptyOtherPaymentsState = (): OtherPaymentsState => ({
+  supplements: [],
+  bonuses: [],
+  discounts: [],
+  debts: [],
+  deductions: [],
+});
+
+type CompanyKey = string;
+
+interface SplitPaymentRule {
+  id: string;
+  targetKey: CompanyKey | null;
+  mode: "percentage" | "amount";
+  value: string;
+  method: "bank" | "cash";
 }
 
 const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
@@ -498,11 +553,28 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [expandedCompanyInputs, setExpandedCompanyInputs] = useState<
     Record<string, boolean>
   >({});
+  const [companyAssignmentWarning, setCompanyAssignmentWarning] = useState<
+    string | null
+  >(null);
+  const [otherPayments, setOtherPayments] = useState<OtherPaymentsState>(
+    () => createEmptyOtherPaymentsState()
+  );
+  const [splitPaymentRules, setSplitPaymentRules] = useState<
+    SplitPaymentRule[]
+  >([]);
+  const [splitSourceCompany, setSplitSourceCompany] = useState<
+    CompanyKey | null
+  >(null);
 
   // Collapsible modules state
   const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(true);
   const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
   const [isOtherOpsCollapsed, setIsOtherOpsCollapsed] = useState(true);
+  const [isGroupManagerCollapsed, setIsGroupManagerCollapsed] = useState(false);
+  const [isOtherPaymentsCollapsed, setIsOtherPaymentsCollapsed] =
+    useState(true);
+  const [isSplitPaymentsCollapsed, setIsSplitPaymentsCollapsed] =
+    useState(true);
   const [isResultsCollapsed, setIsResultsCollapsed] = useState(true);
 
   // PDF export modal state
@@ -544,7 +616,6 @@ export const SalaryCalculatorPage: React.FC = () => {
   }, [templates, createTemplate]);
 
   // ===== Otras operaciones: Agrupar pagos =====
-  type CompanyKey = string;
   const [companyGroups, setCompanyGroups] = useState<StoredCompanyGroup[]>([]);
   const { getGroups, setGroups } = useGroupingStore();
 
@@ -579,6 +650,166 @@ export const SalaryCalculatorPage: React.FC = () => {
       }));
   }, [results, getCompanyKey]);
 
+  useEffect(() => {
+    if (availableCompanies.length === 0) {
+      setSplitSourceCompany(null);
+      return;
+    }
+
+    setSplitSourceCompany((prev) => {
+      if (prev && availableCompanies.some((c) => c.key === prev)) {
+        return prev;
+      }
+      return availableCompanies[0].key;
+    });
+  }, [availableCompanies]);
+
+  const companyAssignments = useMemo(() => {
+    const assignments = new Map<CompanyKey, StoredCompanyGroup>();
+    companyGroups.forEach((group) => {
+      group.companies.forEach((company) => {
+        if (!assignments.has(company)) {
+          assignments.set(company, group);
+        }
+      });
+    });
+    return assignments;
+  }, [companyGroups]);
+
+  const otherPaymentsTotals = useMemo(() => {
+    let additions = 0;
+    let subtractions = 0;
+
+    (Object.keys(otherPayments) as OtherPaymentCategory[]).forEach(
+      (category) => {
+        otherPayments[category].forEach((item) => {
+          const amount = parseFloat(item.amount.replace(",", "."));
+          if (!Number.isFinite(amount)) {
+            return;
+          }
+          if (CREDIT_CATEGORIES.includes(category)) {
+            additions += amount;
+          } else {
+            subtractions += amount;
+          }
+        });
+      }
+    );
+
+    return { additions, subtractions };
+  }, [otherPayments]);
+
+  const addOtherPayment = (category: OtherPaymentCategory) => {
+    const newItem: OtherPaymentItem = {
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      label: "",
+      amount: "",
+    };
+
+    setOtherPayments((prev) => ({
+      ...prev,
+      [category]: [...prev[category], newItem],
+    }));
+  };
+
+  const updateOtherPayment = (
+    category: OtherPaymentCategory,
+    id: string,
+    field: "label" | "amount",
+    value: string
+  ) => {
+    setOtherPayments((prev) => ({
+      ...prev,
+      [category]: prev[category].map((item) =>
+        item.id === id ? { ...item, [field]: value } : item
+      ),
+    }));
+  };
+
+  const removeOtherPayment = (category: OtherPaymentCategory, id: string) => {
+    setOtherPayments((prev) => ({
+      ...prev,
+      [category]: prev[category].filter((item) => item.id !== id),
+    }));
+  };
+
+  const addSplitPaymentRule = () => {
+    const newRule: SplitPaymentRule = {
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      targetKey: null,
+      mode: "percentage",
+      value: "",
+      method: "bank",
+    };
+
+    setSplitPaymentRules((prev) => [...prev, newRule]);
+  };
+
+  const updateSplitPaymentRule = <K extends keyof SplitPaymentRule>(
+    id: string,
+    field: K,
+    value: SplitPaymentRule[K]
+  ) => {
+    setSplitPaymentRules((prev) =>
+      prev.map((rule) =>
+        rule.id === id
+          ? {
+              ...rule,
+              [field]: value,
+            }
+          : rule
+      )
+    );
+  };
+
+  const removeSplitPaymentRule = (id: string) => {
+    setSplitPaymentRules((prev) => prev.filter((rule) => rule.id !== id));
+  };
+
+  const splitPaymentsSummary = useMemo(() => {
+    const source = splitSourceCompany
+      ? availableCompanies.find((c) => c.key === splitSourceCompany)
+      : null;
+    const sourceAmount = source?.amount ?? 0;
+
+    let distributed = 0;
+    const detailed = splitPaymentRules.map((rule) => {
+      const raw = parseFloat(rule.value.replace(",", "."));
+      const numeric = Number.isFinite(raw) ? raw : 0;
+      const amount =
+        rule.mode === "percentage"
+          ? (sourceAmount * numeric) / 100
+          : numeric;
+      distributed += amount;
+      return {
+        id: rule.id,
+        amount,
+      };
+    });
+
+    const remaining = sourceAmount - distributed;
+    return {
+      sourceAmount,
+      distributed,
+      remaining,
+      details: detailed,
+    };
+  }, [availableCompanies, splitPaymentRules, splitSourceCompany]);
+
+  const splitRuleComputedAmounts = useMemo(() => {
+    const map = new Map<string, number>();
+    splitPaymentsSummary.details.forEach((item) => {
+      map.set(item.id, item.amount);
+    });
+    return map;
+  }, [splitPaymentsSummary]);
+
   const colorsPalette = [
     "#2563eb",
     "#16a34a",
@@ -608,11 +839,15 @@ export const SalaryCalculatorPage: React.FC = () => {
   };
 
   const toggleCompanyInGroup = (groupId: string, companyKey: CompanyKey) => {
+    let warning: string | null = null;
+    let didChange = false;
+
     setCompanyGroups((prev) => {
       const target = prev.find((g) => g.id === groupId);
       const alreadyInTarget = !!target && target.companies.includes(companyKey);
       if (alreadyInTarget) {
         // Si ya está en el grupo, quitarla (toggle off)
+        didChange = true;
         return prev.map((g) =>
           g.id === groupId
             ? { ...g, companies: g.companies.filter((k) => k !== companyKey) }
@@ -620,13 +855,27 @@ export const SalaryCalculatorPage: React.FC = () => {
         );
       }
 
-      // Si no está en el grupo destino, moverla de cualquier otro grupo al destino
+      const assignedGroup = prev.find(
+        (g) => g.id !== groupId && g.companies.includes(companyKey)
+      );
+
+      if (assignedGroup) {
+        const companyName =
+          availableCompanies.find((c) => c.key === companyKey)?.name ??
+          "Esta empresa";
+        warning = `${companyName} ya está asignada al grupo "${assignedGroup.name}". Elimina esa asignación antes de moverla.`;
+        return prev;
+      }
+
+      didChange = true;
       return prev.map((g) =>
         g.id === groupId
           ? { ...g, companies: [...g.companies, companyKey] }
-          : { ...g, companies: g.companies.filter((k) => k !== companyKey) }
+          : g
       );
     });
+
+    setCompanyAssignmentWarning(didChange ? null : warning);
   };
 
   const removeCompanyFromAllGroups = (companyKey: CompanyKey) => {
@@ -1989,6 +2238,11 @@ export const SalaryCalculatorPage: React.FC = () => {
       notes: "",
       companyContractInputs: {},
     });
+    setOtherPayments(createEmptyOtherPaymentsState());
+    setIsOtherPaymentsCollapsed(true);
+    setSplitPaymentRules([]);
+    setIsSplitPaymentsCollapsed(true);
+    setSplitSourceCompany(null);
     setResults(null);
   };
 
@@ -2576,15 +2830,25 @@ export const SalaryCalculatorPage: React.FC = () => {
 
   const calculateSalary = () => {
     const overtimeHours = parseFloat(calculationData.overtimeHours) || 0;
-    const bonuses = parseFloat(calculationData.bonuses) || 0;
-    const deductions = parseFloat(calculationData.deductions) || 0;
+    const baseBonuses = parseFloat(calculationData.bonuses) || 0;
+    const baseDeductions = parseFloat(calculationData.deductions) || 0;
+    const bonuses = baseBonuses + otherPaymentsTotals.additions;
+    const deductions = baseDeductions + otherPaymentsTotals.subtractions;
 
     if (manualContractAggregates.hasEntries) {
       // Recalcular solo con empresas con nombre válido
-      const filteredCompanies = manualContractAggregates.companyList.filter((c) => isValidCompanyName(c.companyName));
+      const filteredCompanies = manualContractAggregates.companyList.filter(
+        (c) => isValidCompanyName(c.companyName)
+      );
 
-      const regularHours = filteredCompanies.reduce((acc, c) => acc + (c.hours || 0), 0);
-      const baseAmountTotal = filteredCompanies.reduce((acc, c) => acc + (c.baseAmount || 0), 0);
+      const regularHours = filteredCompanies.reduce(
+        (acc, c) => acc + (c.hours || 0),
+        0
+      );
+      const baseAmountTotal = filteredCompanies.reduce(
+        (acc, c) => acc + (c.baseAmount || 0),
+        0
+      );
 
       const averageRate =
         regularHours > 0 && baseAmountTotal > 0
@@ -2601,30 +2865,28 @@ export const SalaryCalculatorPage: React.FC = () => {
 
       const companyCount = filteredCompanies.length;
 
-      const companyBreakdown = filteredCompanies.map(
-        (company) => {
-          const baseShare = company.baseAmount;
-          const hoursShare = company.hours;
+      const companyBreakdown = filteredCompanies.map((company) => {
+        const baseShare = company.baseAmount;
+        const hoursShare = company.hours;
 
-          let weight = 0;
-          if (baseAmountTotal > 0) {
-            weight = baseShare / baseAmountTotal;
-          } else if (regularHours > 0) {
-            weight = hoursShare / regularHours;
-          } else if (companyCount > 0) {
-            weight = 1 / companyCount;
-          }
-
-          const amount = baseShare + extras * weight;
-
-          return {
-            companyId: company.companyId,
-            name: company.companyName,
-            hours: hoursShare,
-            amount,
-          };
+        let weight = 0;
+        if (baseAmountTotal > 0) {
+          weight = baseShare / baseAmountTotal;
+        } else if (regularHours > 0) {
+          weight = hoursShare / regularHours;
+        } else if (companyCount > 0) {
+          weight = 1 / companyCount;
         }
-      );
+
+        const amount = baseShare + extras * weight;
+
+        return {
+          companyId: company.companyId,
+          name: company.companyName,
+          hours: hoursShare,
+          amount,
+        };
+      });
 
       const computedSum = companyBreakdown.reduce(
         (acc, item) => acc + item.amount,
@@ -2722,9 +2984,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     const totalHours = regularHours + overtimeHours;
     const usesCalendarHours = totalCompanyHours > 0;
 
-    const breakdownSource = usesCalendarHours
-      ? companyHoursList
-      : [];
+    const breakdownSource = usesCalendarHours ? companyHoursList : [];
 
     const companyBreakdown = breakdownSource.map((item) => ({
       ...item,
@@ -2829,7 +3089,7 @@ export const SalaryCalculatorPage: React.FC = () => {
       />
 
       <div className="space-y-6">
-        <div className="grid gap-6 items-start xl:grid-cols-[minmax(0,1fr)_minmax(540px,1.3fr)] xl:[&>*]:min-w-0">
+        <div className="grid gap-6 items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:[&>*]:min-w-0">
           {/* Worker Selection and Input Form */}
           <Card className="h-full">
             <CardHeader>
@@ -3239,32 +3499,37 @@ export const SalaryCalculatorPage: React.FC = () => {
             {!isCalcDataCollapsed && (
               <CardContent className="space-y-4">
                 <div className="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
-                  <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setIsContractInputsOpen((current) => !current)
-                      }
-                      className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
-                    >
-                      <ChevronDown
-                        size={18}
-                        className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
-                          isContractInputsOpen ? "rotate-180" : ""
-                        }`}
-                      />
-                    </button>
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        Horas y sueldos por contrato
-                      </p>
-                      <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
-                        {manualContractAggregates.hasEntries
-                          ? `Total horas: ${formatHours(
-                              manualContractAggregates.totalHours
-                            )}`
-                          : ""}
-                      </p>
+                  <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2.5 dark:border-gray-700">
+                    <div className="min-w-0 flex items-start gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setIsContractInputsOpen((current) => !current)
+                        }
+                        className="flex items-center justify-center mt-3 rounded-full border border-gray-300 p-0.5 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                        aria-label={
+                          isContractInputsOpen ? "Contraer" : "Desplegar"
+                        }
+                      >
+                        <ChevronDown
+                          size={16}
+                          className={`shrink-0 text-gray-500 transition-transform dark:text-gray-300 ${
+                            isContractInputsOpen ? "rotate-180" : ""
+                          }`}
+                        />
+                      </button>
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900 dark:text-white">
+                          Horas y sueldos
+                        </p>
+                        <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+                          {manualContractAggregates.hasEntries
+                            ? `Total horas: ${formatHours(
+                                manualContractAggregates.totalHours
+                              )}`
+                            : ""}
+                        </p>
+                      </div>
                     </div>
                     {(() => {
                       const groups = companyContractStructure.groups;
@@ -3317,222 +3582,223 @@ export const SalaryCalculatorPage: React.FC = () => {
                           {companyContractStructure.groups
                             .filter((g) => isValidCompanyName(g.companyName))
                             .map((group) => {
-                            const summary =
-                              manualContractAggregates.companyList.find(
-                                (company) =>
-                                  (group.companyId &&
-                                    company.companyId === group.companyId) ||
-                                  company.companyName === group.companyName
-                              );
+                              const summary =
+                                manualContractAggregates.companyList.find(
+                                  (company) =>
+                                    (group.companyId &&
+                                      company.companyId === group.companyId) ||
+                                    company.companyName === group.companyName
+                                );
 
-                            const totalCompanyHours = summary?.hours ?? 0;
-                            const totalCompanyBase = summary?.baseAmount ?? 0;
-                            const isAutoFillEnabled = Boolean(
-                              autoFillHoursMap[group.companyKey]
-                            );
-                            const calendarHoursForGroup =
-                              getCalendarHoursForCompany(
-                                group.companyId,
-                                group.companyName
+                              const totalCompanyHours = summary?.hours ?? 0;
+                              const totalCompanyBase = summary?.baseAmount ?? 0;
+                              const isAutoFillEnabled = Boolean(
+                                autoFillHoursMap[group.companyKey]
                               );
-                            const isExpanded =
-                              expandedCompanyInputs[group.companyKey] ?? false;
+                              const calendarHoursForGroup =
+                                getCalendarHoursForCompany(
+                                  group.companyId,
+                                  group.companyName
+                                );
+                              const isExpanded =
+                                expandedCompanyInputs[group.companyKey] ??
+                                false;
 
-                            return (
-                              <div
-                                key={group.companyKey}
-                                className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
-                              >
+                              return (
                                 <div
-                                  className="border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer"
-                                  onClick={() =>
-                                    handleCompanyGroupToggle(group.companyKey)
-                                  }
+                                  key={group.companyKey}
+                                  className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
                                 >
-                                  <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,160px)] items-center gap-4">
-                                    <div className="flex items-start gap-2 min-w-[220px]">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleCompanyGroupToggle(
-                                            group.companyKey
-                                          );
-                                        }}
-                                        className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
-                                        aria-expanded={isExpanded}
-                                        aria-label={
-                                          isExpanded
-                                            ? "Contraer empresa"
-                                            : "Expandir empresa"
-                                        }
+                                  <div
+                                    className="border-b border-gray-200 px-4 py-3 dark:border-gray-700 cursor-pointer"
+                                    onClick={() =>
+                                      handleCompanyGroupToggle(group.companyKey)
+                                    }
+                                  >
+                                    <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,160px)] items-center gap-4">
+                                      <div className="flex items-start gap-2 min-w-[220px]">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleCompanyGroupToggle(
+                                              group.companyKey
+                                            );
+                                          }}
+                                          className="flex items-center justify-center rounded-full border border-gray-300 p-1 text-gray-500 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                          aria-expanded={isExpanded}
+                                          aria-label={
+                                            isExpanded
+                                              ? "Contraer empresa"
+                                              : "Expandir empresa"
+                                          }
+                                        >
+                                          <ChevronDown
+                                            size={16}
+                                            className={`transition-transform ${
+                                              isExpanded ? "rotate-180" : ""
+                                            }`}
+                                          />
+                                        </button>
+                                        <div className="min-w-0 select-none">
+                                          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+                                            {group.companyName}
+                                          </p>
+                                          {(() => {
+                                            const isHoursDifferent =
+                                              calendarHoursForGroup > 0 &&
+                                              Math.abs(
+                                                totalCompanyHours -
+                                                  calendarHoursForGroup
+                                              ) > 0.001;
+                                            const hoursClass = isHoursDifferent
+                                              ? "text-amber-700 dark:text-amber-300"
+                                              : "text-gray-600 dark:text-gray-300";
+                                            return (
+                                              <p
+                                                className={`text-xs font-medium mt-0.5 ${hoursClass}`}
+                                              >
+                                                {formatHours(totalCompanyHours)}{" "}
+                                                Horas
+                                              </p>
+                                            );
+                                          })()}
+                                        </div>
+                                      </div>
+                                      <div
+                                        className="flex items-center justify-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 min-w-[180px] justify-center"
+                                        onClick={(e) => e.stopPropagation()}
                                       >
-                                        <ChevronDown
-                                          size={16}
-                                          className={`transition-transform ${
-                                            isExpanded ? "rotate-180" : ""
-                                          }`}
-                                        />
-                                      </button>
-                                      <div className="min-w-0 select-none">
-                                        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                                          {group.companyName}
-                                        </p>
-                                        {(() => {
-                                          const isHoursDifferent =
-                                            calendarHoursForGroup > 0 &&
-                                            Math.abs(
-                                              totalCompanyHours -
-                                                calendarHoursForGroup
-                                            ) > 0.001;
-                                          const hoursClass = isHoursDifferent
-                                            ? "text-amber-700 dark:text-amber-300"
-                                            : "text-gray-600 dark:text-gray-300";
-                                          return (
-                                            <p
-                                              className={`text-xs font-medium mt-0.5 ${hoursClass}`}
-                                            >
-                                              {formatHours(totalCompanyHours)}{" "}
-                                              Horas
-                                            </p>
-                                          );
-                                        })()}
+                                        <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
+                                          <input
+                                            type="checkbox"
+                                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                            checked={isAutoFillEnabled}
+                                            onChange={(event) =>
+                                              handleAutoFillHoursToggle(
+                                                group,
+                                                event.target.checked
+                                              )
+                                            }
+                                            onClick={(e) => e.stopPropagation()}
+                                          />
+                                          <span>Usar registro</span>
+                                        </label>
+                                      </div>
+                                      <div
+                                        className="text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {formatCurrency(totalCompanyBase)}
                                       </div>
                                     </div>
-                                    <div
-                                      className="flex items-center justify-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 min-w-[180px] justify-center"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
-                                        <input
-                                          type="checkbox"
-                                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                          checked={isAutoFillEnabled}
-                                          onChange={(event) =>
-                                            handleAutoFillHoursToggle(
-                                              group,
-                                              event.target.checked
-                                            )
-                                          }
-                                          onClick={(e) => e.stopPropagation()}
-                                        />
-                                        <span>Usar registro</span>
-                                      </label>
-                                    </div>
-                                    <div
-                                      className="text-base font-semibold text-gray-800 dark:text-gray-100 justify-self-end"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {formatCurrency(totalCompanyBase)}
-                                    </div>
                                   </div>
-                                </div>
 
-                                {isExpanded && (
-                                  <div className="space-y-3 px-3 py-2.5">
-                                    {group.entries.map((entry) => {
-                                      const contractInput = calculationData
-                                        .companyContractInputs[
-                                        entry.contractKey
-                                      ] ?? {
-                                        hours: "",
-                                        baseSalary: "",
-                                      };
-                                      const contractMeta =
-                                        companyContractStructure.contractMap.get(
+                                  {isExpanded && (
+                                    <div className="space-y-3 px-3 py-2.5">
+                                      {group.entries.map((entry) => {
+                                        const contractInput = calculationData
+                                          .companyContractInputs[
                                           entry.contractKey
-                                        );
+                                        ] ?? {
+                                          hours: "",
+                                          baseSalary: "",
+                                        };
+                                        const contractMeta =
+                                          companyContractStructure.contractMap.get(
+                                            entry.contractKey
+                                          );
 
-                                      return (
-                                        <div
-                                          key={entry.contractKey}
-                                          className="rounded-md border border-dashed border-gray-300 p-2.5 dark:border-gray-600"
-                                        >
-                                          <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <div>
-                                              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                                                {entry.label}
-                                              </p>
-                                              {entry.description && (
-                                                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
-                                                  {entry.description}
+                                        return (
+                                          <div
+                                            key={entry.contractKey}
+                                            className="rounded-md border border-dashed border-gray-300 p-2.5 dark:border-gray-600"
+                                          >
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <div>
+                                                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+                                                  {entry.label}
                                                 </p>
+                                                {entry.description && (
+                                                  <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
+                                                    {entry.description}
+                                                  </p>
+                                                )}
+                                              </div>
+                                              {!entry.hasContract && (
+                                                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                                                  Sin contrato
+                                                </span>
                                               )}
                                             </div>
-                                            {!entry.hasContract && (
-                                              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
-                                                Sin contrato
-                                              </span>
-                                            )}
-                                          </div>
 
-                                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                            <Input
-                                              type="number"
-                                              label="Horas"
-                                              placeholder="0"
-                                              value={contractInput.hours}
-                                              size="sm"
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "hours",
-                                                  event.target.value
-                                                )
-                                              }
-                                              min="0"
-                                              step="0.25"
-                                              fullWidth
-                                            />
-                                            <Input
-                                              type="number"
-                                              label="Precio/Hora (€)"
-                                              placeholder="0"
-                                              value={
-                                                contractInput.hourlyRate ??
-                                                (typeof contractMeta?.hourlyRate ===
-                                                "number"
-                                                  ? String(
-                                                      contractMeta.hourlyRate
-                                                    )
-                                                  : "")
-                                              }
-                                              size="sm"
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "hourlyRate",
-                                                  event.target.value
-                                                )
-                                              }
-                                              step="0.01"
-                                              fullWidth
-                                            />
-                                            <Input
-                                              type="number"
-                                              label="Sueldo base (€)"
-                                              placeholder="0"
-                                              value={contractInput.baseSalary}
-                                              size="sm"
-                                              onChange={(event) =>
-                                                handleContractInputChange(
-                                                  entry.contractKey,
-                                                  "baseSalary",
-                                                  event.target.value
-                                                )
-                                              }
-                                              step="0.01"
-                                              fullWidth
-                                            />
+                                            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                              <Input
+                                                type="number"
+                                                label="Horas"
+                                                placeholder="0"
+                                                value={contractInput.hours}
+                                                size="sm"
+                                                onChange={(event) =>
+                                                  handleContractInputChange(
+                                                    entry.contractKey,
+                                                    "hours",
+                                                    event.target.value
+                                                  )
+                                                }
+                                                min="0"
+                                                step="0.25"
+                                                fullWidth
+                                              />
+                                              <Input
+                                                type="number"
+                                                label="Precio/Hora (€)"
+                                                placeholder="0"
+                                                value={
+                                                  contractInput.hourlyRate ??
+                                                  (typeof contractMeta?.hourlyRate ===
+                                                  "number"
+                                                    ? String(
+                                                        contractMeta.hourlyRate
+                                                      )
+                                                    : "")
+                                                }
+                                                size="sm"
+                                                onChange={(event) =>
+                                                  handleContractInputChange(
+                                                    entry.contractKey,
+                                                    "hourlyRate",
+                                                    event.target.value
+                                                  )
+                                                }
+                                                step="0.01"
+                                                fullWidth
+                                              />
+                                              <Input
+                                                type="number"
+                                                label="Sueldo base (€)"
+                                                placeholder="0"
+                                                value={contractInput.baseSalary}
+                                                size="sm"
+                                                onChange={(event) =>
+                                                  handleContractInputChange(
+                                                    entry.contractKey,
+                                                    "baseSalary",
+                                                    event.target.value
+                                                  )
+                                                }
+                                                step="0.01"
+                                                fullWidth
+                                              />
+                                            </div>
                                           </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                         </div>
                       )}
                     </div>
@@ -3674,7 +3940,7 @@ export const SalaryCalculatorPage: React.FC = () => {
           </Card>
         </div>
 
-        {/* Results */}
+        {/* Other Operations */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -3683,7 +3949,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                   size={20}
                   className="mr-2 text-yellow-600 dark:text-yellow-400"
                 />
-                Otras operaciones de Cálculo
+                Otras operaciones
               </h2>
               <button
                 type="button"
@@ -3707,248 +3973,734 @@ export const SalaryCalculatorPage: React.FC = () => {
                 </p>
               ) : (
                 <div className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm text-gray-600 dark:text-gray-300">
-                        Agrupa pagos de distintas empresas bajo un mismo nombre.
-                      </p>
+                  {companyAssignmentWarning && (
+                    <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-500/60 dark:bg-amber-900/30 dark:text-amber-100">
+                      <AlertTriangle size={16} className="mt-0.5" />
+                      <div className="flex-1 leading-snug">
+                        {companyAssignmentWarning}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCompanyAssignmentWarning(null)}
+                        className="rounded-md p-1 text-amber-700 transition hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-1 dark:text-amber-100 dark:hover:bg-amber-800/40 dark:focus:ring-offset-gray-900"
+                        aria-label="Cerrar aviso"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
-                    <Button variant="outline" onClick={addEmptyGroup}>
-                      Crear grupo
-                    </Button>
+                  )}
+
+                  {companyAssignments.size > 0 && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Las empresas en gris ya pertenecen a otro grupo. Quítalas antes de asignarlas a uno nuevo.
+                    </p>
+                  )}
+
+                  <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 shadow-sm">
+                    <div
+                      className={`flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-4 ${
+                        isGroupManagerCollapsed
+                          ? ""
+                          : "border-b border-gray-200 dark:border-gray-700"
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <h4 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                          Agrupar Pagos
+                        </h4>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">
+                          Agrupa pagos de distintas empresas bajo un mismo
+                          nombre y asigna una forma de cobro.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                          <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                            <span className="h-2 w-2 rounded-full bg-blue-400 dark:bg-blue-300" />
+                            {availableCompanies.length} empresas detectadas
+                          </span>
+                          {companyGroups.length > 0 && (
+                            <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200">
+                              <span className="h-2 w-2 rounded-full bg-indigo-400 dark:bg-indigo-300" />
+                              {companyGroups.length} grupos configurados
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={addEmptyGroup}>
+                          Crear grupo
+                        </Button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setIsGroupManagerCollapsed((prev) => !prev)
+                          }
+                          className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+                          aria-label="Mostrar u ocultar agrupaciones"
+                        >
+                          <ChevronDown
+                            size={18}
+                            className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                              isGroupManagerCollapsed ? "" : "rotate-180"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    {!isGroupManagerCollapsed && (
+                      <div className="px-4 py-4 space-y-6">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {companyGroups.length > 0 &&
+                            companyGroups.map((g) => (
+                            <div
+                              key={g.id}
+                              className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 shadow-sm"
+                            >
+                              <div
+                                className="flex items-start justify-between gap-3 px-3 py-3"
+                                style={{ borderTop: `4px solid ${g.color}` }}
+                              >
+                                <div className="flex flex-col gap-1 flex-1">
+                                  <input
+                                    value={g.name}
+                                    onChange={(e) =>
+                                      setCompanyGroups((prev) =>
+                                        prev.map((x) =>
+                                          x.id === g.id
+                                            ? { ...x, name: e.target.value }
+                                            : x
+                                        )
+                                      )
+                                    }
+                                    className="bg-transparent font-semibold text-gray-900 dark:text-gray-100 outline-none focus:ring-0"
+                                  />
+                                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                    <span className="inline-flex items-center gap-1">
+                                      <span
+                                        className="h-2 w-2 rounded-full"
+                                        style={{ backgroundColor: g.color }}
+                                      />
+                                      {g.companies.length} empresas en el grupo
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="color"
+                                    value={g.color}
+                                    onChange={(e) =>
+                                      setCompanyGroups((prev) =>
+                                        prev.map((x) =>
+                                          x.id === g.id
+                                            ? { ...x, color: e.target.value }
+                                            : x
+                                        )
+                                      )
+                                    }
+                                    title="Color del grupo"
+                                    className="h-8 w-8 cursor-pointer rounded-md border border-gray-200 bg-transparent dark:border-gray-700"
+                                  />
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => removeGroup(g.id)}
+                                  >
+                                    Eliminar
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="px-3 pb-3">
+                                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                  <span className="text-gray-600 dark:text-gray-300">
+                                    Forma de pago
+                                  </span>
+                                  <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setCompanyGroups((prev) =>
+                                          prev.map((x) =>
+                                            x.id === g.id
+                                              ? { ...x, paymentMethod: "bank" }
+                                              : x
+                                          )
+                                        )
+                                      }
+                                      className={`px-2 py-1 flex items-center gap-1 ${
+                                        g.paymentMethod !== "cash"
+                                          ? "bg-blue-600 text-white"
+                                          : "bg-transparent text-gray-700 dark:text-gray-300"
+                                      }`}
+                                      title="Banco"
+                                    >
+                                      <Landmark size={14} /> Banco
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setCompanyGroups((prev) =>
+                                          prev.map((x) =>
+                                            x.id === g.id
+                                              ? { ...x, paymentMethod: "cash" }
+                                              : x
+                                          )
+                                        )
+                                      }
+                                      className={`px-2 py-1 flex items-center gap-1 ${
+                                        g.paymentMethod === "cash"
+                                          ? "bg-blue-600 text-white"
+                                          : "bg-transparent text-gray-700 dark:text-gray-300"
+                                      }`}
+                                      title="Efectivo"
+                                    >
+                                      <Banknote size={14} /> Efectivo
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  {availableCompanies.map((c) => {
+                                    const assignedGroup = companyAssignments.get(
+                                      c.key
+                                    );
+                                    const isInCurrentGroup =
+                                      g.companies.includes(c.key);
+                                    const isAssignedElsewhere = Boolean(
+                                      assignedGroup &&
+                                        assignedGroup.id !== g.id
+                                    );
+                                    const buttonClasses = `px-2.5 py-1 rounded-full border text-xs transition ${
+                                      isInCurrentGroup
+                                        ? "border-transparent text-white"
+                                        : "border-gray-300 text-gray-700 dark:text-gray-300"
+                                    } ${
+                                      isAssignedElsewhere && !isInCurrentGroup
+                                        ? "cursor-not-allowed opacity-60 bg-gray-100 text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500"
+                                        : ""
+                                    }`;
+
+                                    return (
+                                      <button
+                                        type="button"
+                                        key={`${g.id}-${c.key}`}
+                                        onClick={() =>
+                                          toggleCompanyInGroup(g.id, c.key)
+                                        }
+                                        disabled={isAssignedElsewhere}
+                                        className={buttonClasses}
+                                        style={
+                                          isInCurrentGroup
+                                            ? { backgroundColor: g.color }
+                                            : undefined
+                                        }
+                                        title={
+                                          isAssignedElsewhere && assignedGroup
+                                            ? `Ya está en "${assignedGroup.name}"`
+                                            : isInCurrentGroup
+                                              ? "Quitar del grupo"
+                                              : "Añadir al grupo"
+                                        }
+                                      >
+                                        <span>{c.name}</span>
+                                        {isAssignedElsewhere && assignedGroup && (
+                                          <span className="ml-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                            ({assignedGroup.name})
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {groupedBreakdown && (
+                          <div className="space-y-3">
+                            <h4 className="font-medium text-gray-900 dark:text-gray-100">
+                              Vista previa de agrupaciones
+                            </h4>
+                            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                              {groupedBreakdown.groups.map((g) => (
+                                <div
+                                  key={g.id}
+                                  className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden"
+                                >
+                                  <div
+                                    className="px-3 py-2 text-white font-semibold"
+                                    style={{ backgroundColor: g.color }}
+                                  >
+                                    <input
+                                      value={g.name}
+                                      onChange={(e) =>
+                                        setCompanyGroups((prev) =>
+                                          prev.map((x) =>
+                                            x.id === g.id
+                                              ? { ...x, name: e.target.value }
+                                              : x
+                                          )
+                                        )
+                                      }
+                                      className="w-full bg-transparent text-white placeholder:text-white/70 outline-none focus:ring-0"
+                                      aria-label="Nombre del grupo"
+                                    />
+                                  </div>
+                                  <div className="p-3 space-y-2">
+                                    <div className="text-sm text-gray-600 dark:text-gray-300">
+                                      {g.companies.join(", ")}
+                                    </div>
+                                    <div className="flex items-center justify-between text-sm">
+                                      <span>Horas</span>
+                                      <span className="font-medium">
+                                        {formatHours(g.hours)}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-sm">
+                                      <span>Importe</span>
+                                      <span className="font-semibold">
+                                        {formatCurrency(g.amount)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                              {groupedBreakdown.remaining.map((c, idx) => (
+                                <div
+                                  key={`r-${idx}`}
+                                  className="rounded-xl border border-gray-200 dark:border-gray-700 p-3"
+                                >
+                                  <div className="font-semibold text-gray-900 dark:text-gray-100">
+                                    {c.name}
+                                  </div>
+                                  <div className="mt-2 flex items-center justify-between text-sm">
+                                    <span>Horas</span>
+                                    <span className="font-medium">
+                                      {formatHours(c.hours)}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span>Importe</span>
+                                    <span className="font-semibold">
+                                      {formatCurrency(c.amount)}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
-                      <h4 className="font-medium mb-2 text-gray-900 dark:text-gray-100">
-                        Empresas detectadas
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                        {availableCompanies.map((c) => {
-                          const inGroup = companyGroups.some((g) =>
-                            g.companies.includes(c.key)
-                          );
+                  <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 shadow-sm">
+                    <div
+                      className={`flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-4 ${
+                        isSplitPaymentsCollapsed
+                          ? ""
+                          : "border-b border-gray-200 dark:border-gray-700"
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <h4 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                          Dividir Pagos
+                        </h4>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">
+                          Reparte el importe de una empresa hacia otros destinos con importes manuales o porcentajes.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                          <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                            <span className="h-2 w-2 rounded-full bg-blue-400 dark:bg-blue-300" />
+                            {formatCurrency(splitPaymentsSummary.sourceAmount)} origen
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                              splitPaymentsSummary.distributed <=
+                                splitPaymentsSummary.sourceAmount + 0.001
+                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
+                                : "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200"
+                            }`}
+                          >
+                            <span className="h-2 w-2 rounded-full bg-current/60" />
+                            {formatCurrency(splitPaymentsSummary.distributed)} repartido
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                              splitPaymentsSummary.remaining > 0
+                                ? "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+                                : "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300"
+                            }`}
+                          >
+                            <span className="h-2 w-2 rounded-full bg-current/60" />
+                            {formatCurrency(splitPaymentsSummary.remaining)} restante
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (isSplitPaymentsCollapsed) {
+                              setIsSplitPaymentsCollapsed(false);
+                            }
+                            addSplitPaymentRule();
+                          }}
+                          disabled={availableCompanies.length <= 1}
+                        >
+                          Nuevo reparto
+                        </Button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setIsSplitPaymentsCollapsed((prev) => !prev)
+                          }
+                          className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+                          aria-label="Mostrar u ocultar división de pagos"
+                        >
+                          <ChevronDown
+                            size={18}
+                            className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                              isSplitPaymentsCollapsed ? "" : "rotate-180"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    {!isSplitPaymentsCollapsed && (
+                      <div className="px-4 py-4 space-y-4">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Select
+                            label="Empresa origen"
+                            value={splitSourceCompany ?? ""}
+                            onChange={(value) =>
+                              setSplitSourceCompany(
+                                value ? (value as CompanyKey) : null
+                              )
+                            }
+                            options={availableCompanies.map((c) => ({
+                              value: c.key,
+                              label: `${c.name} (${formatCurrency(c.amount)})`,
+                            }))}
+                            placeholder="Selecciona empresa"
+                            fullWidth
+                            disabled={availableCompanies.length === 0}
+                          />
+                          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+                            Los importes se calculan con los resultados actuales. Si vuelves a calcular, revisa que los repartos sigan siendo válidos.
+                          </div>
+                        </div>
+                        {splitPaymentRules.length === 0 ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Añade repartos para dividir el pago en porcentajes o importes fijos a otras empresas o cuentas.
+                          </p>
+                        ) : (
+                          <div className="space-y-3">
+                            {splitPaymentRules.map((rule) => {
+                              const computedAmount =
+                                splitRuleComputedAmounts.get(rule.id) ?? 0;
+                              return (
+                                <div
+                                  key={rule.id}
+                                  className="space-y-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 shadow-sm dark:border-gray-700/60 dark:bg-gray-900/40"
+                                >
+                                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                                    <Select
+                                      label="Destino"
+                                      value={rule.targetKey ?? ""}
+                                      onChange={(value) =>
+                                        updateSplitPaymentRule(
+                                          rule.id,
+                                          "targetKey",
+                                          value ? (value as CompanyKey) : null
+                                        )
+                                      }
+                                      options={availableCompanies
+                                        .filter((c) => c.key !== splitSourceCompany)
+                                        .map((c) => ({
+                                          value: c.key,
+                                          label: `${c.name} (${formatCurrency(
+                                            c.amount
+                                          )})`,
+                                        }))}
+                                      placeholder="Selecciona empresa destino"
+                                      fullWidth
+                                    />
+                                    <div className="flex flex-wrap items-center gap-2 justify-end">
+                                      <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            updateSplitPaymentRule(
+                                              rule.id,
+                                              "method",
+                                              "bank"
+                                            )
+                                          }
+                                          className={`px-2 py-1 flex items-center gap-1 text-xs ${
+                                            rule.method !== "cash"
+                                              ? "bg-blue-600 text-white"
+                                              : "bg-transparent text-gray-700 dark:text-gray-300"
+                                          }`}
+                                          title="Banco"
+                                        >
+                                          <Landmark size={14} /> Banco
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            updateSplitPaymentRule(
+                                              rule.id,
+                                              "method",
+                                              "cash"
+                                            )
+                                          }
+                                          className={`px-2 py-1 flex items-center gap-1 text-xs ${
+                                            rule.method === "cash"
+                                              ? "bg-blue-600 text-white"
+                                              : "bg-transparent text-gray-700 dark:text-gray-300"
+                                          }`}
+                                          title="Efectivo"
+                                        >
+                                          <Banknote size={14} /> Efectivo
+                                        </button>
+                                      </div>
+                                      <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            updateSplitPaymentRule(
+                                              rule.id,
+                                              "mode",
+                                              "percentage"
+                                            )
+                                          }
+                                          className={`px-2 py-1 text-xs ${
+                                            rule.mode === "percentage"
+                                              ? "bg-indigo-600 text-white"
+                                              : "bg-transparent text-gray-700 dark:text-gray-300"
+                                          }`}
+                                        >
+                                          %
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            updateSplitPaymentRule(
+                                              rule.id,
+                                              "mode",
+                                              "amount"
+                                            )
+                                          }
+                                          className={`px-2 py-1 text-xs ${
+                                            rule.mode === "amount"
+                                              ? "bg-indigo-600 text-white"
+                                              : "bg-transparent text-gray-700 dark:text-gray-300"
+                                          }`}
+                                        >
+                                          €
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        min="0"
+                                        value={rule.value}
+                                        onChange={(e) =>
+                                          updateSplitPaymentRule(
+                                            rule.id,
+                                            "value",
+                                            e.target.value
+                                          )
+                                        }
+                                        placeholder="0"
+                                        className="w-28 rounded-lg border border-gray-300 bg-white px-2 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                                      />
+                                      <span className="text-sm text-gray-500 dark:text-gray-400">
+                                        {rule.mode === "percentage" ? "%" : "€"}
+                                      </span>
+                                    </div>
+                                    <div className="text-sm text-gray-600 dark:text-gray-300">
+                                      Resultado: <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(computedAmount)}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeSplitPaymentRule(rule.id)}
+                                      className="inline-flex items-center justify-center rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
+                                      title="Eliminar reparto"
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+                          Ajusta los importes hasta distribuir el total. Puedes combinar estos repartos con las agrupaciones configuradas arriba.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 shadow-sm">
+                    <div
+                      className={`flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-4 ${
+                        isOtherPaymentsCollapsed
+                          ? ""
+                          : "border-b border-gray-200 dark:border-gray-700"
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <h4 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                          Otros pagos
+                        </h4>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">
+                          Añade suplementos, bonificaciones y ajustes negativos como descuentos o deudas.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                          {otherPaymentsTotals.additions > 0 && (
+                            <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
+                              <span className="h-2 w-2 rounded-full bg-emerald-400 dark:bg-emerald-300" />
+                              +{formatCurrency(otherPaymentsTotals.additions)} extras
+                            </span>
+                          )}
+                          {otherPaymentsTotals.subtractions > 0 && (
+                            <span className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1 font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
+                              <span className="h-2 w-2 rounded-full bg-rose-400 dark:bg-rose-300" />
+                              {formatCurrency(-otherPaymentsTotals.subtractions)} ajustes
+                            </span>
+                          )}
+                          {otherPaymentsTotals.additions === 0 &&
+                            otherPaymentsTotals.subtractions === 0 && (
+                              <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 font-medium text-gray-500 dark:bg-gray-800/40 dark:text-gray-300">
+                                <span className="h-2 w-2 rounded-full bg-gray-400 dark:bg-gray-500" />
+                                Sin ajustes registrados
+                              </span>
+                            )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsOtherPaymentsCollapsed((prev) => !prev)}
+                          className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+                          aria-label="Mostrar u ocultar otros pagos"
+                        >
+                          <ChevronDown
+                            size={18}
+                            className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                              isOtherPaymentsCollapsed ? "" : "rotate-180"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    {!isOtherPaymentsCollapsed && (
+                      <div className="px-4 py-4 space-y-6">
+                        {OTHER_PAYMENTS_CATEGORY_ORDER.map((category) => {
+                          const items = otherPayments[category];
+                          const categoryTotal = items.reduce((acc, item) => {
+                            const amount = parseFloat(item.amount.replace(",", "."));
+                            if (!Number.isFinite(amount)) return acc;
+                            return acc + amount;
+                          }, 0);
+                          const isCredit = CREDIT_CATEGORIES.includes(category);
+
                           return (
-                            <button
-                              key={c.key}
-                              type="button"
-                              onClick={() =>
-                                inGroup && removeCompanyFromAllGroups(c.key)
-                              }
-                              title={
-                                inGroup ? "Quitar de su grupo" : "Sin grupo"
-                              }
-                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
-                                inGroup
-                                  ? "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200"
-                                  : "border-gray-200 text-gray-700 dark:border-gray-700 dark:text-gray-300"
-                              } ${
-                                inGroup
-                                  ? "cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/40"
-                                  : "cursor-default"
-                              }`}
-                            >
-                              {c.name}
-                              {inGroup && (
-                                <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                            <div key={category} className="space-y-3">
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                                    {OTHER_PAYMENTS_LABELS[category]}
+                                  </h5>
+                                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                                    {isCredit
+                                      ? "Suma al cálculo final"
+                                      : "Se descuenta del cálculo final"}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {items.length > 0 && (
+                                    <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                                      Total: {formatCurrency(isCredit ? categoryTotal : -categoryTotal)}
+                                    </span>
+                                  )}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => addOtherPayment(category)}
+                                  >
+                                    Añadir
+                                  </Button>
+                                </div>
+                              </div>
+                              {items.length === 0 ? (
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                  No hay registros en esta categoría.
+                                </p>
+                              ) : (
+                                <div className="space-y-3">
+                                  {items.map((item) => (
+                                    <div
+                                      key={item.id}
+                                      className="flex flex-col gap-2 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 shadow-sm dark:border-gray-700/60 dark:bg-gray-900/40 md:flex-row md:items-center md:gap-3"
+                                    >
+                                      <input
+                                        value={item.label}
+                                        onChange={(e) =>
+                                          updateOtherPayment(
+                                            category,
+                                            item.id,
+                                            "label",
+                                            e.target.value
+                                          )
+                                        }
+                                        placeholder="Concepto"
+                                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                                      />
+                                      <div className="flex items-center gap-2 md:ml-auto">
+                                        <input
+                                          type="number"
+                                          inputMode="decimal"
+                                          step="0.01"
+                                          value={item.amount}
+                                          onChange={(e) =>
+                                            updateOtherPayment(
+                                              category,
+                                              item.id,
+                                              "amount",
+                                              e.target.value
+                                            )
+                                          }
+                                          placeholder="0,00"
+                                          className="w-28 rounded-lg border border-gray-300 bg-white px-3 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            removeOtherPayment(category, item.id)
+                                          }
+                                          className="inline-flex items-center justify-center rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/20"
+                                          title="Eliminar movimiento"
+                                        >
+                                          <X size={14} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
                               )}
-                            </button>
+                            </div>
                           );
                         })}
                       </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      {companyGroups.length === 0 ? (
-                        <div className="rounded-md border border-dashed border-gray-300 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">
-                          Crea tu primer grupo y selecciona empresas para
-                          incluir.
-                        </div>
-                      ) : (
-                        companyGroups.map((g) => (
-                          <div
-                            key={g.id}
-                            className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
-                          >
-                            <div
-                              className="flex items-center justify-between px-3 py-2"
-                              style={{ backgroundColor: `${g.color}20` }}
-                            >
-                              <input
-                                value={g.name}
-                                onChange={(e) =>
-                                  setCompanyGroups((prev) =>
-                                    prev.map((x) =>
-                                      x.id === g.id
-                                        ? { ...x, name: e.target.value }
-                                        : x
-                                    )
-                                  )
-                                }
-                                className="bg-transparent font-semibold text-gray-900 dark:text-gray-100 outline-none"
-                              />
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="color"
-                                  value={g.color}
-                                  onChange={(e) =>
-                                    setCompanyGroups((prev) =>
-                                      prev.map((x) =>
-                                        x.id === g.id
-                                          ? { ...x, color: e.target.value }
-                                          : x
-                                      )
-                                    )
-                                  }
-                                  title="Color del grupo"
-                                />
-                                <Button
-                                  variant="outline"
-                                  onClick={() => removeGroup(g.id)}
-                                >
-                                  Eliminar
-                                </Button>
-                              </div>
-                            </div>
-                            <div className="p-3">
-                              <div className="mb-3 flex items-center gap-2 text-xs">
-                                <span className="text-gray-600 dark:text-gray-300">
-                                  Forma de pago:
-                                </span>
-                                <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setCompanyGroups((prev) =>
-                                        prev.map((x) =>
-                                          x.id === g.id
-                                            ? { ...x, paymentMethod: "bank" }
-                                            : x
-                                        )
-                                      )
-                                    }
-                                    className={`px-2 py-1 flex items-center gap-1 ${
-                                      g.paymentMethod !== "cash"
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-transparent text-gray-700 dark:text-gray-300"
-                                    }`}
-                                    title="Banco"
-                                  >
-                                    <Landmark size={14} /> Banco
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setCompanyGroups((prev) =>
-                                        prev.map((x) =>
-                                          x.id === g.id
-                                            ? { ...x, paymentMethod: "cash" }
-                                            : x
-                                        )
-                                      )
-                                    }
-                                    className={`px-2 py-1 flex items-center gap-1 ${
-                                      g.paymentMethod === "cash"
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-transparent text-gray-700 dark:text-gray-300"
-                                    }`}
-                                    title="Efectivo"
-                                  >
-                                    <Banknote size={14} /> Efectivo
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                {availableCompanies.map((c) => (
-                                  <button
-                                    type="button"
-                                    key={`${g.id}-${c.key}`}
-                                    onClick={() =>
-                                      toggleCompanyInGroup(g.id, c.key)
-                                    }
-                                    className={`px-2 py-1 rounded-full border text-xs transition ${
-                                      g.companies.includes(c.key)
-                                        ? "border-transparent text-white"
-                                        : "border-gray-300 text-gray-700 dark:text-gray-300"
-                                    } `}
-                                    style={
-                                      g.companies.includes(c.key)
-                                        ? { backgroundColor: g.color }
-                                        : {}
-                                    }
-                                  >
-                                    {c.name}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
+                    )}
                   </div>
-
-                  {groupedBreakdown && (
-                    <div className="space-y-3">
-                      <h4 className="font-medium text-gray-900 dark:text-gray-100">
-                        Vista previa de agrupaciones
-                      </h4>
-                      <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {groupedBreakdown.groups.map((g) => (
-                          <div
-                            key={g.id}
-                            className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden"
-                          >
-                            <div
-                              className="px-3 py-2 text-white font-semibold"
-                              style={{ backgroundColor: g.color }}
-                            >
-                              {g.name}
-                            </div>
-                            <div className="p-3 space-y-2">
-                              <div className="text-sm text-gray-600 dark:text-gray-300">
-                                Miembros: {g.companies.join(", ")}
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span>Horas</span>
-                                <span className="font-medium">
-                                  {formatHours(g.hours)}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span>Importe</span>
-                                <span className="font-semibold">
-                                  {formatCurrency(g.amount)}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {groupedBreakdown.remaining.map((c, idx) => (
-                          <div
-                            key={`r-${idx}`}
-                            className="rounded-xl border border-gray-200 dark:border-gray-700 p-3"
-                          >
-                            <div className="font-semibold text-gray-900 dark:text-gray-100">
-                              {c.name}
-                            </div>
-                            <div className="mt-2 flex items-center justify-between text-sm">
-                              <span>Horas</span>
-                              <span className="font-medium">
-                                {formatHours(c.hours)}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-sm">
-                              <span>Importe</span>
-                              <span className="font-semibold">
-                                {formatCurrency(c.amount)}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
             </CardContent>
@@ -4073,12 +4825,12 @@ export const SalaryCalculatorPage: React.FC = () => {
                               : results.companyBreakdown
                                   .filter((c) => isValidCompanyName(c.name))
                                   .map((c) => ({
-                                  name: c.name ?? "",
-                                  hours: c.hours,
-                                  amount: c.amount,
-                                  method: undefined,
-                                  isGroup: false,
-                                }));
+                                    name: c.name ?? "",
+                                    hours: c.hours,
+                                    amount: c.amount,
+                                    method: undefined,
+                                    isGroup: false,
+                                  }));
                             return rows.flatMap((company, idx) => {
                               const isGroup = company.isGroup;
                               const groupId = (company as any).id as
