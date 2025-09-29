@@ -9,8 +9,11 @@ import {
   Phone,
   MessageCircle,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   X,
-  Check
+  Check,
+  CalendarDays
 } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
@@ -25,14 +28,58 @@ import {
 import { useAuthStore } from '../store/authStore';
 import { fetchWorkersData, fetchWorkerHoursSummary } from '../lib/salaryData';
 
-interface HourEntryForm {
-  workerId: string;
-  workerName: string;
-  date: string;
-  regularHours: string;
-  overtimeHours: string;
+interface DayRegistrationEntry {
+  id: string;
+  company: string;
+  startTime: string;
+  endTime: string;
+  hours: string;
   description: string;
 }
+
+const formatDateKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+    date.getDate()
+  ).padStart(2, '0')}`;
+
+const generateId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+
+const computeEntryHours = (entry: DayRegistrationEntry): number => {
+  const normalize = (value: unknown) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.replace(/[^0-9,.-]/g, '').replace(',', '.');
+      const parsed = Number(normalized);
+      if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return null;
+  };
+
+  const direct = normalize(entry.hours);
+  if (direct !== null) {
+    return direct;
+  }
+
+  if (entry.startTime && entry.endTime) {
+    const start = new Date(`2000-01-01T${entry.startTime}`);
+    const end = new Date(`2000-01-01T${entry.endTime}`);
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+      const diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+      if (Number.isFinite(diff) && diff > 0) {
+        return diff;
+      }
+    }
+  }
+
+  return 0;
+};
 
 const sanitizeTelHref = (phone: string) => {
   const sanitized = phone.replace(/[^+\d]/g, '');
@@ -411,9 +458,9 @@ export const HoursRegistryPage: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [hourEntries, setHourEntries] = useState<HourEntryForm[]>([]);
   const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
   const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
+  const [isHoursPanelCollapsed, setIsHoursPanelCollapsed] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -424,6 +471,10 @@ export const HoursRegistryPage: React.FC = () => {
   const [companyLookup, setCompanyLookup] = useState<Record<string, string>>({});
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+  const [dailyRegistrations, setDailyRegistrations] = useState<
+    Record<string, Record<string, DayRegistrationEntry[]>>
+  >({});
   const [copyFeedback, setCopyFeedback] = useState<
     { type: 'email' | 'phone'; message: string; target?: string }
   | null>(null);
@@ -433,6 +484,10 @@ export const HoursRegistryPage: React.FC = () => {
   const selectedWorker = useMemo(
     () => allWorkers.find((worker) => worker.id === selectedWorkerId) ?? null,
     [allWorkers, selectedWorkerId]
+  );
+  const availableCompaniesList = useMemo(
+    () => selectedWorker?.companyNames ?? [],
+    [selectedWorker?.companyNames]
   );
   const selectedWorkerEmail = selectedWorker?.email ?? null;
   const selectedWorkerPhone = selectedWorker?.phone ?? null;
@@ -474,24 +529,80 @@ export const HoursRegistryPage: React.FC = () => {
   useEffect(() => {
     void fetchWorkers();
   }, [fetchWorkers]);
-  useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    setHourEntries(prevEntries =>
-      selectedWorkerIds.map(workerId => {
-        const worker = allWorkers.find(w => w.id === workerId);
-        const existingEntry = prevEntries.find(entry => entry.workerId === workerId);
 
-        return existingEntry ?? {
-          workerId,
-          workerName: worker?.name || 'Trabajador desconocido',
-          date: today,
-          regularHours: '8',
-          overtimeHours: '0',
-          description: ''
-        };
-      })
-    );
-  }, [selectedWorkerIds, allWorkers]);
+  useEffect(() => {
+    if (!selectedWorkerId) {
+      setSelectedDayKey(null);
+      setIsHoursPanelCollapsed(true);
+      setDailyRegistrations({});
+      setHoursPanelExpandedCompanies({});
+      return;
+    }
+
+    setIsHoursPanelCollapsed(false);
+
+    if (!selectedDayKey) {
+      const today = new Date();
+      if (
+        today.getFullYear() === calendarMonth.getFullYear() &&
+        today.getMonth() === calendarMonth.getMonth()
+      ) {
+        setSelectedDayKey(formatDateKey(today));
+      } else {
+        const firstDayOfMonth = new Date(
+          calendarMonth.getFullYear(),
+          calendarMonth.getMonth(),
+          1
+        );
+        setSelectedDayKey(formatDateKey(firstDayOfMonth));
+      }
+    }
+  }, [selectedWorkerId, calendarMonth, selectedDayKey]);
+
+  useEffect(() => {
+    if (!selectedWorkerId || !selectedDayKey) {
+      return;
+    }
+
+    const dayMap = dailyRegistrations[selectedDayKey];
+    if (dayMap && Object.keys(dayMap).length > 0) {
+      return;
+    }
+
+    const targetCompany = availableCompaniesList[0] ?? 'Sin empresa';
+    setDailyRegistrations(prev => ({
+      ...prev,
+      [selectedDayKey]: {
+        [targetCompany]: [
+          {
+            id: generateId(),
+            company: targetCompany,
+            startTime: '',
+            endTime: '',
+            hours: '',
+            description: '',
+          },
+        ],
+      },
+    }));
+
+    setHoursPanelExpandedCompanies(prev => ({
+      ...prev,
+      [targetCompany]: true,
+    }));
+  }, [selectedWorkerId, selectedDayKey, dailyRegistrations, availableCompaniesList]);
+
+  useEffect(() => {
+    if (!selectedWorkerId || selectedDayKey) {
+      return;
+    }
+
+    const keys = Object.keys(calendarHours);
+    if (keys.length > 0) {
+      const firstKey = keys.sort()[0];
+      setSelectedDayKey(firstKey);
+    }
+  }, [calendarHours, selectedWorkerId, selectedDayKey]);
 
   useEffect(() => () => {
     if (copyFeedbackTimeoutRef.current) {
@@ -657,7 +768,21 @@ export const HoursRegistryPage: React.FC = () => {
   );
 
   const handleCalendarMonthChange = useCallback((next: Date) => {
-    setCalendarMonth(new Date(next.getFullYear(), next.getMonth(), 1));
+    const normalized = new Date(next.getFullYear(), next.getMonth(), 1);
+    setCalendarMonth(normalized);
+    setSelectedDayKey(prev => {
+      if (!prev) {
+        return formatDateKey(normalized);
+      }
+      const prevDate = new Date(prev);
+      if (
+        prevDate.getFullYear() === normalized.getFullYear() &&
+        prevDate.getMonth() === normalized.getMonth()
+      ) {
+        return prev;
+      }
+      return formatDateKey(normalized);
+    });
   }, []);
 
   const refreshWorkers = useCallback(async () => {
@@ -666,76 +791,455 @@ export const HoursRegistryPage: React.FC = () => {
     setIsRefreshing(false);
   }, [fetchWorkers]);
 
-  const updateHourEntry = (workerId: string, field: string, value: string) => {
-    setHourEntries(prev => 
-      prev.map(entry => 
-        entry.workerId === workerId 
-          ? { ...entry, [field]: value }
-          : entry
-      )
-    );
-  };
+  const selectedDaySummary = useMemo(() => (
+    selectedDayKey ? calendarHours[selectedDayKey] ?? null : null
+  ), [calendarHours, selectedDayKey]);
 
-  const handleSaveAll = async () => {
-    if (isSaving) {
+  const currentDayRegistrations = useMemo(() => {
+    if (!selectedDayKey) {
+      return {} as Record<string, DayRegistrationEntry[]>;
+    }
+    return dailyRegistrations[selectedDayKey] ?? {};
+  }, [dailyRegistrations, selectedDayKey]);
+
+  const companiesForRegistration = useMemo(() => {
+    const companySet = new Set<string>();
+    availableCompaniesList.forEach(name => {
+      if (name && name.trim()) {
+        companySet.add(name);
+      }
+    });
+
+    Object.keys(currentDayRegistrations).forEach(name => {
+      if (name && name.trim()) {
+        companySet.add(name);
+      }
+    });
+
+    if (companySet.size === 0) {
+      companySet.add('Sin empresa');
+    }
+
+    return Array.from(companySet).sort((a, b) =>
+      a.localeCompare(b, 'es', { sensitivity: 'base' })
+    );
+  }, [availableCompaniesList, currentDayRegistrations]);
+
+  const [hoursPanelExpandedCompanies, setHoursPanelExpandedCompanies] = useState<Record<string, boolean>>({});
+
+  const calendarCompanyTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    selectedDaySummary?.companies?.forEach(company => {
+      const key = company.name?.trim() || company.companyId || 'Sin empresa';
+      map.set(key, company.hours ?? 0);
+    });
+    return map;
+  }, [selectedDaySummary]);
+
+  const localTotalRegisteredHours = useMemo(() => {
+    return Object.values(currentDayRegistrations).reduce((acc, entries) =>
+      acc + entries.reduce((sum, entry) => sum + computeEntryHours(entry), 0),
+    0);
+  }, [currentDayRegistrations]);
+
+  const displayTotalRegisteredHours = localTotalRegisteredHours > 0
+    ? localTotalRegisteredHours
+    : (selectedDaySummary?.totalHours ?? 0);
+
+  useEffect(() => {
+    if (!selectedWorkerId || !selectedDayKey) {
       return;
     }
 
-    if (hourEntries.length === 0) {
-      alert('No hay entradas de horas para guardar');
+    const companies = companiesForRegistration.length > 0
+      ? companiesForRegistration
+      : ['Sin empresa'];
+
+    setDailyRegistrations(prev => {
+      const dayMap = prev[selectedDayKey] ?? {};
+      const nextDay: Record<string, DayRegistrationEntry[]> = { ...dayMap };
+      let changed = false;
+
+      companies.forEach(name => {
+        const key = name && name.trim().length > 0 ? name : 'Sin empresa';
+        if (!nextDay[key] || nextDay[key].length === 0) {
+          nextDay[key] = [
+            {
+              id: generateId(),
+              company: key,
+              startTime: '',
+              endTime: '',
+              hours: '',
+              description: '',
+            },
+          ];
+          changed = true;
+        }
+      });
+
+      if (!changed) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [selectedDayKey]: nextDay,
+      };
+    });
+
+    setHoursPanelExpandedCompanies(prev => {
+      const next: Record<string, boolean> = {};
+      let openSet = false;
+
+      companies.forEach((name, index) => {
+        const key = name && name.trim().length > 0 ? name : 'Sin empresa';
+        const shouldOpen = !openSet && (prev[key] ?? index === 0);
+        next[key] = shouldOpen;
+        if (shouldOpen) {
+          openSet = true;
+        }
+      });
+
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      const sameLength = prevKeys.length === nextKeys.length;
+      const allMatch = sameLength && nextKeys.every(key => prev[key] === next[key]);
+      if (allMatch) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [selectedWorkerId, selectedDayKey, companiesForRegistration]);
+
+  const addRegistrationEntry = useCallback(
+    (companyName?: string) => {
+      if (!selectedDayKey || !selectedWorker) {
+        return;
+      }
+
+      const fallbackCompany =
+        availableCompaniesList.length > 0 ? availableCompaniesList[0] : 'Sin empresa';
+      const trimmed = companyName?.trim();
+      const targetCompany = trimmed && trimmed.length > 0
+        ? trimmed
+        : companiesForRegistration[0] ?? fallbackCompany;
+
+      const newEntry: DayRegistrationEntry = {
+        id: generateId(),
+        company: targetCompany,
+        startTime: '',
+        endTime: '',
+        hours: '',
+        description: '',
+      };
+
+      setDailyRegistrations(prev => {
+        const dayMap = prev[selectedDayKey] ?? {};
+        const companyEntries = dayMap[targetCompany] ?? [];
+        return {
+          ...prev,
+          [selectedDayKey]: {
+            ...dayMap,
+            [targetCompany]: [...companyEntries, newEntry],
+          },
+        };
+      });
+
+      setHoursPanelExpandedCompanies(prev => ({
+        ...prev,
+        [targetCompany]: true,
+      }));
+    },
+    [selectedDayKey, selectedWorker, availableCompaniesList, companiesForRegistration]
+  );
+
+  const updateRegistrationEntry = useCallback(
+    (companyName: string, entryId: string, patch: Partial<DayRegistrationEntry>) => {
+      if (!selectedDayKey) {
+        return;
+      }
+
+      setDailyRegistrations(prev => {
+        const dayMap = prev[selectedDayKey] ?? {};
+        const sourceCompany = companyName || 'Sin empresa';
+        const sourceEntries = dayMap[sourceCompany] ?? [];
+        const entryIndex = sourceEntries.findIndex(entry => entry.id === entryId);
+
+        if (entryIndex === -1) {
+          return prev;
+        }
+
+        const originalEntry = sourceEntries[entryIndex];
+        let updatedEntry: DayRegistrationEntry = {
+          ...originalEntry,
+          ...patch,
+        };
+
+        if (patch.hours !== undefined) {
+          updatedEntry.hours = patch.hours;
+          updatedEntry.startTime = '';
+          updatedEntry.endTime = '';
+        }
+
+        if (patch.startTime !== undefined || patch.endTime !== undefined) {
+          const { startTime, endTime } = updatedEntry;
+          if (startTime && endTime) {
+            const start = new Date(`2000-01-01T${startTime}`);
+            const end = new Date(`2000-01-01T${endTime}`);
+            const diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+            if (Number.isFinite(diff) && diff > 0) {
+              updatedEntry.hours = diff.toFixed(2);
+            } else {
+              updatedEntry.hours = '';
+            }
+          }
+        }
+
+        const normalizedTargetCompany = (() => {
+          const rawCompany = (patch.company ?? updatedEntry.company ?? '').trim();
+          if (rawCompany.length > 0) {
+            return rawCompany;
+          }
+          return availableCompaniesList.length > 0 ? availableCompaniesList[0] : 'Sin empresa';
+        })();
+
+        updatedEntry = { ...updatedEntry, company: normalizedTargetCompany };
+
+        const nextDayMap: Record<string, DayRegistrationEntry[]> = { ...dayMap };
+
+        const sourceRemaining = sourceEntries.filter(entry => entry.id !== entryId);
+        if (normalizedTargetCompany !== sourceCompany) {
+          if (sourceRemaining.length > 0) {
+            nextDayMap[sourceCompany] = sourceRemaining;
+          } else {
+            delete nextDayMap[sourceCompany];
+          }
+
+          const targetEntries = nextDayMap[normalizedTargetCompany] ?? [];
+          nextDayMap[normalizedTargetCompany] = [...targetEntries, updatedEntry];
+        } else {
+          nextDayMap[sourceCompany] = [...sourceRemaining, updatedEntry];
+        }
+
+        return {
+          ...prev,
+          [selectedDayKey]: nextDayMap,
+        };
+      });
+    },
+    [availableCompaniesList, selectedDayKey]
+  );
+
+  const removeRegistrationEntry = useCallback(
+    (companyName: string, entryId: string) => {
+      if (!selectedDayKey) {
+        return;
+      }
+
+      setDailyRegistrations(prev => {
+        const dayMap = prev[selectedDayKey] ?? {};
+        const companyKey = companyName || 'Sin empresa';
+        const entries = dayMap[companyKey] ?? [];
+        const nextEntries = entries.filter(entry => entry.id !== entryId);
+
+        const nextDayMap = { ...dayMap };
+        if (nextEntries.length > 0) {
+          nextDayMap[companyKey] = nextEntries;
+        } else {
+          delete nextDayMap[companyKey];
+        }
+
+        if (Object.keys(nextDayMap).length === 0) {
+          const nextAll = { ...prev };
+          delete nextAll[selectedDayKey];
+          return nextAll;
+        }
+
+        return {
+          ...prev,
+          [selectedDayKey]: nextDayMap,
+        };
+      });
+    },
+    [selectedDayKey]
+  );
+
+  const handleSaveDayEntries = useCallback(async () => {
+    if (!selectedWorker || !selectedDayKey) {
+      alert('Selecciona un trabajador y un día del calendario');
       return;
     }
 
-    // Validate entries
-    const invalidEntries = hourEntries.filter(entry => 
-      !entry.regularHours || parseFloat(entry.regularHours) < 0
-    );
+    const dayMap = dailyRegistrations[selectedDayKey] ?? {};
+    const companyKeys = Object.keys(dayMap);
 
-    if (invalidEntries.length > 0) {
-      alert('Por favor completa todas las horas regulares con valores válidos');
+    if (companyKeys.length === 0) {
+      alert('No hay tramos horarios para guardar');
+      return;
+    }
+
+    const errors: string[] = [];
+    const normalized = companyKeys.flatMap(companyName => {
+      const entries = dayMap[companyName] ?? [];
+      return entries.map((entry, idx) => {
+        const labelIndex = `${companyName} - tramo ${idx + 1}`;
+        const companyLabel = companyName || 'Sin empresa';
+        const parsedHours = Number(entry.hours.replace(',', '.'));
+        if (Number.isNaN(parsedHours) || parsedHours <= 0) {
+          errors.push(`Horas inválidas en ${labelIndex}`);
+        }
+
+        return {
+          id: entry.id,
+          company: companyLabel,
+          hours: Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : 0,
+          description: entry.description.trim(),
+        };
+      });
+    });
+
+    if (errors.length > 0) {
+      alert(errors.join('\n'));
       return;
     }
 
     setIsSaving(true);
     try {
-      // Simulate saving to local storage
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const savedEntries = hourEntries.map(entry => ({
-        id: Math.random().toString(36).substr(2, 9),
-        workerId: entry.workerId,
-        workerName: entry.workerName,
-        date: entry.date,
-        regularHours: parseFloat(entry.regularHours),
-        overtimeHours: parseFloat(entry.overtimeHours) || 0,
-        description: entry.description,
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+      const savedEntries: HourEntry[] = normalized.map(item => ({
+        id: generateId(),
+        workerId: selectedWorker.id,
+        workerName: selectedWorker.name,
+        date: selectedDayKey,
+        regularHours: item.hours,
+        overtimeHours: 0,
+        description: item.description,
         approved: false,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
       }));
 
-      // Add to recent entries
       setRecentEntries(prev => [...savedEntries, ...prev].slice(0, 10));
-      
-      alert('Horas registradas exitosamente');
-      
-      // Reset form
-      setHourEntries([]);
-      setSelectedWorkerIds([]);
+
+      setCalendarHours(prev => {
+        const previousSummary = prev[selectedDayKey];
+        const baseNotes = previousSummary?.notes ? [...previousSummary.notes] : [];
+        normalized.forEach(item => {
+          if (item.description) {
+            baseNotes.push(item.description);
+          }
+        });
+
+        const companiesMap = new Map<string, { companyId?: string; name?: string; hours: number }>();
+        previousSummary?.companies?.forEach(company => {
+          const key = company.name ?? company.companyId ?? 'Sin empresa';
+          companiesMap.set(key, { ...company });
+        });
+        normalized.forEach(item => {
+          const key = item.company;
+          const existing = companiesMap.get(key) ?? {
+            name: key,
+            hours: 0,
+          };
+          existing.hours += item.hours;
+          companiesMap.set(key, existing);
+        });
+
+        const baseTotal = previousSummary?.totalHours ?? 0;
+        const addedTotal = normalized.reduce((sum, item) => sum + item.hours, 0);
+
+        return {
+          ...prev,
+          [selectedDayKey]: {
+            totalHours: baseTotal + addedTotal,
+            notes: baseNotes,
+            companies: Array.from(companiesMap.values()).sort((a, b) =>
+              (a.name ?? '').localeCompare(b.name ?? '', 'es', {
+                sensitivity: 'base',
+              })
+            ),
+          },
+        };
+      });
+
+      setDailyRegistrations(prev => ({
+        ...prev,
+        [selectedDayKey]: {},
+      }));
+      alert('Registros guardados localmente');
     } catch (error) {
-      console.error('Error saving hour entries:', error);
-      alert('Error al guardar las horas');
+      console.error('Error guardando registros del día:', error);
+      alert('No se pudieron guardar los registros');
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [dailyRegistrations, selectedDayKey, selectedWorker, setRecentEntries, setCalendarHours]);
+
+  const selectedDayInfo = useMemo(() => {
+    if (!selectedDayKey) {
+      return { label: null as string | null, weekday: null as string | null, date: null as Date | null };
+    }
+
+    const targetDate = new Date(selectedDayKey);
+    const label = formatDate(selectedDayKey);
+    const weekday = targetDate.toLocaleDateString('es-ES', { weekday: 'long' });
+    return { label, weekday, date: targetDate };
+  }, [selectedDayKey]);
+
+  const totalRegistrationsCount = useMemo(() =>
+    Object.values(currentDayRegistrations).reduce((acc, entries) => acc + entries.length, 0)
+  , [currentDayRegistrations]);
+
+  const toggleHoursCompany = useCallback((companyName: string) => {
+    setHoursPanelExpandedCompanies(prev => {
+      const isOpen = prev[companyName] ?? false;
+      const next: Record<string, boolean> = {};
+      Object.keys(prev).forEach(name => {
+        next[name] = false;
+      });
+      next[companyName] = !isOpen;
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (companiesForRegistration.length === 0) {
+      setHoursPanelExpandedCompanies(prev => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
+
+    setHoursPanelExpandedCompanies(prev => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+
+      companiesForRegistration.forEach(name => {
+        const existing = prev[name];
+        if (existing === undefined) {
+          changed = true;
+          next[name] = true;
+        } else {
+          next[name] = existing;
+        }
+      });
+
+      Object.keys(prev).forEach(name => {
+        if (!companiesForRegistration.includes(name)) {
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
+  }, [companiesForRegistration]);
 
   return (
     <div className="space-y-6 w-full max-w-full min-w-0">
       <PageHeader
         title="Registro Individual"
-        description="Registra las horas trabajadas por un empleado a la vez"
-        actionLabel={isSaving ? 'Guardando...' : 'Guardar Todo'}
-        onAction={handleSaveAll}
+        description="Consulta y registra las horas trabajadas por un empleado día a día"
+        actionLabel={isSaving ? 'Guardando...' : 'Guardar registros del día'}
+        onAction={handleSaveDayEntries}
         actionIcon={<Save size={18} />}
       />
 
@@ -1019,54 +1523,329 @@ export const HoursRegistryPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Calendario de horas */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-              <Clock size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
-              Calendario de horas
-            </h2>
-            <button
-              type="button"
-              onClick={() => setIsCalendarCollapsed(prev => !prev)}
-              className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
-            >
-              <ChevronDown
-                size={18}
-                className={`text-gray-600 dark:text-gray-300 transition-transform ${
-                  isCalendarCollapsed ? '' : 'rotate-180'
-                }`}
-              />
-            </button>
-          </div>
-        </CardHeader>
-        {!isCalendarCollapsed && (
-          <CardContent>
-            {calendarError && (
-              <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200">
-                {calendarError}
-              </div>
-            )}
-            {selectedWorker ? (
-              <div className="min-w-0 text-xs">
-                <WorkerHoursCalendar
-                  worker={selectedWorker}
-                  selectedMonth={calendarMonth}
-                  hoursByDate={calendarHours}
-                  onMonthChange={handleCalendarMonthChange}
-                  isLoading={isCalendarLoading}
-                  hideTitle
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <CalendarDays size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
+                Calendario de horas
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsCalendarCollapsed(prev => !prev)}
+                className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              >
+                <ChevronDown
+                  size={18}
+                  className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                    isCalendarCollapsed ? '' : 'rotate-180'
+                  }`}
                 />
-              </div>
-            ) : (
-              <div className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-                Selecciona un trabajador para ver su calendario de horas.
-              </div>
-            )}
-          </CardContent>
-        )}
-      </Card>
+              </button>
+            </div>
+          </CardHeader>
+          {!isCalendarCollapsed && (
+            <CardContent>
+              {calendarError && (
+                <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200">
+                  {calendarError}
+                </div>
+              )}
+              {selectedWorker ? (
+                <div className="min-w-0 text-xs">
+                  <WorkerHoursCalendar
+                    worker={selectedWorker}
+                    selectedMonth={calendarMonth}
+                    hoursByDate={calendarHours}
+                    onMonthChange={handleCalendarMonthChange}
+                    isLoading={isCalendarLoading}
+                    hideTitle
+                    selectedDayKey={selectedDayKey}
+                    onSelectedDayChange={setSelectedDayKey}
+                  />
+                </div>
+              ) : (
+                <div className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                  Selecciona un trabajador para ver su calendario de horas.
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                <Clock size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
+                Registro de horas
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsHoursPanelCollapsed(prev => !prev)}
+                className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              >
+                <ChevronDown
+                  size={18}
+                  className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                    isHoursPanelCollapsed ? '' : 'rotate-180'
+                  }`}
+                />
+              </button>
+            </div>
+          </CardHeader>
+          {!isHoursPanelCollapsed && (
+            <CardContent className="space-y-3 pt-4">
+              {!selectedWorker ? (
+                <div className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                  Selecciona un trabajador para registrar horas.
+                </div>
+              ) : !selectedDayKey ? (
+                <div className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                  Elige un día en el calendario para comenzar.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (!selectedDayInfo.date) {
+                            return;
+                          }
+                          const prevDay = new Date(selectedDayInfo.date);
+                          prevDay.setDate(prevDay.getDate() - 1);
+                          setSelectedDayKey(formatDateKey(prevDay));
+                        }}
+                        disabled={!selectedDayInfo.date}
+                      >
+                        <ChevronLeft size={16} />
+                      </Button>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                          Día seleccionado
+                        </span>
+                        <span className="text-lg font-semibold text-blue-700 dark:text-blue-300">
+                          {selectedDayInfo.label}
+                        </span>
+                        {selectedDayInfo.weekday && (
+                          <span className="text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                            {selectedDayInfo.weekday}
+                          </span>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (!selectedDayInfo.date) {
+                            return;
+                          }
+                          const nextDay = new Date(selectedDayInfo.date);
+                          nextDay.setDate(nextDay.getDate() + 1);
+                          setSelectedDayKey(formatDateKey(nextDay));
+                        }}
+                        disabled={!selectedDayInfo.date}
+                      >
+                        <ChevronRight size={16} />
+                      </Button>
+                    </div>
+                    <div className="text-sm text-gray-600 dark:text-gray-300">
+                      Total registrado: {displayTotalRegisteredHours.toFixed(2)} h
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 bg-white text-xs dark:border-gray-700 dark:bg-gray-900/20">
+                    {selectedDaySummary?.companies?.length ? (
+                      <table className="w-full">
+                        <thead>
+                          <tr className="bg-gray-50 dark:bg-gray-800">
+                            <th className="px-2.5 py-1.5 text-left font-semibold text-gray-700 dark:text-gray-200">Empresa</th>
+                            <th className="px-2.5 py-1.5 text-right font-semibold text-gray-700 dark:text-gray-200">Horas</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedDaySummary.companies.map(company => (
+                            <tr key={`${selectedDayKey}-${company.name ?? company.companyId ?? 'empresa'}`} className="border-t border-gray-100 dark:border-gray-700">
+                              <td className="px-2.5 py-1.5 text-gray-800 dark:text-gray-100">
+                                {company.name?.trim() || 'Sin empresa'}
+                              </td>
+                              <td className="px-2.5 py-1.5 text-right text-blue-700 dark:text-blue-300">
+                                {company.hours.toFixed(2)} h
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                        No hay horas registradas para este día.
+                      </p>
+                    )}
+                  </div>
+
+                  {selectedDaySummary?.notes && selectedDaySummary.notes.length > 0 && (
+                    <div className="rounded-md bg-amber-100 dark:bg-amber-900/40 p-2.5 text-xs text-amber-900 dark:text-amber-100">
+                      <h4 className="font-semibold">Notas registradas</h4>
+                      <ul className="mt-2 space-y-1">
+                        {selectedDaySummary.notes.map((note, index) => (
+                          <li key={`${selectedDayKey}-summary-note-${index}`}>• {note}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="space-y-2.5">
+                    {companiesForRegistration.map(companyName => {
+                      const companyEntries = currentDayRegistrations[companyName] ?? [];
+                      const isExpanded = hoursPanelExpandedCompanies[companyName] ?? true;
+
+                      return (
+                        <div
+                          key={`${selectedDayKey ?? 'day'}-${companyName || 'sin-empresa'}`}
+                          className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900/30"
+                        >
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => toggleHoursCompany(companyName)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                toggleHoursCompany(companyName);
+                              }
+                            }}
+                            className="flex cursor-pointer items-center justify-between px-3 py-2"
+                          >
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                                {companyName || 'Sin empresa'}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-300">
+                                Total registrado: {companyEntries.reduce((sum, entry) => sum + (Number(entry.hours.replace(',', '.')) || 0), 0).toFixed(2)} h
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-300">
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant="outline"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  addRegistrationEntry(companyName);
+                                }}
+                              >
+                                + Tramo
+                              </Button>
+                              <ChevronDown
+                                size={14}
+                                className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                              />
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="space-y-2 border-t border-gray-200 px-3 py-2 dark:border-gray-700">
+                              {companyEntries.length === 0 ? (
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                  No hay tramos registrados para esta empresa.
+                                </p>
+                              ) : (
+                                companyEntries.map((entry, idx) => (
+                                  <div
+                                    key={entry.id}
+                                    className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/40"
+                                  >
+                                    <div className="flex items-center justify-between text-[11px] font-semibold text-gray-500 dark:text-gray-300">
+                                      <span>Tramo {idx + 1}</span>
+                                      <Button
+                                        type="button"
+                                        size="xs"
+                                        variant="ghost"
+                                        onClick={() => removeRegistrationEntry(companyName, entry.id)}
+                                      >
+                                        <X size={12} />
+                                      </Button>
+                                    </div>
+
+                                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                      <Input
+                                        type="time"
+                                        label="Inicio"
+                                        value={entry.startTime}
+                                        onChange={(e) => updateRegistrationEntry(companyName, entry.id, { startTime: e.target.value })}
+                                        fullWidth
+                                      />
+                                      <Input
+                                        type="time"
+                                        label="Fin"
+                                        value={entry.endTime}
+                                        onChange={(e) => updateRegistrationEntry(companyName, entry.id, { endTime: e.target.value })}
+                                        fullWidth
+                                      />
+                                    </div>
+
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="0.25"
+                                      label="Total de horas"
+                                      value={entry.hours}
+                                      onChange={(e) => updateRegistrationEntry(companyName, entry.id, { hours: e.target.value })}
+                                      placeholder="Ej: 8"
+                                      fullWidth
+                                      className="mt-2"
+                                    />
+
+                                    <Input
+                                      label="Descripción"
+                                      value={entry.description}
+                                      onChange={(e) => updateRegistrationEntry(companyName, entry.id, { description: e.target.value })}
+                                      placeholder="Describe el trabajo realizado..."
+                                      fullWidth
+                                      className="mt-2"
+                                    />
+                                  </div>
+                                ))
+                              )}
+
+                              <div className="flex justify-end">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => addRegistrationEntry(companyName)}
+                                >
+                                  Añadir tramo horario
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      onClick={handleSaveDayEntries}
+                      disabled={isSaving || totalRegistrationsCount === 0}
+                    >
+                      {isSaving ? 'Guardando...' : 'Guardar registros'}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      </div>
       {/* Recent Entries */}
       <Card>
         <CardHeader>
@@ -1116,21 +1895,6 @@ export const HoursRegistryPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
-
-      {/* Empty State */}
-      {hourEntries.length === 0 && (
-        <Card>
-          <CardContent className="p-8 text-center">
-            <Clock size={48} className="mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-              Selecciona un trabajador para registrar horas
-            </h3>
-            <p className="text-gray-500 dark:text-gray-400">
-              Usa el buscador superior para elegir a quién deseas asignar las horas trabajadas
-            </p>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 };

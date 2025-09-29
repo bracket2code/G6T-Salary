@@ -25,6 +25,8 @@ interface WorkerHoursCalendarProps {
   onMonthChange: (date: Date) => void;
   isLoading?: boolean;
   hideTitle?: boolean;
+  selectedDayKey?: string | null;
+  onSelectedDayChange?: (dayKey: string) => void;
 }
 
 interface CalendarDay {
@@ -69,8 +71,14 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   onMonthChange,
   isLoading = false,
   hideTitle = false,
+  selectedDayKey,
+  onSelectedDayChange,
 }) => {
-  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+  const [internalSelectedDayKey, setInternalSelectedDayKey] =
+    useState<string | null>(null);
+
+  const effectiveSelectedDayKey =
+    selectedDayKey !== undefined ? selectedDayKey : internalSelectedDayKey;
 
   const { days, totalTrackedDays, totalHours } = useMemo(() => {
     const startOfMonth = getStartOfMonth(selectedMonth);
@@ -154,6 +162,10 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   }, [selectedMonth, hoursByDate]);
 
   useEffect(() => {
+    if (selectedDayKey !== undefined) {
+      return;
+    }
+
     const firstDayOfMonth = new Date(
       selectedMonth.getFullYear(),
       selectedMonth.getMonth(),
@@ -161,16 +173,14 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
     );
     const today = new Date();
 
-    if (
+    const nextSelectedKey =
       today.getFullYear() === selectedMonth.getFullYear() &&
       today.getMonth() === selectedMonth.getMonth()
-    ) {
-      setSelectedDayKey(formatDateKey(today));
-      return;
-    }
+        ? formatDateKey(today)
+        : formatDateKey(firstDayOfMonth);
 
-    setSelectedDayKey(formatDateKey(firstDayOfMonth));
-  }, [selectedMonth]);
+    setInternalSelectedDayKey(nextSelectedKey);
+  }, [selectedMonth, selectedDayKey]);
 
   const goToPreviousMonth = () => {
     onMonthChange(
@@ -188,7 +198,14 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
     if (!day.isCurrentMonth) {
       return;
     }
-    setSelectedDayKey(day.dayKey);
+
+    if (onSelectedDayChange) {
+      onSelectedDayChange(day.dayKey);
+    }
+
+    if (selectedDayKey === undefined) {
+      setInternalSelectedDayKey(day.dayKey);
+    }
   };
 
   const parseDateKeyToDate = (key: string | null) => {
@@ -202,10 +219,10 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
     return new Date(year, month - 1, day);
   };
 
-  const selectedDayDetails = selectedDayKey
-    ? hoursByDate[selectedDayKey]
+  const selectedDayDetails = effectiveSelectedDayKey
+    ? hoursByDate[effectiveSelectedDayKey]
     : undefined;
-  const selectedDate = parseDateKeyToDate(selectedDayKey);
+  const selectedDate = parseDateKeyToDate(effectiveSelectedDayKey);
   const companyColumns = selectedDayDetails?.companies ?? [];
 
   const selectedNotes = selectedDayDetails?.notes ?? [];
@@ -313,7 +330,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                         ? "ring-1 ring-blue-400"
                         : ""
                     } ${
-                      selectedDayKey === day.dayKey && day.isCurrentMonth
+                      effectiveSelectedDayKey === day.dayKey && day.isCurrentMonth
                         ? "ring-2 ring-blue-500"
                         : ""
                     }`}
@@ -416,7 +433,9 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                   <h4 className="font-semibold">Notas del día</h4>
                   <ul className="mt-2 space-y-1 text-sm">
                     {selectedNotes.map((note, index) => (
-                      <li key={`${selectedDayKey}-note-${index}`}>• {note}</li>
+                      <li key={`${effectiveSelectedDayKey ?? 'day'}-note-${index}`}>
+                        • {note}
+                      </li>
                     ))}
                   </ul>
                 </div>
