@@ -700,7 +700,6 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isCalculating, setIsCalculating] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [companyLookup, setCompanyLookup] = useState<Record<string, string>>(
     {}
@@ -715,7 +714,7 @@ export const SalaryCalculatorPage: React.FC = () => {
   >({});
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
-  const [isContractInputsOpen, setIsContractInputsOpen] = useState(false);
+  const [isContractInputsOpen, setIsContractInputsOpen] = useState(true);
   const [autoFillHoursMap, setAutoFillHoursMap] = useState<
     Record<string, boolean>
   >({});
@@ -733,7 +732,7 @@ export const SalaryCalculatorPage: React.FC = () => {
     () => createDefaultTierRules()
   );
   // Collapsible modules state
-  const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(true);
+  const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(false);
   const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
   const [isOtherOpsCollapsed, setIsOtherOpsCollapsed] = useState(true);
   const [isGroupManagerCollapsed, setIsGroupManagerCollapsed] = useState(false);
@@ -830,9 +829,11 @@ export const SalaryCalculatorPage: React.FC = () => {
 
   useEffect(() => {
     setSplitConfigs((prev) => {
+      let changed = false;
       const next: SplitConfigsState = {};
       availableCompanies.forEach((company) => {
         const existing = prev[company.key] ?? createDefaultSplitConfig();
+
         const filteredRules = existing.rules.filter(
           (rule) =>
             rule.targetKey === null ||
@@ -840,24 +841,77 @@ export const SalaryCalculatorPage: React.FC = () => {
             availableCompanies.some((c) => c.key === rule.targetKey)
         );
 
-        const autoTargets = (existing.autoConfig.targets ?? []).filter(
+        const rulesChanged =
+          filteredRules.length !== existing.rules.length ||
+          filteredRules.some((rule, index) => rule !== existing.rules[index]);
+        const normalizedRules = rulesChanged ? filteredRules : existing.rules;
+
+        const currentTargets = existing.autoConfig?.targets ?? [];
+        const filteredTargets = currentTargets.filter(
           (target) =>
             target !== SELF_TARGET_KEY &&
             availableCompanies.some((c) => c.key === target)
         );
+        const targetsChanged =
+          filteredTargets.length !== currentTargets.length ||
+          filteredTargets.some(
+            (target, index) => target !== currentTargets[index]
+          );
+        const normalizedTargets = targetsChanged ? filteredTargets : currentTargets;
 
-        next[company.key] = {
-          mode: existing.mode,
-          rules: filteredRules,
-          remainderMethod: existing.remainderMethod,
-          autoConfig: {
-            basis: existing.autoConfig.basis ?? "hours",
-            method: existing.autoConfig.method ?? "bank",
-            targets: autoTargets,
-          },
-        };
+        const basis = existing.autoConfig?.basis ?? "hours";
+        const method = existing.autoConfig?.method ?? "bank";
+
+        const autoConfigChanged =
+          !existing.autoConfig ||
+          existing.autoConfig.basis !== basis ||
+          existing.autoConfig.method !== method ||
+          targetsChanged;
+
+        const nextAutoConfig = autoConfigChanged
+          ? {
+              basis,
+              method,
+              targets: normalizedTargets,
+            }
+          : existing.autoConfig;
+
+        const nextConfig =
+          rulesChanged || autoConfigChanged
+            ? {
+                ...existing,
+                rules: normalizedRules,
+                autoConfig: nextAutoConfig ?? {
+                  basis,
+                  method,
+                  targets: normalizedTargets,
+                },
+              }
+            : existing;
+
+        if (nextConfig !== existing) {
+          changed = true;
+        }
+
+        next[company.key] = nextConfig;
       });
-      return next;
+
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length !== nextKeys.length) {
+        changed = true;
+      } else if (
+        !changed &&
+        prevKeys.some((key) => {
+          const prevConfig = prev[key];
+          const nextConfig = next[key];
+          return !nextConfig || prevConfig !== nextConfig;
+        })
+      ) {
+        changed = true;
+      }
+
+      return changed ? next : prev;
     });
   }, [availableCompanies]);
 
@@ -2647,11 +2701,11 @@ export const SalaryCalculatorPage: React.FC = () => {
     companyContractInputs: {},
   });
 
-  // Calculation results moved earlier
-  const [copyFeedback, setCopyFeedback] = useState<{
-    type: "email" | "phone";
-    message: string;
-    target?: string;
+// Calculation results moved earlier
+const [copyFeedback, setCopyFeedback] = useState<{
+  type: "email" | "phone";
+  message: string;
+  target?: string;
   } | null>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -3887,26 +3941,6 @@ export const SalaryCalculatorPage: React.FC = () => {
     setIsRefreshing(false);
   };
 
-  const handleCalculate = async () => {
-    if (!selectedWorker) {
-      alert("Por favor selecciona un trabajador");
-      return;
-    }
-
-    setIsCalculating(true);
-    try {
-      calculateSalary();
-
-      // Optionally save calculation to local storage
-      // localStorage.setItem('lastCalculation', JSON.stringify(results));
-    } catch (error) {
-      console.error("Error calculating salary:", error);
-      alert("Error al calcular el sueldo");
-    } finally {
-      setIsCalculating(false);
-    }
-  };
-
   const resetCalculation = () => {
     setAutoFillHoursMap({});
     setExpandedCompanyInputs({});
@@ -4509,6 +4543,87 @@ export const SalaryCalculatorPage: React.FC = () => {
   }, [
     calculationData.companyContractInputs,
     companyContractStructure.contractMap,
+  ]);
+
+  useEffect(() => {
+    if (!selectedWorker) {
+      setResults(null);
+      return;
+    }
+
+    const companyTotals = manualContractAggregates.companyList.reduce(
+      (acc, company) => {
+        acc.hours += company.hours || 0;
+        acc.amount += company.baseAmount || 0;
+        return acc;
+      },
+      { hours: 0, amount: 0 }
+    );
+
+    if (
+      !manualContractAggregates.hasEntries &&
+      companyTotals.hours === 0 &&
+      companyTotals.amount === 0 &&
+      !calculationData.baseSalary &&
+      !calculationData.hoursWorked
+    ) {
+      setResults(null);
+      return;
+    }
+
+    calculateSalary();
+  }, [
+    selectedWorker?.id,
+    calculationData,
+    otherPayments,
+    splitConfigs,
+    tierPaymentRules,
+    manualContractAggregates,
+    otherPaymentsTotals.additions,
+    otherPaymentsTotals.subtractions,
+    calendarHours,
+    autoFillHoursMap,
+  ]);
+
+  useEffect(() => {
+    if (!selectedWorker) {
+      setResults(null);
+      return;
+    }
+
+    const hasContractData = manualContractAggregates.hasEntries;
+    const companyTotals = manualContractAggregates.companyList.reduce(
+      (acc, company) => {
+        acc.hours += company.hours || 0;
+        acc.amount += company.baseAmount || 0;
+        return acc;
+      },
+      { hours: 0, amount: 0 }
+    );
+
+    if (
+      !hasContractData &&
+      companyTotals.hours === 0 &&
+      companyTotals.amount === 0 &&
+      !calculationData.baseSalary &&
+      !calculationData.hoursWorked
+    ) {
+      setResults(null);
+      return;
+    }
+
+    calculateSalary();
+  }, [
+    selectedWorker?.id,
+    calculationData,
+    otherPayments,
+    splitConfigs,
+    tierPaymentRules,
+    manualContractAggregates,
+    otherPaymentsTotals.additions,
+    otherPaymentsTotals.subtractions,
+    calendarHours,
+    autoFillHoursMap,
   ]);
 
   const clearAutoFilledHoursForGroup = useCallback(
@@ -5790,20 +5905,6 @@ export const SalaryCalculatorPage: React.FC = () => {
                   fullWidth
                 />
 
-                <Button
-                  onClick={handleCalculate}
-                  disabled={
-                    !selectedWorker ||
-                    (!manualContractAggregates.hasEntries &&
-                      (!calculationData.baseSalary ||
-                        calculationData.baseSalary.trim().length === 0))
-                  }
-                  isLoading={isCalculating}
-                  leftIcon={<Calculator size={18} />}
-                  className="w-full"
-                >
-                  Calcular Sueldo
-                </Button>
               </CardContent>
             )}
           </Card>

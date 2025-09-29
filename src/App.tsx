@@ -7,6 +7,7 @@ import { Dashboard } from './pages/Dashboard';
 import { SalaryCalculatorPage } from './pages/SalaryCalculatorPage';
 import { MultipleCalculatorPage } from './pages/MultipleCalculatorPage';
 import { HoursRegistryPage } from './pages/HoursRegistryPage';
+import { MultipleHoursRegistryPage } from './pages/MultipleHoursRegistryPage';
 import { WorkerQueriesPage } from './pages/WorkerQueriesPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ProfilePage } from './pages/ProfilePage';
@@ -68,6 +69,7 @@ function App() {
           <Route path="calculator" element={<SalaryCalculatorPage />} />
           <Route path="multiple" element={<MultipleCalculatorPage />} />
           <Route path="hours" element={<HoursRegistryPage />} />
+          <Route path="hours/multiple" element={<MultipleHoursRegistryPage />} />
           <Route path="queries" element={<WorkerQueriesPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="templates" element={<TemplatesPage />} />

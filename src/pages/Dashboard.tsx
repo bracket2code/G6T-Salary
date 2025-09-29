@@ -180,7 +180,7 @@ export const Dashboard: React.FC = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">Registro de Horas</p>
+                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">Registro Individual</p>
                   <p className="text-lg font-bold text-gray-900 dark:text-white">Horas</p>
                 </div>
                 <div className="p-2 sm:p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg">

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Calculator, Users, Clock, LogOut, Landmark, BarChart2, Search, FileText } from 'lucide-react';
+import { LayoutGrid, Calculator, Users, Clock, LogOut, Landmark, BarChart2, Search, FileText, UserPlus } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import { useAuthStore } from '../../store/authStore';
 import { useSidebarStore } from '../../store/sidebarStore';
@@ -34,7 +34,8 @@ export const Sidebar: React.FC = () => {
     { path: '/', icon: LayoutGrid, label: 'Dashboard' },
     { path: '/calculator', icon: Calculator, label: 'Cálculo Individual' },
     { path: '/multiple', icon: Users, label: 'Cálculo Múltiple' },
-    { path: '/hours', icon: Clock, label: 'Registro de Horas' },
+    { path: '/hours', icon: Clock, label: 'Registro Individual' },
+    { path: '/hours/multiple', icon: UserPlus, label: 'Registro Múltiple' },
     { path: '/queries', icon: Search, label: 'Consultas' },
     { path: '/reports', icon: BarChart2, label: 'Informes' },
     { path: '/templates', icon: FileText, label: 'Plantillas PDF' },

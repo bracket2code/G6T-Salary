@@ -104,7 +104,7 @@ export const fetchWorkersData = async ({
 
   try {
     const companiesResponse = await fetch(
-      `${apiUrl}/parameter/list?types[0]=2&types[1]=3&situation=0`,
+      `${apiUrl}/parameter/list?types=1`,
       {
         method: "GET",
         headers,
@@ -133,52 +133,61 @@ export const fetchWorkersData = async ({
 
   let workerSecondaryEmailLookup: Record<string, string> = {};
 
-  try {
-    let usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({}),
-    });
+  const enableUsersLookup =
+    (import.meta as any).env?.VITE_ENABLE_USERS_LOOKUP === "true";
 
-    if (!usersResponse.ok) {
-      usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
-        method: "GET",
+  if (enableUsersLookup) {
+    try {
+      let usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+        method: "POST",
         headers,
+        body: JSON.stringify({}),
       });
-    }
 
-    if (usersResponse.ok) {
-      const usersData = await usersResponse.json();
-      const usersArray = Array.isArray(usersData)
-        ? usersData
-        : Array.isArray(usersData?.data)
-        ? usersData.data
-        : Array.isArray(usersData?.items)
-        ? usersData.items
-        : [];
+      if (!usersResponse.ok) {
+        usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+          method: "GET",
+          headers,
+        });
+      }
 
-      usersArray.forEach((user: any) => {
-        const workerRelationId = pickString(
-          user?.workerIdRelation,
-          user?.workerRelationId,
-          user?.workerId,
-          user?.worker_id
+      if (usersResponse.ok) {
+        const usersData = await usersResponse.json();
+        const usersArray = Array.isArray(usersData)
+          ? usersData
+          : Array.isArray(usersData?.data)
+          ? usersData.data
+          : Array.isArray(usersData?.items)
+          ? usersData.items
+          : [];
+
+        usersArray.forEach((user: any) => {
+          const workerRelationId = pickString(
+            user?.workerIdRelation,
+            user?.workerRelationId,
+            user?.workerId,
+            user?.worker_id
+          );
+
+          const emailCandidate = pickString(
+            user?.email,
+            user?.userEmail,
+            user?.contactEmail,
+            user?.secondaryEmail
+          );
+
+          if (workerRelationId && emailCandidate) {
+            workerSecondaryEmailLookup[workerRelationId] = emailCandidate;
+          }
+        });
+      } else {
+        console.warn(
+          `No se pudieron obtener usuarios (status ${usersResponse.status})`
         );
-
-        const emailCandidate = pickString(
-          user?.email,
-          user?.userEmail,
-          user?.contactEmail,
-          user?.secondaryEmail
-        );
-
-        if (workerRelationId && emailCandidate) {
-          workerSecondaryEmailLookup[workerRelationId] = emailCandidate;
-        }
-      });
+      }
+    } catch (error) {
+      console.error("Error fetching user email relationships", error);
     }
-  } catch (error) {
-    console.error("Error fetching user email relationships", error);
   }
 
   let contractLookup: Record<
@@ -198,10 +207,13 @@ export const fetchWorkersData = async ({
   > = {};
 
   try {
-    const contractsResponse = await fetch(`${apiUrl}/Contract/list`, {
-      method: "GET",
-      headers,
-    });
+    const contractsResponse = await fetch(
+      `${apiUrl}/parameter/list?types=7`,
+      {
+        method: "GET",
+        headers,
+      }
+    );
 
     if (contractsResponse.ok) {
       const contractsData = await contractsResponse.json();
@@ -332,6 +344,49 @@ export const fetchWorkersData = async ({
       normalizeIdentifier(apiWorker?.worker_id) ??
       Math.random().toString(36).slice(2);
 
+    const workerRelationKey =
+      pickString(
+        apiWorker?.workerIdRelation,
+        apiWorker?.workerRelationId,
+        apiWorker?.workerRelation,
+        apiWorker?.workerParameterId,
+        apiWorker?.relationId,
+        apiWorker?.id
+      ) ?? workerId;
+
+    const lookedUpSecondary = workerSecondaryEmailLookup[workerRelationKey];
+    const primaryEmail =
+      pickString(
+        apiWorker?.email,
+        apiWorker?.workerEmail,
+        apiWorker?.contactEmail,
+        apiWorker?.parameterEmail,
+        apiWorker?.principalEmail,
+        apiWorker?.providerEmail,
+        apiWorker?.userEmail,
+        apiWorker?.mail,
+        apiWorker?.emailAddress,
+        apiWorker?.user?.email
+      ) ?? undefined;
+
+    const normalizedPrimary =
+      typeof primaryEmail === "string"
+        ? primaryEmail.trim().toLowerCase()
+        : "";
+    const displayEmail =
+      normalizedPrimary && primaryEmail
+        ? primaryEmail.trim()
+        : lookedUpSecondary && lookedUpSecondary.trim().length > 0
+        ? lookedUpSecondary.trim()
+        : undefined;
+
+    const secondaryEmailFinal =
+      lookedUpSecondary &&
+      displayEmail &&
+      lookedUpSecondary.trim().toLowerCase() !== displayEmail.toLowerCase()
+        ? lookedUpSecondary
+        : undefined;
+
     const baseWorker: Worker = {
       id: workerId,
       name:
@@ -343,16 +398,8 @@ export const fetchWorkersData = async ({
           apiWorker?.workerName,
           apiWorker?.firstName
         ) ?? "Trabajador sin nombre",
-      email:
-        pickString(
-          apiWorker?.email,
-          apiWorker?.workerEmail,
-          apiWorker?.contactEmail,
-          apiWorker?.parameterEmail,
-          apiWorker?.principalEmail,
-          workerSecondaryEmailLookup[workerId]
-        ) ?? "Email no disponible",
-      secondaryEmail: workerSecondaryEmailLookup[workerId] ?? undefined,
+      email: displayEmail ?? "Email no disponible",
+      secondaryEmail: secondaryEmailFinal,
       role:
         (pickString(apiWorker?.role, apiWorker?.workerRole) as Worker["role"]) ??
         "tecnico",
@@ -362,7 +409,9 @@ export const fetchWorkersData = async ({
           apiWorker?.workerPhone,
           apiWorker?.contactPhone,
           apiWorker?.mobile,
-          apiWorker?.telephone
+          apiWorker?.telephone,
+          apiWorker?.phoneNumber,
+          apiWorker?.tel
         ) ?? null,
       createdAt:
         pickString(
@@ -473,7 +522,7 @@ export const fetchWorkersData = async ({
           companyNamesSet.add(companyName);
         }
 
-        if (hasContract && relationCompanyId) {
+        if (companyName) {
           const contractEntry: WorkerCompanyContract = {
             id:
               relationIdentifier ??
@@ -542,31 +591,38 @@ export const fetchWorkersData = async ({
             details: relation?.details ?? undefined,
           };
 
-          if (!companyContractsMap[relationCompanyId]) {
-            companyContractsMap[relationCompanyId] = [];
+          const contractKey = companyName;
+          if (!companyContractsMap[contractKey]) {
+            companyContractsMap[contractKey] = [];
           }
-          companyContractsMap[relationCompanyId].push(contractEntry);
+          companyContractsMap[contractKey].push(contractEntry);
 
-          if (!companyStatsMap[relationCompanyId]) {
-            companyStatsMap[relationCompanyId] = {
-              companyId: relationCompanyId,
+          if (!companyStatsMap[contractKey]) {
+            companyStatsMap[contractKey] = {
+              companyId: relationCompanyId ?? undefined,
               contractCount: 0,
               assignmentCount: 0,
             };
           }
 
-          companyStatsMap[relationCompanyId].contractCount += 1;
+          if (hasContract) {
+            companyStatsMap[contractKey].contractCount += 1;
+          }
         }
 
-        if (relationCompanyId) {
-          if (!companyStatsMap[relationCompanyId]) {
-            companyStatsMap[relationCompanyId] = {
-              companyId: relationCompanyId,
+        if (companyName) {
+          const statsKey = companyName;
+          if (!companyStatsMap[statsKey]) {
+            companyStatsMap[statsKey] = {
+              companyId: relationCompanyId ?? undefined,
               contractCount: 0,
               assignmentCount: 0,
             };
           }
-          companyStatsMap[relationCompanyId].assignmentCount += 1;
+          companyStatsMap[statsKey].assignmentCount += 1;
+          if (relationCompanyId && !companyStatsMap[statsKey].companyId) {
+            companyStatsMap[statsKey].companyId = relationCompanyId;
+          }
         }
       });
     }
@@ -713,13 +769,47 @@ export const fetchWorkerHoursSummary = async (
     console.error("Error fetching worker notes:", error);
   }
 
-  const processEntryHours = (entry: any, hoursValue: unknown) => {
+  const normalizeEntryDate = (entry: any) => {
+    let date: Date | null = null;
+
+    if (entry?.dateTime) {
+      const parsed = new Date(entry.dateTime);
+      if (!Number.isNaN(parsed.getTime())) {
+        date = parsed;
+      }
+    }
+
+    if (!date) {
+      const dateString = pickString(
+        entry?.start,
+        entry?.date,
+        entry?.day,
+        entry?.createdAt
+      );
+      if (dateString) {
+        const parsed = new Date(dateString);
+        if (!Number.isNaN(parsed.getTime())) {
+          date = parsed;
+        }
+      }
+    }
+
+    if (!date) {
+      return null;
+    }
+
+    date.setHours(date.getHours() + 2);
+    return date;
+  };
+
+  const processEntryHours = (entry: any) => {
     let hours = 0;
 
-    if (typeof hoursValue === "number" && Number.isFinite(hoursValue)) {
-      hours = hoursValue;
-    } else if (typeof hoursValue === "string") {
-      const normalized = hoursValue.replace(/[^0-9,.-]/g, "").replace(/,/g, ".");
+    const valueRaw = entry?.value ?? entry?.hours ?? entry?.workedHours;
+    if (typeof valueRaw === "number" && Number.isFinite(valueRaw)) {
+      hours = valueRaw;
+    } else if (typeof valueRaw === "string") {
+      const normalized = valueRaw.replace(/[^0-9,.-]/g, "").replace(/,/g, ".");
       const parsed = Number(normalized);
       if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
         hours = parsed;
@@ -728,12 +818,30 @@ export const fetchWorkerHoursSummary = async (
 
     if (hours === 0 && Array.isArray(entry?.workShifts)) {
       const shiftsTotal = entry.workShifts.reduce((acc: number, shift: any) => {
-        const shiftHours = parseNumeric(
-          shift?.hours ?? shift?.value ?? shift?.workedHours
-        );
-        if (typeof shiftHours === "number") {
-          return acc + shiftHours;
+        if (!shift) {
+          return acc;
         }
+
+        if (shift?.hours || shift?.value || shift?.workedHours) {
+          const parsedShift = parseNumeric(
+            shift.hours ?? shift.value ?? shift.workedHours
+          );
+          if (typeof parsedShift === "number" && Number.isFinite(parsedShift)) {
+            return acc + parsedShift;
+          }
+        }
+
+        if (shift?.workStart && shift?.workEnd) {
+          const start = new Date(`2000-01-01T${shift.workStart}`);
+          const end = new Date(`2000-01-01T${shift.workEnd}`);
+          if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+            let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+            if (diff > 0) {
+              return acc + diff;
+            }
+          }
+        }
+
         return acc;
       }, 0);
 
@@ -750,20 +858,15 @@ export const fetchWorkerHoursSummary = async (
   };
 
   hourEntries.forEach((entry) => {
-    const dateValue = pickString(entry?.start, entry?.date, entry?.day);
-    if (!dateValue) {
+    const date = normalizeEntryDate(entry);
+    if (!date) {
       return;
     }
 
-    const entryDate = new Date(dateValue);
-    if (Number.isNaN(entryDate.getTime())) {
-      return;
-    }
-
-    const dayKey = formatDateKey(entryDate);
+    const dayKey = formatDateKey(date);
     const aggregate = ensureAggregate(dailyAggregates, dayKey);
 
-    const hours = processEntryHours(entry, entry?.hours ?? entry?.value);
+    const hours = processEntryHours(entry);
     if (hours > 0) {
       aggregate.totalHours += hours;
     }
@@ -771,44 +874,47 @@ export const fetchWorkerHoursSummary = async (
     const companyId = pickString(
       entry?.companyId,
       entry?.company_id,
+      entry?.company?.id,
+      entry?.companyID,
+      entry?.companyIdContract
+    );
+
+    const companyNameCandidate = pickString(
+      entry?.companyName,
+      entry?.company_name,
+      entry?.company?.name,
       entry?.company
     );
 
-    const resolvedCompanyId = companyId ?? "unknown";
+    const companyKey = companyId ?? companyNameCandidate ?? 'sin-empresa';
 
-    if (!aggregate.companies[resolvedCompanyId]) {
-      aggregate.companies[resolvedCompanyId] = {
+    if (!aggregate.companies[companyKey]) {
+      aggregate.companies[companyKey] = {
         companyId: companyId ?? undefined,
         name:
-          companyId && companyLookup[companyId]
-            ? companyLookup[companyId]
-            : companyId ?? "Sin empresa",
+          companyNameCandidate ??
+          (companyId ? companyLookup[companyId] : undefined) ??
+          (companyId ?? 'Sin empresa'),
         hours: 0,
       };
     }
 
-    aggregate.companies[resolvedCompanyId].hours += hours;
-
-    registerNote(aggregate.notes, entry?.observation);
-    registerNote(aggregate.notes, entry?.observations);
-    registerNote(aggregate.notes, entry?.description);
-    registerNote(aggregate.notes, entry?.value);
+    aggregate.companies[companyKey].hours += hours;
   });
 
   noteEntries.forEach((entry) => {
-    const dateValue = pickString(entry?.start, entry?.date, entry?.day);
-    if (!dateValue) {
+    const date = normalizeEntryDate(entry);
+    if (!date) {
       return;
     }
 
-    const entryDate = new Date(dateValue);
-    if (Number.isNaN(entryDate.getTime())) {
-      return;
-    }
-
-    const dayKey = formatDateKey(entryDate);
+    const dayKey = formatDateKey(date);
     const aggregate = ensureAggregate(dailyAggregates, dayKey);
 
+    registerNote(aggregate.notes, entry?.notes);
+    registerNote(aggregate.notes, entry?.note);
+    registerNote(aggregate.notes, entry?.comment);
+    registerNote(aggregate.notes, entry?.comments);
     registerNote(aggregate.notes, entry?.observation);
     registerNote(aggregate.notes, entry?.observations);
     registerNote(aggregate.notes, entry?.description);
