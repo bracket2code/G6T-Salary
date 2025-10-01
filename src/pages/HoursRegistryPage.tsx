@@ -19,14 +19,25 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { TextArea } from '../components/ui/TextArea';
 import { Worker, HourEntry } from '../types/salary';
 import { formatDate } from '../lib/utils';
 import {
   WorkerHoursCalendar,
-  type DayHoursSummary
+  type DayHoursSummary,
+  type DayNoteEntry,
+  type DayScheduleEntry
 } from '../components/WorkerHoursCalendar';
 import { useAuthStore } from '../store/authStore';
 import { fetchWorkersData, fetchWorkerHoursSummary } from '../lib/salaryData';
+
+type EntrySnapshot = {
+  hours: string;
+  startTime: string;
+  endTime: string;
+  description: string;
+  company: string;
+};
 
 interface DayRegistrationEntry {
   id: string;
@@ -35,6 +46,20 @@ interface DayRegistrationEntry {
   endTime: string;
   hours: string;
   description: string;
+  companyId?: string;
+  isExisting?: boolean;
+  isMarkedForDeletion?: boolean;
+  existingData?: DayScheduleEntry;
+  originalSnapshot?: EntrySnapshot;
+  pendingSnapshot?: EntrySnapshot;
+}
+
+interface DayNoteDraft {
+  id: string;
+  text: string;
+  isExisting: boolean;
+  isMarkedForDeletion?: boolean;
+  originalText?: string;
 }
 
 const formatDateKey = (date: Date) =>
@@ -48,6 +73,10 @@ const generateId = () =>
     : Math.random().toString(36).slice(2);
 
 const computeEntryHours = (entry: DayRegistrationEntry): number => {
+  if (entry.isMarkedForDeletion) {
+    return 0;
+  }
+
   const normalize = (value: unknown) => {
     if (typeof value === 'number' && Number.isFinite(value)) {
       return value;
@@ -79,6 +108,46 @@ const computeEntryHours = (entry: DayRegistrationEntry): number => {
   }
 
   return 0;
+};
+
+const entryHasContent = (entry: DayRegistrationEntry): boolean => {
+  if (entry.isMarkedForDeletion) {
+    return false;
+  }
+
+  const hours = computeEntryHours(entry);
+  if (hours > 0) {
+    return true;
+  }
+
+  if (entry.startTime?.trim() || entry.endTime?.trim()) {
+    return true;
+  }
+
+  return entry.description.trim().length > 0;
+};
+
+const entryHasChanges = (entry: DayRegistrationEntry): boolean => {
+  if (!entry.isExisting) {
+    return entryHasContent(entry);
+  }
+
+  if (entry.isMarkedForDeletion) {
+    return true;
+  }
+
+  const original = entry.originalSnapshot;
+  if (!original) {
+    return entryHasContent(entry);
+  }
+
+  const sameCompany = (original.company ?? '').trim() === entry.company.trim();
+  const sameHours = original.hours.trim() === entry.hours.trim();
+  const sameStart = original.startTime === entry.startTime;
+  const sameEnd = original.endTime === entry.endTime;
+  const sameDescription = original.description.trim() === entry.description.trim();
+
+  return !(sameCompany && sameHours && sameStart && sameEnd && sameDescription);
 };
 
 const sanitizeTelHref = (phone: string) => {
@@ -467,7 +536,7 @@ export const HoursRegistryPage: React.FC = () => {
   });
   const [calendarHours, setCalendarHours] = useState<Record<string, DayHoursSummary>>({});
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
-  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [, setCalendarError] = useState<string | null>(null);
   const [companyLookup, setCompanyLookup] = useState<Record<string, string>>({});
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
@@ -475,6 +544,7 @@ export const HoursRegistryPage: React.FC = () => {
   const [dailyRegistrations, setDailyRegistrations] = useState<
     Record<string, Record<string, DayRegistrationEntry[]>>
   >({});
+  const [dayNotesDraft, setDayNotesDraft] = useState<Record<string, DayNoteDraft[]>>({});
   const [copyFeedback, setCopyFeedback] = useState<
     { type: 'email' | 'phone'; message: string; target?: string }
   | null>(null);
@@ -534,12 +604,15 @@ export const HoursRegistryPage: React.FC = () => {
     if (!selectedWorkerId) {
       setSelectedDayKey(null);
       setIsHoursPanelCollapsed(true);
+      setIsCalendarCollapsed(true);
       setDailyRegistrations({});
       setHoursPanelExpandedCompanies({});
+      setDayNotesDraft({});
       return;
     }
 
     setIsHoursPanelCollapsed(false);
+    setIsCalendarCollapsed(false);
 
     if (!selectedDayKey) {
       const today = new Date();
@@ -769,6 +842,13 @@ export const HoursRegistryPage: React.FC = () => {
     return dailyRegistrations[selectedDayKey] ?? {};
   }, [dailyRegistrations, selectedDayKey]);
 
+  const selectedDayNotes = useMemo(() => {
+    if (!selectedDayKey) {
+      return [] as DayNoteDraft[];
+    }
+    return dayNotesDraft[selectedDayKey] ?? [];
+  }, [dayNotesDraft, selectedDayKey]);
+
   const companiesForRegistration = useMemo(() => {
     const companySet = new Set<string>();
     availableCompaniesList.forEach(name => {
@@ -794,14 +874,116 @@ export const HoursRegistryPage: React.FC = () => {
 
   const [hoursPanelExpandedCompanies, setHoursPanelExpandedCompanies] = useState<Record<string, boolean>>({});
 
-  const calendarCompanyTotals = useMemo(() => {
-    const map = new Map<string, number>();
-    selectedDaySummary?.companies?.forEach(company => {
-      const key = company.name?.trim() || company.companyId || 'Sin empresa';
-      map.set(key, company.hours ?? 0);
+  useEffect(() => {
+    if (!selectedDayKey || !selectedDaySummary) {
+      return;
+    }
+
+    setDailyRegistrations(prev => {
+      const existingMap = prev[selectedDayKey] ?? {};
+      const hasLoadedExisting = Object.values(existingMap).some(entries =>
+        entries.some(entry => entry.isExisting)
+      );
+
+      const summaryEntries = selectedDaySummary.entries ?? [];
+      if (summaryEntries.length === 0) {
+        return hasLoadedExisting ? prev : prev;
+      }
+
+      const grouped: Record<string, DayRegistrationEntry[]> = {};
+
+      summaryEntries.forEach(summaryEntry => {
+        const resolvedCompany =
+          summaryEntry.companyName?.trim() ||
+          summaryEntry.companyId ||
+          'Sin empresa';
+
+        if (!grouped[resolvedCompany]) {
+          grouped[resolvedCompany] = [];
+        }
+
+        const hoursString =
+          typeof summaryEntry.hours === 'number' && Number.isFinite(summaryEntry.hours)
+            ? summaryEntry.hours.toString()
+            : '';
+
+        const snapshot: EntrySnapshot = {
+          hours: hoursString,
+          startTime: '',
+          endTime: '',
+          description: summaryEntry.description ?? '',
+          company: resolvedCompany,
+        };
+
+        grouped[resolvedCompany].push({
+          id: summaryEntry.id,
+          company: resolvedCompany,
+          companyId: summaryEntry.companyId,
+          startTime: '',
+          endTime: '',
+          hours: hoursString,
+          description: summaryEntry.description ?? '',
+          isExisting: true,
+          isMarkedForDeletion: false,
+          existingData: summaryEntry,
+          originalSnapshot: snapshot,
+        });
+      });
+
+      if (Object.keys(grouped).length === 0) {
+        return prev;
+      }
+
+      const merged: Record<string, DayRegistrationEntry[]> = {};
+
+      // Combine summary entries with any existing new entries (preserving user work).
+      Object.entries(grouped).forEach(([company, entries]) => {
+        const existingEntries = existingMap[company] ?? [];
+        const persistedNewEntries = existingEntries.filter(entry => !entry.isExisting && entryHasContent(entry));
+        merged[company] = [...entries, ...persistedNewEntries];
+      });
+
+      Object.entries(existingMap).forEach(([company, entries]) => {
+        if (merged[company]) {
+          return;
+        }
+        const persistedNewEntries = entries.filter(entry => !entry.isExisting && entryHasContent(entry));
+        if (persistedNewEntries.length > 0) {
+          merged[company] = persistedNewEntries;
+        }
+      });
+
+      return {
+        ...prev,
+        [selectedDayKey]: merged,
+      };
     });
-    return map;
-  }, [selectedDaySummary]);
+
+    setDayNotesDraft(prev => {
+      if (prev[selectedDayKey] !== undefined) {
+        return prev;
+      }
+
+      const summaryNotes = selectedDaySummary.noteEntries ?? [];
+      if (summaryNotes.length === 0) {
+        return {
+          ...prev,
+          [selectedDayKey]: [],
+        };
+      }
+
+      return {
+        ...prev,
+        [selectedDayKey]: summaryNotes.map((note: DayNoteEntry) => ({
+          id: note.id,
+          text: note.text ?? '',
+          isExisting: true,
+          isMarkedForDeletion: false,
+          originalText: note.text ?? '',
+        })),
+      };
+    });
+  }, [selectedDayKey, selectedDaySummary]);
 
   const localTotalRegisteredHours = useMemo(() => {
     return Object.values(currentDayRegistrations).reduce((acc, entries) =>
@@ -838,6 +1020,8 @@ export const HoursRegistryPage: React.FC = () => {
               endTime: '',
               hours: '',
               description: '',
+              isExisting: false,
+              isMarkedForDeletion: false,
             },
           ];
           changed = true;
@@ -899,6 +1083,8 @@ export const HoursRegistryPage: React.FC = () => {
         endTime: '',
         hours: '',
         description: '',
+        isExisting: false,
+        isMarkedForDeletion: false,
       };
 
       setDailyRegistrations(prev => {
@@ -973,6 +1159,34 @@ export const HoursRegistryPage: React.FC = () => {
 
         updatedEntry = { ...updatedEntry, company: normalizedTargetCompany };
 
+        if (
+          updatedEntry.isMarkedForDeletion &&
+          Object.keys(patch).some(key =>
+            ['hours', 'startTime', 'endTime', 'description', 'company'].includes(key)
+          )
+        ) {
+          const snapshot = updatedEntry.pendingSnapshot ?? updatedEntry.originalSnapshot;
+          updatedEntry = {
+            ...updatedEntry,
+            isMarkedForDeletion: false,
+            pendingSnapshot: undefined,
+            ...(snapshot ?? {}),
+          };
+
+          if (patch.hours !== undefined) {
+            updatedEntry.hours = patch.hours as string;
+          }
+          if (patch.startTime !== undefined) {
+            updatedEntry.startTime = patch.startTime as string;
+          }
+          if (patch.endTime !== undefined) {
+            updatedEntry.endTime = patch.endTime as string;
+          }
+          if (patch.description !== undefined) {
+            updatedEntry.description = patch.description as string;
+          }
+        }
+
         const nextDayMap: Record<string, DayRegistrationEntry[]> = { ...dayMap };
 
         const sourceRemaining = sourceEntries.filter(entry => entry.id !== entryId);
@@ -1008,7 +1222,63 @@ export const HoursRegistryPage: React.FC = () => {
         const dayMap = prev[selectedDayKey] ?? {};
         const companyKey = companyName || 'Sin empresa';
         const entries = dayMap[companyKey] ?? [];
-        const nextEntries = entries.filter(entry => entry.id !== entryId);
+        const entryIndex = entries.findIndex(entry => entry.id === entryId);
+
+        if (entryIndex === -1) {
+          return prev;
+        }
+
+        const targetEntry = entries[entryIndex];
+        let nextEntries: DayRegistrationEntry[];
+
+        if (targetEntry.isExisting) {
+          if (targetEntry.isMarkedForDeletion) {
+            const restoreSnapshot =
+              targetEntry.pendingSnapshot ??
+              targetEntry.originalSnapshot ?? {
+                hours: '',
+                startTime: '',
+                endTime: '',
+                description: '',
+                company: companyKey,
+              };
+
+            nextEntries = [
+              ...entries.slice(0, entryIndex),
+              {
+                ...targetEntry,
+                ...restoreSnapshot,
+                isMarkedForDeletion: false,
+                pendingSnapshot: undefined,
+              },
+              ...entries.slice(entryIndex + 1),
+            ];
+          } else {
+            const snapshot: EntrySnapshot = {
+              hours: targetEntry.hours,
+              startTime: targetEntry.startTime,
+              endTime: targetEntry.endTime,
+              description: targetEntry.description,
+              company: targetEntry.company,
+            };
+
+            nextEntries = [
+              ...entries.slice(0, entryIndex),
+              {
+                ...targetEntry,
+                hours: '0',
+                startTime: '',
+                endTime: '',
+                description: '',
+                isMarkedForDeletion: true,
+                pendingSnapshot: snapshot,
+              },
+              ...entries.slice(entryIndex + 1),
+            ];
+          }
+        } else {
+          nextEntries = entries.filter(entry => entry.id !== entryId);
+        }
 
         const nextDayMap = { ...dayMap };
         if (nextEntries.length > 0) {
@@ -1032,6 +1302,121 @@ export const HoursRegistryPage: React.FC = () => {
     [selectedDayKey]
   );
 
+  const handleAddDayNote = useCallback(() => {
+    if (!selectedDayKey) {
+      return;
+    }
+
+    setDayNotesDraft(prev => {
+      const current = prev[selectedDayKey] ?? [];
+      return {
+        ...prev,
+        [selectedDayKey]: [
+          ...current,
+          {
+            id: generateId(),
+            text: '',
+            isExisting: false,
+            isMarkedForDeletion: false,
+          },
+        ],
+      };
+    });
+  }, [selectedDayKey]);
+
+  const handleUpdateDayNote = useCallback(
+    (noteId: string, text: string) => {
+      if (!selectedDayKey) {
+        return;
+      }
+
+      setDayNotesDraft(prev => {
+        const current = prev[selectedDayKey] ?? [];
+        const next = current.map(note => {
+          if (note.id !== noteId) {
+            return note;
+          }
+
+          const shouldRestore =
+            note.isExisting && note.isMarkedForDeletion && text.trim().length > 0;
+
+          return {
+            ...note,
+            text,
+            isMarkedForDeletion: shouldRestore ? false : note.isMarkedForDeletion,
+          };
+        });
+
+        return {
+          ...prev,
+          [selectedDayKey]: next,
+        };
+      });
+    },
+    [selectedDayKey]
+  );
+
+  const handleToggleDayNoteDeletion = useCallback(
+    (noteId: string) => {
+      if (!selectedDayKey) {
+        return;
+      }
+
+      setDayNotesDraft(prev => {
+        const current = prev[selectedDayKey] ?? [];
+        const next = current.map(note => {
+          if (note.id !== noteId || !note.isExisting) {
+            return note;
+          }
+
+          if (note.isMarkedForDeletion) {
+            const restoredText = note.originalText ?? note.text;
+            return {
+              ...note,
+              text: restoredText,
+              isMarkedForDeletion: false,
+            };
+          }
+
+          return {
+            ...note,
+            originalText: note.originalText ?? note.text,
+            text: '',
+            isMarkedForDeletion: true,
+          };
+        });
+
+        return {
+          ...prev,
+          [selectedDayKey]: next,
+        };
+      });
+    },
+    [selectedDayKey]
+  );
+
+  const handleRemoveDayNote = useCallback(
+    (noteId: string) => {
+      if (!selectedDayKey) {
+        return;
+      }
+
+      setDayNotesDraft(prev => {
+        const current = prev[selectedDayKey] ?? [];
+        const filtered = current.filter(note => note.id !== noteId);
+        if (filtered.length === current.length) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          [selectedDayKey]: filtered,
+        };
+      });
+    },
+    [selectedDayKey]
+  );
+
   const handleSaveDayEntries = useCallback(async () => {
     if (!selectedWorker || !selectedDayKey) {
       alert('Selecciona un trabajador y un día del calendario');
@@ -1040,42 +1425,178 @@ export const HoursRegistryPage: React.FC = () => {
 
     const dayMap = dailyRegistrations[selectedDayKey] ?? {};
     const companyKeys = Object.keys(dayMap);
+    const notesDraft = selectedDayNotes;
 
-    if (companyKeys.length === 0) {
-      alert('No hay tramos horarios para guardar');
+    if (companyKeys.length === 0 && notesDraft.length === 0) {
+      alert('No hay tramos ni notas para guardar');
       return;
     }
 
     const errors: string[] = [];
-    const normalized = companyKeys.flatMap(companyName => {
-      const entries = dayMap[companyName] ?? [];
-      return entries.map((entry, idx) => {
-        const labelIndex = `${companyName} - tramo ${idx + 1}`;
-        const companyLabel = companyName || 'Sin empresa';
-        const parsedHours = Number(entry.hours.replace(',', '.'));
-        if (Number.isNaN(parsedHours) || parsedHours <= 0) {
-          errors.push(`Horas inválidas en ${labelIndex}`);
-        }
 
-        return {
-          id: entry.id,
-          company: companyLabel,
-          hours: Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : 0,
-          description: entry.description.trim(),
-        };
-      });
-    });
+    type PreparedEntry = {
+      id: string;
+      company: string;
+      companyId?: string;
+      hours: number;
+      description: string;
+      hoursInput: string;
+      startTime: string;
+      endTime: string;
+      isExisting: boolean;
+      isMarkedForDeletion: boolean;
+      workShifts?: DayScheduleEntry['workShifts'];
+    };
+
+    const preparedEntries = companyKeys
+      .flatMap(companyName => {
+        const entries = dayMap[companyName] ?? [];
+        return entries.map((entry, idx) => {
+          const companyLabel = companyName || 'Sin empresa';
+          const numericHours = computeEntryHours(entry);
+          const hasContent = entryHasContent(entry);
+          const isExisting = Boolean(entry.isExisting);
+          const isDeletion = Boolean(entry.isMarkedForDeletion);
+          const hasChanges = entryHasChanges(entry);
+
+          if (!isExisting && !hasContent) {
+            return null;
+          }
+
+          if (!isExisting && numericHours <= 0) {
+            errors.push(`Horas inválidas en ${companyLabel} (nuevo tramo ${idx + 1})`);
+            return null;
+          }
+
+          if (isExisting && !isDeletion && !hasChanges) {
+            return null;
+          }
+
+          if (isExisting && !isDeletion && numericHours <= 0) {
+            errors.push(`Horas inválidas en ${companyLabel} (registro ${idx + 1})`);
+            return null;
+          }
+
+          const trimmedDescription = entry.description.trim();
+          const workShifts =
+            entry.existingData?.workShifts ??
+            (entry.startTime && entry.endTime
+              ? [
+                  {
+                    id: generateId(),
+                    startTime: entry.startTime,
+                    endTime: entry.endTime,
+                    hours: numericHours > 0 ? numericHours : undefined,
+                  },
+                ]
+              : undefined);
+
+          return {
+            id: entry.id,
+            company: companyLabel,
+            companyId: entry.companyId,
+            hours: isDeletion ? 0 : numericHours,
+            description: isDeletion ? '' : trimmedDescription,
+            hoursInput: entry.hours,
+            startTime: entry.startTime,
+            endTime: entry.endTime,
+            isExisting,
+            isMarkedForDeletion: isDeletion,
+            workShifts,
+          } as PreparedEntry;
+        });
+      })
+      .filter((entry): entry is PreparedEntry => entry !== null);
 
     if (errors.length > 0) {
       alert(errors.join('\n'));
       return;
     }
 
+    const preparedNotes = notesDraft
+      .map(note => {
+        const trimmed = note.text.trim();
+        const original = (note.originalText ?? '').trim();
+
+        if (!note.isExisting && trimmed.length === 0) {
+          return null;
+        }
+
+        const isDeletion = note.isExisting && (note.isMarkedForDeletion || trimmed.length === 0);
+
+        if (note.isExisting && !isDeletion && trimmed === original) {
+          return null;
+        }
+
+        return {
+          id: note.id,
+          text: isDeletion ? '' : trimmed,
+          isExisting: note.isExisting,
+          isMarkedForDeletion: isDeletion,
+        };
+      })
+      .filter((note): note is { id: string; text: string; isExisting: boolean; isMarkedForDeletion: boolean } => note !== null);
+
+    if (preparedEntries.length === 0 && preparedNotes.length === 0) {
+      alert('No hay cambios para guardar');
+      return;
+    }
+
+    const finalNotesForDayEntries = selectedDayNotes
+      .filter(note => {
+        if (note.isExisting) {
+          if (note.isMarkedForDeletion) {
+            return false;
+          }
+          return note.text.trim().length > 0;
+        }
+        return note.text.trim().length > 0;
+      })
+      .map(note => ({
+        id: note.id,
+        text: note.text.trim(),
+        origin: note.isExisting ? 'note' : 'generated',
+      }));
+
     setIsSaving(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 400));
 
-      const savedEntries: HourEntry[] = normalized.map(item => ({
+      const activeEntries = preparedEntries.filter(item => item.hours > 0 && !item.isMarkedForDeletion);
+      const totalHoursForDay = activeEntries.reduce((sum, item) => sum + item.hours, 0);
+
+      const companiesMap = new Map<string, { companyId?: string; name?: string; hours: number }>();
+      activeEntries.forEach(item => {
+        const key = item.company || item.companyId || 'Sin empresa';
+        const current = companiesMap.get(key) ?? {
+          companyId: item.companyId,
+          name: item.company,
+          hours: 0,
+        };
+        current.hours += item.hours;
+        current.name = item.company;
+        if (item.companyId) {
+          current.companyId = item.companyId;
+        }
+        companiesMap.set(key, current);
+      });
+
+      const companies = Array.from(companiesMap.values()).sort((a, b) =>
+        (a.name ?? '').localeCompare(b.name ?? '', 'es', { sensitivity: 'base' })
+      );
+
+      const entriesForSummary: DayScheduleEntry[] = activeEntries.map(item => ({
+        id: item.id,
+        companyId: item.companyId,
+        companyName: item.company,
+        hours: item.hours,
+        description: item.description || undefined,
+        workShifts: item.workShifts,
+      }));
+
+      const summaryEntryMap = new Map(entriesForSummary.map(entry => [entry.id, entry] as const));
+
+      const savedEntries: HourEntry[] = activeEntries.map(item => ({
         id: generateId(),
         workerId: selectedWorker.id,
         workerName: selectedWorker.name,
@@ -1090,50 +1611,75 @@ export const HoursRegistryPage: React.FC = () => {
       setRecentEntries(prev => [...savedEntries, ...prev].slice(0, 10));
 
       setCalendarHours(prev => {
-        const previousSummary = prev[selectedDayKey];
-        const baseNotes = previousSummary?.notes ? [...previousSummary.notes] : [];
-        normalized.forEach(item => {
-          if (item.description) {
-            baseNotes.push(item.description);
-          }
-        });
-
-        const companiesMap = new Map<string, { companyId?: string; name?: string; hours: number }>();
-        previousSummary?.companies?.forEach(company => {
-          const key = company.name ?? company.companyId ?? 'Sin empresa';
-          companiesMap.set(key, { ...company });
-        });
-        normalized.forEach(item => {
-          const key = item.company;
-          const existing = companiesMap.get(key) ?? {
-            name: key,
-            hours: 0,
-          };
-          existing.hours += item.hours;
-          companiesMap.set(key, existing);
-        });
-
-        const baseTotal = previousSummary?.totalHours ?? 0;
-        const addedTotal = normalized.reduce((sum, item) => sum + item.hours, 0);
+        if (totalHoursForDay === 0 && finalNotesForDayEntries.length === 0) {
+          const next = { ...prev };
+          delete next[selectedDayKey];
+          return next;
+        }
 
         return {
           ...prev,
           [selectedDayKey]: {
-            totalHours: baseTotal + addedTotal,
-            notes: baseNotes,
-            companies: Array.from(companiesMap.values()).sort((a, b) =>
-              (a.name ?? '').localeCompare(b.name ?? '', 'es', {
-                sensitivity: 'base',
-              })
-            ),
+            totalHours: totalHoursForDay,
+            notes: finalNotesForDayEntries.map(note => note.text),
+            noteEntries: finalNotesForDayEntries,
+            entries: entriesForSummary,
+            companies,
           },
         };
       });
 
-      setDailyRegistrations(prev => ({
+      const refreshedRegistrations: Record<string, DayRegistrationEntry[]> = {};
+      activeEntries.forEach(item => {
+        const snapshot: EntrySnapshot = {
+          hours: item.hoursInput,
+          startTime: item.startTime,
+          endTime: item.endTime,
+          description: item.description,
+          company: item.company,
+        };
+
+        const registrationEntry: DayRegistrationEntry = {
+          id: item.id,
+          company: item.company,
+          companyId: item.companyId,
+          startTime: item.startTime,
+          endTime: item.endTime,
+          hours: item.hoursInput,
+          description: item.description,
+          isExisting: true,
+          isMarkedForDeletion: false,
+          existingData: summaryEntryMap.get(item.id),
+          originalSnapshot: snapshot,
+        };
+
+        if (!refreshedRegistrations[item.company]) {
+          refreshedRegistrations[item.company] = [];
+        }
+        refreshedRegistrations[item.company].push(registrationEntry);
+      });
+
+      setDailyRegistrations(prev => {
+        const next = { ...prev };
+        if (Object.keys(refreshedRegistrations).length === 0) {
+          delete next[selectedDayKey];
+        } else {
+          next[selectedDayKey] = refreshedRegistrations;
+        }
+        return next;
+      });
+
+      setDayNotesDraft(prev => ({
         ...prev,
-        [selectedDayKey]: {},
+        [selectedDayKey]: finalNotesForDayEntries.map(note => ({
+          id: note.id,
+          text: note.text,
+          isExisting: true,
+          isMarkedForDeletion: false,
+          originalText: note.text,
+        })),
       }));
+
       alert('Registros guardados localmente');
     } catch (error) {
       console.error('Error guardando registros del día:', error);
@@ -1141,7 +1687,14 @@ export const HoursRegistryPage: React.FC = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [dailyRegistrations, selectedDayKey, selectedWorker, setRecentEntries, setCalendarHours]);
+  }, [
+    dailyRegistrations,
+    selectedDayKey,
+    selectedWorker,
+    selectedDayNotes,
+    setRecentEntries,
+    setCalendarHours,
+  ]);
 
   const selectedDayInfo = useMemo(() => {
     if (!selectedDayKey) {
@@ -1155,8 +1708,20 @@ export const HoursRegistryPage: React.FC = () => {
   }, [selectedDayKey]);
 
   const totalRegistrationsCount = useMemo(() =>
-    Object.values(currentDayRegistrations).reduce((acc, entries) => acc + entries.length, 0)
+    Object.values(currentDayRegistrations).reduce((acc, entries) =>
+      acc + entries.filter(entryHasChanges).length,
+    0)
   , [currentDayRegistrations]);
+
+  const hasActionableNotes = useMemo(() =>
+    selectedDayNotes.some(note => {
+      if (note.isExisting) {
+        const baseText = (note.originalText ?? '').trim();
+        return note.isMarkedForDeletion || note.text.trim() !== baseText;
+      }
+      return note.text.trim().length > 0;
+    })
+  , [selectedDayNotes]);
 
   const toggleHoursCompany = useCallback((companyName: string) => {
     setHoursPanelExpandedCompanies(prev => {
@@ -1214,17 +1779,15 @@ export const HoursRegistryPage: React.FC = () => {
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-1.5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
                 <User size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
                 Selección de Trabajador
-              </div>
+              </h2>
               <div className="flex flex-wrap items-center gap-2">
-                {lastFetchTime && (
-                  <div className="inline-flex items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                    Actualizado: {lastFetchTime.toLocaleString('es-ES')}
-                  </div>
-                )}
+                <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                  Actualizado: {lastFetchTime ? lastFetchTime.toLocaleString('es-ES') : 'Sin sincronizar'}
+                </div>
                 <Button
                   size="sm"
                   variant="outline"
@@ -1493,56 +2056,42 @@ export const HoursRegistryPage: React.FC = () => {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => setIsCalendarCollapsed(prev => !prev)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  setIsCalendarCollapsed(prev => !prev);
-                }
-              }}
-              aria-expanded={!isCalendarCollapsed}
-              className="flex cursor-pointer items-center justify-between rounded-md border border-transparent px-2 py-1 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:hover:border-gray-600 dark:hover:bg-gray-800/40"
-            >
+            <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-                <CalendarDays size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
+                <CalendarDays
+                  size={20}
+                  className="mr-2 text-blue-600 dark:text-blue-400"
+                />
                 Calendario de horas
               </h2>
-              <ChevronDown
-                size={18}
-                className={`text-gray-600 dark:text-gray-300 transition-transform ${
-                  isCalendarCollapsed ? '' : 'rotate-180'
-                }`}
-              />
+              <button
+                type="button"
+                onClick={() => setIsCalendarCollapsed((v) => !v)}
+                className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              >
+                <ChevronDown
+                  size={18}
+                  className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                    isCalendarCollapsed ? '' : 'rotate-180'
+                  }`}
+                />
+              </button>
             </div>
           </CardHeader>
           {!isCalendarCollapsed && (
             <CardContent>
-              {calendarError && (
-                <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200">
-                  {calendarError}
-                </div>
-              )}
-              {selectedWorker ? (
-                <div className="min-w-0 text-xs">
-                  <WorkerHoursCalendar
-                    worker={selectedWorker}
-                    selectedMonth={calendarMonth}
-                    hoursByDate={calendarHours}
-                    onMonthChange={handleCalendarMonthChange}
-                    isLoading={isCalendarLoading}
-                    hideTitle
-                    selectedDayKey={selectedDayKey}
-                    onSelectedDayChange={setSelectedDayKey}
-                  />
-                </div>
-              ) : (
-                <div className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-                  Selecciona un trabajador para ver su calendario de horas.
-                </div>
-              )}
+              <div className="min-w-0 h-full text-xs">
+                <WorkerHoursCalendar
+                  worker={selectedWorker}
+                  selectedMonth={calendarMonth}
+                  hoursByDate={calendarHours}
+                  onMonthChange={handleCalendarMonthChange}
+                  isLoading={isCalendarLoading}
+                  hideTitle
+                  selectedDayKey={selectedDayKey}
+                  onSelectedDayChange={setSelectedDayKey}
+                />
+              </div>
             </CardContent>
           )}
         </Card>
@@ -1668,28 +2217,89 @@ export const HoursRegistryPage: React.FC = () => {
                     )}
                   </div>
 
-                  {selectedDaySummary?.notes && selectedDaySummary.notes.length > 0 && (
-                    <div className="rounded-md bg-amber-100 dark:bg-amber-900/40 p-2.5 text-xs text-amber-900 dark:text-amber-100">
-                      <h4 className="font-semibold">Notas registradas</h4>
-                      <ul className="mt-2 space-y-1">
-                        {selectedDaySummary.notes.map((note, index) => (
-                          <li key={`${selectedDayKey}-summary-note-${index}`}>• {note}</li>
-                        ))}
-                      </ul>
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-100">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold">Notas del día</h4>
+                        <p className="text-[11px] text-amber-800 dark:text-amber-200">
+                          Edita, elimina o añade nuevas notas asociadas a este día.
+                        </p>
+                      </div>
+                      <Button type="button" size="xs" variant="outline" onClick={handleAddDayNote}>
+                        Añadir nota
+                      </Button>
                     </div>
-                  )}
+                    {selectedDayNotes.length === 0 ? (
+                      <p className="text-[11px] text-amber-800 dark:text-amber-200">
+                        No hay notas guardadas actualmente.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {selectedDayNotes.map(note => {
+                          const shortId = note.id.length > 10
+                            ? `${note.id.slice(0, 6)}…${note.id.slice(-3)}`
+                            : note.id;
+
+                          return (
+                            <div
+                              key={note.id}
+                              className={`rounded border border-amber-200 bg-white p-2 shadow-sm dark:border-amber-900/40 dark:bg-amber-950/40 ${
+                                note.isMarkedForDeletion ? 'opacity-75' : ''
+                              }`}
+                            >
+                              <div className="flex items-center justify-between text-[11px] font-semibold text-amber-700 dark:text-amber-100">
+                                <span>
+                                  {note.isExisting ? `Nota existente (${shortId})` : 'Nueva nota'}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  {note.isExisting ? (
+                                    <Button
+                                      type="button"
+                                      size="xs"
+                                      variant="outline"
+                                      onClick={() => handleToggleDayNoteDeletion(note.id)}
+                                    >
+                                      {note.isMarkedForDeletion ? 'Restaurar' : 'Eliminar'}
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      type="button"
+                                      size="xs"
+                                      variant="ghost"
+                                      onClick={() => handleRemoveDayNote(note.id)}
+                                    >
+                                      <X size={12} />
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                              <TextArea
+                                className="mt-2"
+                                rows={3}
+                                value={note.text}
+                                onChange={event => handleUpdateDayNote(note.id, event.target.value)}
+                                placeholder="Escribe la nota para este día..."
+                              />
+                              {note.isMarkedForDeletion && (
+                                <p className="mt-1 text-[11px] font-medium text-red-700 dark:text-red-300">
+                                  Esta nota se marcará para eliminar al guardar.
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
                   <div className="space-y-2.5">
                     {companiesForRegistration.map(companyName => {
                       const companyEntries = currentDayRegistrations[companyName] ?? [];
                       const trimmedName = companyName?.trim() ? companyName.trim() : 'Sin empresa';
                       const isExpanded = hoursPanelExpandedCompanies[companyName] ?? true;
-                      const summaryBaseHours = calendarCompanyTotals.get(trimmedName) ?? 0;
-                      const localCompanyHours = companyEntries.reduce(
-                        (sum, entry) => sum + computeEntryHours(entry),
-                        0
-                      );
-                      const totalCompanyHours = summaryBaseHours + localCompanyHours;
+                      const totalCompanyHours = companyEntries.length > 0
+                        ? companyEntries.reduce((sum, entry) => sum + computeEntryHours(entry), 0)
+                        : selectedDaySummary?.companies?.find(company => (company.name?.trim() || 'Sin empresa') === trimmedName)?.hours ?? 0;
 
                       return (
                         <div
@@ -1743,62 +2353,89 @@ export const HoursRegistryPage: React.FC = () => {
                                   No hay tramos registrados para esta empresa.
                                 </p>
                               ) : (
-                                companyEntries.map((entry) => (
-                                  <div
-                                    key={entry.id}
-                                    className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/40"
-                                  >
-                                    <div className="flex justify-end">
-                                      <Button
-                                        type="button"
-                                        size="xs"
-                                        variant="ghost"
-                                        onClick={() => removeRegistrationEntry(companyName, entry.id)}
-                                        aria-label="Eliminar tramo"
-                                      >
-                                        <X size={12} />
-                                      </Button>
-                                    </div>
+                                companyEntries.map((entry) => {
+                                  const shortEntryId = entry.id.length > 10
+                                    ? `${entry.id.slice(0, 6)}…${entry.id.slice(-3)}`
+                                    : entry.id;
 
-                                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                  return (
+                                    <div
+                                      key={entry.id}
+                                      className={`rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/40 ${
+                                        entry.isMarkedForDeletion
+                                          ? 'border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20'
+                                          : ''
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between text-[11px] font-semibold text-gray-500 dark:text-gray-300">
+                                        <span>
+                                          {entry.isExisting ? `Registro sincronizado (${shortEntryId})` : 'Nuevo tramo'}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                          <Button
+                                            type="button"
+                                            size="xs"
+                                            variant={entry.isExisting ? 'outline' : 'ghost'}
+                                            onClick={() => removeRegistrationEntry(companyName, entry.id)}
+                                          >
+                                            {entry.isExisting ? (
+                                              entry.isMarkedForDeletion ? 'Restaurar registro' : 'Eliminar registro'
+                                            ) : (
+                                              <span className="inline-flex items-center gap-1">
+                                                <X size={12} />
+                                                Quitar
+                                              </span>
+                                            )}
+                                          </Button>
+                                        </div>
+                                      </div>
+
+                                      {entry.isExisting && entry.isMarkedForDeletion && (
+                                        <p className="mt-1 text-[11px] font-medium text-red-600 dark:text-red-300">
+                                          Se enviará con horas 0 y sin tramos para eliminar el registro.
+                                        </p>
+                                      )}
+
+                                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                        <Input
+                                          type="time"
+                                          label="Inicio"
+                                          value={entry.startTime}
+                                          onChange={(e) => updateRegistrationEntry(companyName, entry.id, { startTime: e.target.value })}
+                                          fullWidth
+                                        />
+                                        <Input
+                                          type="time"
+                                          label="Fin"
+                                          value={entry.endTime}
+                                          onChange={(e) => updateRegistrationEntry(companyName, entry.id, { endTime: e.target.value })}
+                                          fullWidth
+                                        />
+                                      </div>
+
                                       <Input
-                                        type="time"
-                                        label="Inicio"
-                                        value={entry.startTime}
-                                        onChange={(e) => updateRegistrationEntry(companyName, entry.id, { startTime: e.target.value })}
+                                        type="number"
+                                        min="0"
+                                        step="0.25"
+                                        label="Total de horas"
+                                        value={entry.hours}
+                                        onChange={(e) => updateRegistrationEntry(companyName, entry.id, { hours: e.target.value })}
+                                        placeholder="Ej: 8"
                                         fullWidth
+                                        className="mt-2"
                                       />
+
                                       <Input
-                                        type="time"
-                                        label="Fin"
-                                        value={entry.endTime}
-                                        onChange={(e) => updateRegistrationEntry(companyName, entry.id, { endTime: e.target.value })}
+                                        label="Descripción"
+                                        value={entry.description}
+                                        onChange={(e) => updateRegistrationEntry(companyName, entry.id, { description: e.target.value })}
+                                        placeholder="Describe el trabajo realizado..."
                                         fullWidth
+                                        className="mt-2"
                                       />
                                     </div>
-
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      step="0.25"
-                                      label="Total de horas"
-                                      value={entry.hours}
-                                      onChange={(e) => updateRegistrationEntry(companyName, entry.id, { hours: e.target.value })}
-                                      placeholder="Ej: 8"
-                                      fullWidth
-                                      className="mt-2"
-                                    />
-
-                                    <Input
-                                      label="Descripción"
-                                      value={entry.description}
-                                      onChange={(e) => updateRegistrationEntry(companyName, entry.id, { description: e.target.value })}
-                                      placeholder="Describe el trabajo realizado..."
-                                      fullWidth
-                                      className="mt-2"
-                                    />
-                                  </div>
-                                ))
+                                  );
+                                })
                               )}
 
                               <div className="flex justify-end">
@@ -1822,7 +2459,7 @@ export const HoursRegistryPage: React.FC = () => {
                     <Button
                       type="button"
                       onClick={handleSaveDayEntries}
-                      disabled={isSaving || totalRegistrationsCount === 0}
+                      disabled={isSaving || (totalRegistrationsCount === 0 && !hasActionableNotes)}
                     >
                       {isSaving ? 'Guardando...' : 'Guardar registros'}
                     </Button>

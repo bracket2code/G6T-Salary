@@ -8,9 +8,33 @@ import {
 } from "lucide-react";
 import type { Worker } from "../types/salary";
 
+export interface DayNoteEntry {
+  id: string;
+  text: string;
+  origin?: 'note' | 'description' | 'generated';
+  raw?: unknown;
+}
+
+export interface DayScheduleEntry {
+  id: string;
+  companyId?: string;
+  companyName?: string;
+  hours: number;
+  description?: string;
+  workShifts?: Array<{
+    id?: string;
+    startTime?: string;
+    endTime?: string;
+    hours?: number;
+  }>;
+  raw?: unknown;
+}
+
 export interface DayHoursSummary {
   totalHours: number;
   notes: string[];
+  noteEntries?: DayNoteEntry[];
+  entries?: DayScheduleEntry[];
   companies: Array<{
     companyId?: string;
     name?: string;
@@ -301,13 +325,16 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                   ? "text-blue-600 dark:text-blue-400"
                   : "text-blue-400 dark:text-blue-500/70";
 
+                const baseCellClasses =
+                  "relative min-h-[64px] px-2.5 pb-1 pt-2.5 flex flex-col items-center gap-1 rounded-xl border transition text-center";
                 const nonCurrentMonthClasses =
                   "border-gray-100 bg-gray-50 text-gray-400 cursor-default dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-500";
                 const currentMonthBaseClasses =
                   "border-gray-200 text-gray-900 cursor-pointer dark:border-gray-700 dark:text-gray-100";
-                const currentMonthBackground = day.hasNotes
-                  ? "bg-amber-50 dark:bg-amber-900/30"
-                  : "bg-white hover:border-blue-300 hover:bg-blue-50/60 dark:bg-gray-800 dark:hover:border-blue-500 dark:hover:bg-blue-900/40";
+                const currentMonthDefaultBackground =
+                  "bg-white hover:border-blue-300 hover:bg-blue-50/60 dark:bg-gray-800 dark:hover:border-blue-500 dark:hover:bg-blue-900/40";
+                const currentMonthNotesBackground =
+                  "bg-amber-50 dark:bg-amber-900/30";
 
                 return (
                   <div
@@ -321,9 +348,13 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                         handleDaySelect(day);
                       }
                     }}
-                    className={`relative min-h-[64px] px-2.5 pb-1 pt-2.5 flex flex-col items-center gap-1 rounded-xl border transition text-center ${
+                    className={`${baseCellClasses} ${
                       day.isCurrentMonth
-                        ? `${currentMonthBaseClasses} ${currentMonthBackground}`
+                        ? `${currentMonthBaseClasses} ${
+                            day.hasNotes
+                              ? currentMonthNotesBackground
+                              : currentMonthDefaultBackground
+                          }`
                         : nonCurrentMonthClasses
                     } ${
                       day.isToday && day.isCurrentMonth

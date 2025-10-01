@@ -1,4 +1,8 @@
-import { DayHoursSummary } from "../components/WorkerHoursCalendar";
+import {
+  DayHoursSummary,
+  DayScheduleEntry,
+  DayNoteEntry,
+} from "../components/WorkerHoursCalendar";
 import {
   Worker,
   WorkerCompanyContract,
@@ -83,6 +87,13 @@ const normalizeIdentifier = (value: unknown): string | undefined => {
     }
   }
   return undefined;
+};
+
+const generateLocalId = (prefix: string) => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Math.random().toString(36).slice(2, 11)}`;
 };
 
 export interface WorkerDataResult {
@@ -714,13 +725,8 @@ export const fetchWorkerHoursSummary = async (
     return entries as any[];
   };
 
-  const registerNote = (collector: Set<string>, value: unknown) => {
-    if (!value) {
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => registerNote(collector, item));
+  const collectNoteStrings = (collector: Set<string>, value: unknown) => {
+    if (value === null || value === undefined) {
       return;
     }
 
@@ -729,7 +735,101 @@ export const fetchWorkerHoursSummary = async (
       if (trimmed.length > 0) {
         collector.add(trimmed);
       }
+      return;
     }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      collector.add(String(value));
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectNoteStrings(collector, item));
+      return;
+    }
+
+    if (typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      Object.keys(obj).forEach((key) => {
+        collectNoteStrings(collector, obj[key]);
+      });
+    }
+  };
+
+  const extractNoteText = (entry: any): string | null => {
+    const inspect = (value: unknown): string | null => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return String(value);
+      }
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          const result = inspect(item);
+          if (result) {
+            return result;
+          }
+        }
+        return null;
+      }
+
+      if (typeof value === "object") {
+        const obj = value as Record<string, unknown>;
+        const preferredKeys = [
+          "text",
+          "note",
+          "description",
+          "value",
+          "comment",
+        ];
+
+        for (const key of preferredKeys) {
+          if (key in obj) {
+            const result = inspect(obj[key]);
+            if (result) {
+              return result;
+            }
+          }
+        }
+
+        for (const key of Object.keys(obj)) {
+          const result = inspect(obj[key]);
+          if (result) {
+            return result;
+          }
+        }
+      }
+
+      return null;
+    };
+
+    const candidates = [
+      entry?.note,
+      entry?.notes,
+      entry?.comment,
+      entry?.comments,
+      entry?.observation,
+      entry?.observations,
+      entry?.description,
+      entry?.value,
+    ];
+
+    for (const candidate of candidates) {
+      const text = inspect(candidate);
+      if (text) {
+        return text;
+      }
+    }
+
+    return null;
   };
 
   const ensureAggregate = (
@@ -739,8 +839,10 @@ export const fetchWorkerHoursSummary = async (
     if (!aggregates[key]) {
       aggregates[key] = {
         totalHours: 0,
-        notes: new Set<string>(),
+        notesText: new Set<string>(),
         companies: {},
+        entries: [],
+        noteEntries: new Map<string, DayNoteEntry>(),
       };
     }
     return aggregates[key];
@@ -748,7 +850,7 @@ export const fetchWorkerHoursSummary = async (
 
   type MutableDailyAggregate = {
     totalHours: number;
-    notes: Set<string>;
+    notesText: Set<string>;
     companies: Record<
       string,
       {
@@ -757,6 +859,8 @@ export const fetchWorkerHoursSummary = async (
         hours: number;
       }
     >;
+    entries: DayScheduleEntry[];
+    noteEntries: Map<string, DayNoteEntry>;
   };
 
   const dailyAggregates: Record<string, MutableDailyAggregate> = {};
@@ -887,19 +991,100 @@ export const fetchWorkerHoursSummary = async (
     );
 
     const companyKey = companyId ?? companyNameCandidate ?? 'sin-empresa';
+    const resolvedCompanyName =
+      companyNameCandidate ??
+      (companyId ? companyLookup[companyId] : undefined) ??
+      (companyId ?? 'Sin empresa');
 
     if (!aggregate.companies[companyKey]) {
       aggregate.companies[companyKey] = {
         companyId: companyId ?? undefined,
-        name:
-          companyNameCandidate ??
-          (companyId ? companyLookup[companyId] : undefined) ??
-          (companyId ?? 'Sin empresa'),
+        name: resolvedCompanyName,
         hours: 0,
       };
     }
 
     aggregate.companies[companyKey].hours += hours;
+
+    const scheduleEntryId =
+      normalizeIdentifier(entry?.id) ??
+      normalizeIdentifier(entry?.controlScheduleId) ??
+      normalizeIdentifier(entry?.scheduleId) ??
+      normalizeIdentifier(entry?.registerId) ??
+      normalizeIdentifier(entry?.recordId) ??
+      generateLocalId(`hours-${dayKey}`);
+
+    const descriptionText = extractNoteText(entry);
+    if (descriptionText) {
+      // keep description on the entry record, but avoid marking it as a calendar note
+    }
+
+    const workShifts = Array.isArray(entry?.workShifts)
+      ? entry.workShifts
+          .map((shift: any, index: number) => {
+            const start =
+              typeof shift?.workStart === 'string'
+                ? shift.workStart.trim()
+                : undefined;
+            const end =
+              typeof shift?.workEnd === 'string'
+                ? shift.workEnd.trim()
+                : undefined;
+            const shiftHours = parseNumeric(
+              shift?.hours ?? shift?.value ?? shift?.workedHours
+            );
+
+            if (!start && !end && (shiftHours === undefined || Number.isNaN(shiftHours))) {
+              return null;
+            }
+
+            return {
+              id:
+                normalizeIdentifier(shift?.id) ??
+                normalizeIdentifier(shift?.workShiftId) ??
+                generateLocalId(`shift-${index + 1}-${scheduleEntryId}`),
+              startTime: start ?? undefined,
+              endTime: end ?? undefined,
+              hours:
+                typeof shiftHours === 'number' && Number.isFinite(shiftHours)
+                  ? shiftHours
+                  : undefined,
+            };
+          })
+          .filter((shift): shift is NonNullable<typeof shift> => Boolean(shift))
+      : undefined;
+
+    const observationText = Array.isArray(entry?.observations)
+      ? entry.observations
+          .map((item: unknown) =>
+            typeof item === 'string' ? item.trim() : ''
+          )
+          .filter(Boolean)
+          .join(' \u2022 ')
+      : typeof entry?.observations === 'string'
+      ? entry.observations.trim()
+      : undefined;
+
+    const combinedDescription = [
+      descriptionText,
+      observationText,
+    ]
+      .filter((chunk) => typeof chunk === 'string' && chunk.length > 0)
+      .join(' \u2022 ');
+
+    if (hours > 0 || (combinedDescription && combinedDescription.length > 0)) {
+      const entryRecord: DayScheduleEntry = {
+        id: scheduleEntryId,
+        companyId: companyId ?? undefined,
+        companyName: resolvedCompanyName,
+        hours,
+        description: combinedDescription || undefined,
+        workShifts,
+        raw: entry,
+      };
+
+      aggregate.entries.push(entryRecord);
+    }
   });
 
   noteEntries.forEach((entry) => {
@@ -911,14 +1096,43 @@ export const fetchWorkerHoursSummary = async (
     const dayKey = formatDateKey(date);
     const aggregate = ensureAggregate(dailyAggregates, dayKey);
 
-    registerNote(aggregate.notes, entry?.notes);
-    registerNote(aggregate.notes, entry?.note);
-    registerNote(aggregate.notes, entry?.comment);
-    registerNote(aggregate.notes, entry?.comments);
-    registerNote(aggregate.notes, entry?.observation);
-    registerNote(aggregate.notes, entry?.observations);
-    registerNote(aggregate.notes, entry?.description);
-    registerNote(aggregate.notes, entry?.value);
+    const noteCollector = new Set<string>();
+    collectNoteStrings(noteCollector, entry?.notes);
+    collectNoteStrings(noteCollector, entry?.note);
+    collectNoteStrings(noteCollector, entry?.comment);
+    collectNoteStrings(noteCollector, entry?.comments);
+    collectNoteStrings(noteCollector, entry?.observation);
+    collectNoteStrings(noteCollector, entry?.observations);
+    collectNoteStrings(noteCollector, entry?.description);
+    collectNoteStrings(noteCollector, entry?.value);
+
+    if (noteCollector.size === 0) {
+      return;
+    }
+
+    const primaryNoteText =
+      extractNoteText(entry) ?? Array.from(noteCollector)[0];
+
+    if (!primaryNoteText) {
+      return;
+    }
+
+    noteCollector.forEach((text) => aggregate.notesText.add(text));
+
+    const providedId =
+      normalizeIdentifier(entry?.id) ??
+      normalizeIdentifier(entry?.noteId) ??
+      normalizeIdentifier(entry?.identifier) ??
+      normalizeIdentifier(entry?.recordId);
+
+    const noteId = providedId ?? generateLocalId(`note-${dayKey}`);
+
+    aggregate.noteEntries.set(noteId, {
+      id: noteId,
+      text: primaryNoteText,
+      origin: 'note',
+      raw: entry,
+    });
   });
 
   const formattedTotals: Record<string, DayHoursSummary> = {};
@@ -927,7 +1141,8 @@ export const fetchWorkerHoursSummary = async (
   Object.entries(dailyAggregates).forEach(([key, aggregate]) => {
     if (
       aggregate.totalHours === 0 &&
-      aggregate.notes.size === 0 &&
+      aggregate.notesText.size === 0 &&
+      aggregate.noteEntries.size === 0 &&
       Object.keys(aggregate.companies).length === 0
     ) {
       return;
@@ -960,9 +1175,19 @@ export const fetchWorkerHoursSummary = async (
       (a.name ?? "").localeCompare(b.name ?? "", "es", { sensitivity: "base" })
     );
 
+    const sortedEntries = [...aggregate.entries].sort((a, b) =>
+      (a.companyName ?? '').localeCompare(b.companyName ?? '', 'es', {
+        sensitivity: 'base',
+      })
+    );
+
+    const noteEntriesForDay = Array.from(aggregate.noteEntries.values());
+
     formattedTotals[key] = {
       totalHours: aggregate.totalHours,
-      notes: Array.from(aggregate.notes),
+      notes: Array.from(aggregate.notesText),
+      noteEntries: noteEntriesForDay,
+      entries: sortedEntries,
       companies,
     };
   });
