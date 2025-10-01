@@ -560,39 +560,6 @@ export const HoursRegistryPage: React.FC = () => {
   }, [selectedWorkerId, calendarMonth, selectedDayKey]);
 
   useEffect(() => {
-    if (!selectedWorkerId || !selectedDayKey) {
-      return;
-    }
-
-    const dayMap = dailyRegistrations[selectedDayKey];
-    if (dayMap && Object.keys(dayMap).length > 0) {
-      return;
-    }
-
-    const targetCompany = availableCompaniesList[0] ?? 'Sin empresa';
-    setDailyRegistrations(prev => ({
-      ...prev,
-      [selectedDayKey]: {
-        [targetCompany]: [
-          {
-            id: generateId(),
-            company: targetCompany,
-            startTime: '',
-            endTime: '',
-            hours: '',
-            description: '',
-          },
-        ],
-      },
-    }));
-
-    setHoursPanelExpandedCompanies(prev => ({
-      ...prev,
-      [targetCompany]: true,
-    }));
-  }, [selectedWorkerId, selectedDayKey, dailyRegistrations, availableCompaniesList]);
-
-  useEffect(() => {
     if (!selectedWorkerId || selectedDayKey) {
       return;
     }
@@ -1526,23 +1493,29 @@ export const HoursRegistryPage: React.FC = () => {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setIsCalendarCollapsed(prev => !prev)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setIsCalendarCollapsed(prev => !prev);
+                }
+              }}
+              aria-expanded={!isCalendarCollapsed}
+              className="flex cursor-pointer items-center justify-between rounded-md border border-transparent px-2 py-1 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:hover:border-gray-600 dark:hover:bg-gray-800/40"
+            >
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
                 <CalendarDays size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
                 Calendario de horas
               </h2>
-              <button
-                type="button"
-                onClick={() => setIsCalendarCollapsed(prev => !prev)}
-                className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
-              >
-                <ChevronDown
-                  size={18}
-                  className={`text-gray-600 dark:text-gray-300 transition-transform ${
-                    isCalendarCollapsed ? '' : 'rotate-180'
-                  }`}
-                />
-              </button>
+              <ChevronDown
+                size={18}
+                className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                  isCalendarCollapsed ? '' : 'rotate-180'
+                }`}
+              />
             </div>
           </CardHeader>
           {!isCalendarCollapsed && (
@@ -1576,23 +1549,29 @@ export const HoursRegistryPage: React.FC = () => {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setIsHoursPanelCollapsed(prev => !prev)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setIsHoursPanelCollapsed(prev => !prev);
+                }
+              }}
+              aria-expanded={!isHoursPanelCollapsed}
+              className="flex cursor-pointer items-center justify-between rounded-md border border-transparent px-2 py-1 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:hover:border-gray-600 dark:hover:bg-gray-800/40"
+            >
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
                 <Clock size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
                 Registro de horas
               </h2>
-              <button
-                type="button"
-                onClick={() => setIsHoursPanelCollapsed(prev => !prev)}
-                className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
-              >
-                <ChevronDown
-                  size={18}
-                  className={`text-gray-600 dark:text-gray-300 transition-transform ${
-                    isHoursPanelCollapsed ? '' : 'rotate-180'
-                  }`}
-                />
-              </button>
+              <ChevronDown
+                size={18}
+                className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                  isHoursPanelCollapsed ? '' : 'rotate-180'
+                }`}
+              />
             </div>
           </CardHeader>
           {!isHoursPanelCollapsed && (
@@ -1608,11 +1587,10 @@ export const HoursRegistryPage: React.FC = () => {
               ) : (
                 <>
                   <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-2">
-                      <Button
+                    <div className="flex items-center gap-3">
+                      <button
                         type="button"
-                        variant="outline"
-                        size="sm"
+                        aria-label="Día anterior"
                         onClick={() => {
                           if (!selectedDayInfo.date) {
                             return;
@@ -1622,10 +1600,11 @@ export const HoursRegistryPage: React.FC = () => {
                           setSelectedDayKey(formatDateKey(prevDay));
                         }}
                         disabled={!selectedDayInfo.date}
+                        className="text-gray-500 transition-colors hover:text-blue-600 disabled:cursor-not-allowed disabled:text-gray-300 dark:text-gray-400 dark:hover:text-blue-300"
                       >
-                        <ChevronLeft size={16} />
-                      </Button>
-                      <div className="flex flex-col">
+                        <ChevronLeft size={20} />
+                      </button>
+                      <div className="flex flex-col text-center md:text-left">
                         <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                           Día seleccionado
                         </span>
@@ -1638,10 +1617,9 @@ export const HoursRegistryPage: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <Button
+                      <button
                         type="button"
-                        variant="outline"
-                        size="sm"
+                        aria-label="Día siguiente"
                         onClick={() => {
                           if (!selectedDayInfo.date) {
                             return;
@@ -1651,9 +1629,10 @@ export const HoursRegistryPage: React.FC = () => {
                           setSelectedDayKey(formatDateKey(nextDay));
                         }}
                         disabled={!selectedDayInfo.date}
+                        className="text-gray-500 transition-colors hover:text-blue-600 disabled:cursor-not-allowed disabled:text-gray-300 dark:text-gray-400 dark:hover:text-blue-300"
                       >
-                        <ChevronRight size={16} />
-                      </Button>
+                        <ChevronRight size={20} />
+                      </button>
                     </div>
                     <div className="text-sm text-gray-600 dark:text-gray-300">
                       Total registrado: {displayTotalRegisteredHours.toFixed(2)} h
@@ -1703,7 +1682,14 @@ export const HoursRegistryPage: React.FC = () => {
                   <div className="space-y-2.5">
                     {companiesForRegistration.map(companyName => {
                       const companyEntries = currentDayRegistrations[companyName] ?? [];
+                      const trimmedName = companyName?.trim() ? companyName.trim() : 'Sin empresa';
                       const isExpanded = hoursPanelExpandedCompanies[companyName] ?? true;
+                      const summaryBaseHours = calendarCompanyTotals.get(trimmedName) ?? 0;
+                      const localCompanyHours = companyEntries.reduce(
+                        (sum, entry) => sum + computeEntryHours(entry),
+                        0
+                      );
+                      const totalCompanyHours = summaryBaseHours + localCompanyHours;
 
                       return (
                         <div
@@ -1713,6 +1699,7 @@ export const HoursRegistryPage: React.FC = () => {
                           <div
                             role="button"
                             tabIndex={0}
+                            aria-expanded={isExpanded}
                             onClick={() => toggleHoursCompany(companyName)}
                             onKeyDown={(event) => {
                               if (event.key === 'Enter' || event.key === ' ') {
@@ -1720,14 +1707,14 @@ export const HoursRegistryPage: React.FC = () => {
                                 toggleHoursCompany(companyName);
                               }
                             }}
-                            className="flex cursor-pointer items-center justify-between px-3 py-2"
+                            className="flex cursor-pointer items-center justify-between px-3 py-2 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40"
                           >
                             <div>
                               <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                                 {companyName || 'Sin empresa'}
                               </p>
                               <p className="text-xs text-gray-500 dark:text-gray-300">
-                                Total registrado: {companyEntries.reduce((sum, entry) => sum + (Number(entry.hours.replace(',', '.')) || 0), 0).toFixed(2)} h
+                                Total registrado: {totalCompanyHours.toFixed(2)} h
                               </p>
                             </div>
                             <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-300">
@@ -1756,18 +1743,18 @@ export const HoursRegistryPage: React.FC = () => {
                                   No hay tramos registrados para esta empresa.
                                 </p>
                               ) : (
-                                companyEntries.map((entry, idx) => (
+                                companyEntries.map((entry) => (
                                   <div
                                     key={entry.id}
                                     className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/40"
                                   >
-                                    <div className="flex items-center justify-between text-[11px] font-semibold text-gray-500 dark:text-gray-300">
-                                      <span>Tramo {idx + 1}</span>
+                                    <div className="flex justify-end">
                                       <Button
                                         type="button"
                                         size="xs"
                                         variant="ghost"
                                         onClick={() => removeRegistrationEntry(companyName, entry.id)}
+                                        aria-label="Eliminar tramo"
                                       >
                                         <X size={12} />
                                       </Button>
