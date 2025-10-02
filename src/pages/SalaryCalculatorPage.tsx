@@ -735,7 +735,7 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(false);
   const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
   const [isOtherOpsCollapsed, setIsOtherOpsCollapsed] = useState(true);
-  const [isGroupManagerCollapsed, setIsGroupManagerCollapsed] = useState(false);
+  const [isGroupManagerCollapsed, setIsGroupManagerCollapsed] = useState(true);
   const [isOtherPaymentsCollapsed, setIsOtherPaymentsCollapsed] =
     useState(true);
   const [isSplitPaymentsCollapsed, setIsSplitPaymentsCollapsed] =

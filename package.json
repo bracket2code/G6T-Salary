@@ -8,9 +8,12 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "fetch:worker": "node scripts/fetchExternalWorker.mjs"
+    "fetch:worker": "node scripts/fetchExternalWorker.mjs",
+    "docs:dev": "npx htmldocs@latest dev --dir documents"
   },
   "dependencies": {
+    "@htmldocs/react": "^0.2.30",
+    "@htmldocs/render": "^0.2.30",
     "@types/jsonwebtoken": "^9.0.10",
     "buffer": "^6.0.3",
     "date-fns": "^3.6.0",

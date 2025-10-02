@@ -707,6 +707,10 @@ export const fetchWorkerHoursSummary = async (
       }),
     });
 
+    if (response.status === 204 || response.status === 404) {
+      return [] as any[];
+    }
+
     if (!response.ok) {
       throw new Error(
         `Error fetching schedule control (types: ${types.join(",")}): ${

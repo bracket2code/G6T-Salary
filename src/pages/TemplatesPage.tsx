@@ -23,6 +23,9 @@ import {
   X,
   ChevronDown,
   Check,
+  LayoutPanelLeft,
+  Table,
+  ListOrdered,
 } from "lucide-react";
 import { Page } from "@htmldocs/react";
 import { PageHeader } from "../components/layout/PageHeader";
@@ -71,13 +74,53 @@ interface TemplateRenderContext {
     dateLabel: string;
     totalHours: number;
     notes: string[];
+    noteEntries?: Array<{
+      id: string;
+      text: string;
+      origin?: string;
+    }>;
     companies: Array<{
       companyId?: string;
       name?: string;
       hours: number;
     }>;
+    entries: Array<{
+      id: string;
+      description?: string;
+      hours: number;
+      companyId?: string;
+      companyName?: string;
+      workShifts?: Array<{
+        id?: string;
+        startTime?: string;
+        endTime?: string;
+        hours?: number;
+      }>;
+    }>;
   }>;
   companyTotals: WorkerHoursSummaryResult["companyTotals"];
+}
+
+type TemplatePagePlanItem =
+  | { type: "header"; label: string }
+  | { type: "section"; label: string; sectionId: string }
+  | { type: "companyTotals"; label: string }
+  | { type: "dailyBreakdown"; label: string }
+  | { type: "detailHeader"; label: string; detailPageIndex: number }
+  | {
+      type: "detailTable";
+      label: string;
+      detailPageIndex: number;
+      rangeLabel: string;
+    };
+
+interface TemplatePagePlanPage {
+  items: TemplatePagePlanItem[];
+}
+
+interface TemplatePagePlan {
+  pages: TemplatePagePlanPage[];
+  sectionToPageMap: Record<string, number>;
 }
 
 const pageDimensions = {
@@ -390,6 +433,7 @@ const TemplateDocument: React.FC<{
   preview?: boolean;
   selectedSectionId?: string | null;
   onSelectSection?: (sectionId: string) => void;
+  onPlanChange?: (plan: TemplatePagePlan) => void;
   zoom?: number;
 }> = ({
   template,
@@ -397,6 +441,7 @@ const TemplateDocument: React.FC<{
   preview = true,
   selectedSectionId,
   onSelectSection,
+  onPlanChange,
   zoom = 1,
 }) => {
   const accentColor = template.accentColor || "#2563eb";
@@ -633,7 +678,7 @@ const TemplateDocument: React.FC<{
               <div>
                 <div style={{ fontWeight: 600 }}>{context.period.label}</div>
                 <div style={{ color: "#64748b" }}>
-                  {context.totals.totalHours.toFixed(2)} h ·{" "}
+                  {context.totals.totalHours.toFixed(2)} h · {" "}
                   {context.totals.totalTrackedDays} días
                 </div>
               </div>
@@ -642,179 +687,6 @@ const TemplateDocument: React.FC<{
         </div>
       ) : null}
     </header>
-  );
-
-  const documentMain = (
-    <Page style={pageContentStyle}>
-      {headerBlock}
-      {template.sections.map((section, index) => renderSection(section, index))}
-      {template.includeCompanyTotals && context.companyTotals.length > 0 ? (
-        <section
-          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-        >
-          <h3 style={sectionTitleStyle}>Horas por empresa</h3>
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: "14px",
-            }}
-          >
-            <thead>
-              <tr style={{ backgroundColor: "#f8fafc" }}>
-                <th
-                  style={{
-                    textAlign: "left",
-                    padding: "12px 16px",
-                    color: "#475569",
-                  }}
-                >
-                  Empresa
-                </th>
-                <th
-                  style={{
-                    textAlign: "right",
-                    padding: "12px 16px",
-                    color: "#475569",
-                  }}
-                >
-                  Horas
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {context.companyTotals.map((company) => (
-                <tr key={company.companyId ?? company.name}>
-                  <td
-                    style={{
-                      padding: "12px 16px",
-                      borderTop: "1px solid #e2e8f0",
-                    }}
-                  >
-                    {company.name ?? "Sin empresa"}
-                  </td>
-                  <td
-                    style={{
-                      padding: "12px 16px",
-                      borderTop: "1px solid #e2e8f0",
-                      textAlign: "right",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {company.hours.toFixed(2)} h
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ) : null}
-      {template.includeDailyBreakdown && context.dailyEntries.length > 0 ? (
-        <section
-          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-        >
-          <h3 style={sectionTitleStyle}>Detalle diario</h3>
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: "13px",
-            }}
-          >
-            <thead>
-              <tr style={{ backgroundColor: "#f8fafc" }}>
-                <th
-                  style={{
-                    textAlign: "left",
-                    padding: "10px 14px",
-                    color: "#475569",
-                  }}
-                >
-                  Fecha
-                </th>
-                <th
-                  style={{
-                    textAlign: "right",
-                    padding: "10px 14px",
-                    color: "#475569",
-                  }}
-                >
-                  Horas
-                </th>
-                <th
-                  style={{
-                    textAlign: "left",
-                    padding: "10px 14px",
-                    color: "#475569",
-                  }}
-                >
-                  Empresas
-                </th>
-                <th
-                  style={{
-                    textAlign: "left",
-                    padding: "10px 14px",
-                    color: "#475569",
-                  }}
-                >
-                  Notas
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {context.dailyEntries.map((entry) => (
-                <tr key={entry.dateKey}>
-                  <td
-                    style={{
-                      padding: "10px 14px",
-                      borderTop: "1px solid #e2e8f0",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {entry.dateLabel}
-                  </td>
-                  <td
-                    style={{
-                      padding: "10px 14px",
-                      borderTop: "1px solid #e2e8f0",
-                      textAlign: "right",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {entry.totalHours.toFixed(2)} h
-                  </td>
-                  <td
-                    style={{
-                      padding: "10px 14px",
-                      borderTop: "1px solid #e2e8f0",
-                    }}
-                  >
-                    {entry.companies.length > 0
-                      ? entry.companies
-                          .map(
-                            (company) =>
-                              `${
-                                company.name ?? "Sin empresa"
-                              } (${company.hours.toFixed(2)} h)`
-                          )
-                          .join(" · ")
-                      : "—"}
-                  </td>
-                  <td
-                    style={{
-                      padding: "10px 14px",
-                      borderTop: "1px solid #e2e8f0",
-                    }}
-                  >
-                    {entry.notes.length > 0 ? entry.notes.join(" | ") : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ) : null}
-    </Page>
   );
 
   const baseStyles = `
@@ -827,6 +699,549 @@ const TemplateDocument: React.FC<{
     p { margin: 0; }
   `;
 
+  const companyTotalsSection =
+    template.includeCompanyTotals && context.companyTotals.length > 0 ? (
+      <section style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <h3 style={sectionTitleStyle}>Horas por empresa</h3>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            fontSize: "14px",
+          }}
+        >
+          <thead>
+            <tr style={{ backgroundColor: "#f8fafc" }}>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: "12px 16px",
+                  color: "#475569",
+                }}
+              >
+                Empresa
+              </th>
+              <th
+                style={{
+                  textAlign: "right",
+                  padding: "12px 16px",
+                  color: "#475569",
+                }}
+              >
+                Horas
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {context.companyTotals.map((company) => (
+              <tr key={company.companyId ?? company.name}>
+                <td
+                  style={{
+                    padding: "12px 16px",
+                    borderTop: "1px solid #e2e8f0",
+                  }}
+                >
+                  {company.name ?? "Sin empresa"}
+                </td>
+                <td
+                  style={{
+                    padding: "12px 16px",
+                    borderTop: "1px solid #e2e8f0",
+                    textAlign: "right",
+                    fontWeight: 600,
+                  }}
+                >
+                  {company.hours.toFixed(2)} h
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    )
+    : null;
+
+  const dailyBreakdownSection =
+    template.includeDailyBreakdown && context.dailyEntries.length > 0 ? (
+      <section style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <h3 style={sectionTitleStyle}>Detalle diario</h3>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            fontSize: "13px",
+          }}
+        >
+          <thead>
+            <tr style={{ backgroundColor: "#f8fafc" }}>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  color: "#475569",
+                }}
+              >
+                Fecha
+              </th>
+              <th
+                style={{
+                  textAlign: "right",
+                  padding: "10px 14px",
+                  color: "#475569",
+                }}
+              >
+                Horas
+              </th>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  color: "#475569",
+                }}
+              >
+                Empresas
+              </th>
+              <th
+                style={{
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  color: "#475569",
+                }}
+              >
+                Notas
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {context.dailyEntries.map((entry) => (
+              <tr key={entry.dateKey}>
+                <td
+                  style={{
+                    padding: "10px 14px",
+                    borderTop: "1px solid #e2e8f0",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {entry.dateLabel}
+                </td>
+                <td
+                  style={{
+                    padding: "10px 14px",
+                    borderTop: "1px solid #e2e8f0",
+                    textAlign: "right",
+                    fontWeight: 600,
+                  }}
+                >
+                  {entry.totalHours.toFixed(2)} h
+                </td>
+                <td
+                  style={{
+                    padding: "10px 14px",
+                    borderTop: "1px solid #e2e8f0",
+                  }}
+                >
+                  {entry.companies.length > 0
+                    ? entry.companies
+                        .map(
+                          (company) =>
+                            `${company.name ?? "Sin empresa"} (${company.hours.toFixed(2)} h)`
+                        )
+                        .join(" · ")
+                    : "—"}
+                </td>
+                <td
+                  style={{
+                    padding: "10px 14px",
+                    borderTop: "1px solid #e2e8f0",
+                  }}
+                >
+                  {entry.notes.length > 0 ? entry.notes.join(" | ") : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    )
+    : null;
+
+  type DetailedRow = {
+    key: string;
+    dateLabel: string;
+    company: string;
+    description: string;
+    hours: number;
+    notes: string;
+  };
+
+  const buildCompanyLabel = (
+    companies: TemplateRenderContext["dailyEntries"][number]["companies"]
+  ) => {
+    if (!companies || companies.length === 0) {
+      return "Sin empresa";
+    }
+    return companies
+      .map((company) => company.name ?? "Sin empresa")
+      .filter(Boolean)
+      .join(" · ");
+  };
+
+  const detailedRows: DetailedRow[] = context.dailyEntries.flatMap((day) => {
+    const noteText =
+      day.notes.length > 0
+        ? day.notes.join(" | ")
+        : (day.noteEntries ?? [])
+            .map((note) => note.text)
+            .filter(Boolean)
+            .join(" | ");
+
+    if (day.entries && day.entries.length > 0) {
+      return day.entries.map((entry, index) => {
+        const fallbackCompany = buildCompanyLabel(day.companies);
+        return {
+          key: `${day.dateKey}-${entry.id ?? index}`,
+          dateLabel: index === 0 ? day.dateLabel : "",
+          company: entry.companyName ?? fallbackCompany,
+          description: entry.description?.trim() || "Sin descripción",
+          hours: entry.hours ?? 0,
+          notes: index === 0 ? noteText : "",
+        } satisfies DetailedRow;
+      });
+    }
+
+    return [
+      {
+        key: `${day.dateKey}-summary`,
+        dateLabel: day.dateLabel,
+        company: buildCompanyLabel(day.companies),
+        description: "Sin registros detallados",
+        hours: day.totalHours,
+        notes: noteText,
+      } satisfies DetailedRow,
+    ];
+  });
+
+  const rowsPerDetailPage = Math.max(
+    5,
+    Math.min(50, template.detailedEntriesRowsPerPage || 18)
+  );
+
+  const detailPageChunks = useMemo(() => {
+    if (!template.includeDetailedEntries) {
+      return [] as Array<{
+        rows: DetailedRow[];
+        startIndex: number;
+        endIndex: number;
+      }>;
+    }
+
+    const chunks: Array<{
+      rows: DetailedRow[];
+      startIndex: number;
+      endIndex: number;
+    }> = [];
+
+    if (detailedRows.length === 0) {
+      return chunks;
+    }
+
+    for (let start = 0; start < detailedRows.length; start += rowsPerDetailPage) {
+      const rows = detailedRows.slice(start, start + rowsPerDetailPage);
+      chunks.push({
+        rows,
+        startIndex: start,
+        endIndex: start + rows.length - 1,
+      });
+    }
+
+    return chunks;
+  }, [detailedRows, rowsPerDetailPage, template.includeDetailedEntries]);
+
+  const { renderPages, planSummary } = useMemo(() => {
+    type BuiltPage = {
+      content: React.ReactNode[];
+      items: TemplatePagePlanItem[];
+    };
+
+    const pages: BuiltPage[] = [];
+    const sectionToPageMap: Record<string, number> = {};
+
+    let currentContent: React.ReactNode[] = [];
+    let currentItems: TemplatePagePlanItem[] = [];
+
+    const finalizeCurrentPage = () => {
+      if (currentContent.length === 0) {
+        return;
+      }
+      pages.push({ content: currentContent, items: currentItems });
+      currentContent = [];
+      currentItems = [];
+    };
+
+    const headerLabel =
+      template.header.title?.trim() || "Cabecera principal";
+    currentContent.push(headerBlock);
+    currentItems.push({ type: "header", label: headerLabel });
+
+    template.sections.forEach((section, index) => {
+      if (
+        section.pageBreakBefore &&
+        (currentContent.length > 0 || pages.length > 0)
+      ) {
+        finalizeCurrentPage();
+      }
+
+      const sectionNode = renderSection(section, index);
+      currentContent.push(sectionNode);
+
+      const sectionLabel = section.title?.trim() || `Sección ${index + 1}`;
+      currentItems.push({
+        type: "section",
+        label: sectionLabel,
+        sectionId: section.id,
+      });
+      sectionToPageMap[section.id] = pages.length;
+    });
+
+    if (companyTotalsSection) {
+      if (template.companyTotalsPageBreak && currentContent.length > 0) {
+        finalizeCurrentPage();
+      }
+      currentContent.push(companyTotalsSection);
+      currentItems.push({
+        type: "companyTotals",
+        label: "Horas por empresa",
+      });
+    }
+
+    if (dailyBreakdownSection) {
+      if (template.dailyBreakdownPageBreak && currentContent.length > 0) {
+        finalizeCurrentPage();
+      }
+      currentContent.push(dailyBreakdownSection);
+      currentItems.push({
+        type: "dailyBreakdown",
+        label: "Detalle diario",
+      });
+    }
+
+    finalizeCurrentPage();
+
+    if (template.includeDetailedEntries && detailPageChunks.length > 0) {
+      const detailTitle =
+        template.detailedEntriesTitle?.trim() || "Detalle de registros";
+      const detailDescription = template.detailedEntriesDescription?.trim();
+
+      detailPageChunks.forEach((chunk, pageIndex) => {
+        const detailContent: React.ReactNode[] = [];
+        const detailItems: TemplatePagePlanItem[] = [];
+
+        detailContent.push(
+          <section
+            key={`detail-header-${pageIndex}`}
+            style={{ display: "flex", flexDirection: "column", gap: "8px" }}
+          >
+            <div style={badgeStyle}>Registros diarios</div>
+            <h2 style={{ ...sectionTitleStyle, fontSize: "20px" }}>
+              {pageIndex === 0
+                ? detailTitle
+                : `${detailTitle} (continuación)`}
+            </h2>
+            {pageIndex === 0 && detailDescription ? (
+              <p style={textStyle}>{detailDescription}</p>
+            ) : null}
+          </section>
+        );
+
+        detailItems.push({
+          type: "detailHeader",
+          label:
+            pageIndex === 0
+              ? detailTitle
+              : `${detailTitle} (continuación)`,
+          detailPageIndex: pageIndex + 1,
+        });
+
+        detailContent.push(
+          <table
+            key={`detail-table-${pageIndex}`}
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "12px",
+            }}
+          >
+            <thead>
+              <tr style={{ backgroundColor: "#f1f5f9" }}>
+                <th
+                  style={{
+                    textAlign: "left",
+                    padding: "8px 12px",
+                    color: "#475569",
+                    width: "18%",
+                  }}
+                >
+                  Fecha
+                </th>
+                <th
+                  style={{
+                    textAlign: "left",
+                    padding: "8px 12px",
+                    color: "#475569",
+                    width: "22%",
+                  }}
+                >
+                  Empresa
+                </th>
+                <th
+                  style={{
+                    textAlign: "left",
+                    padding: "8px 12px",
+                    color: "#475569",
+                  }}
+                >
+                  Descripción
+                </th>
+                <th
+                  style={{
+                    textAlign: "right",
+                    padding: "8px 12px",
+                    color: "#475569",
+                    width: "10%",
+                  }}
+                >
+                  Horas
+                </th>
+                <th
+                  style={{
+                    textAlign: "left",
+                    padding: "8px 12px",
+                    color: "#475569",
+                    width: "20%",
+                  }}
+                >
+                  Notas del día
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {chunk.rows.map((row) => (
+                <tr key={row.key}>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      borderTop: "1px solid #e2e8f0",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {row.dateLabel || ""}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      borderTop: "1px solid #e2e8f0",
+                    }}
+                  >
+                    {row.company}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      borderTop: "1px solid #e2e8f0",
+                    }}
+                  >
+                    {row.description}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      borderTop: "1px solid #e2e8f0",
+                      textAlign: "right",
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {row.hours.toFixed(2)} h
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      borderTop: "1px solid #e2e8f0",
+                    }}
+                  >
+                    {row.notes || ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+
+        const rangeLabel = `Registros ${chunk.startIndex + 1} – ${
+          chunk.endIndex + 1
+        }`;
+        detailItems.push({
+          type: "detailTable",
+          label: "Tabla de registros",
+          detailPageIndex: pageIndex + 1,
+          rangeLabel,
+        });
+
+        pages.push({ content: detailContent, items: detailItems });
+      });
+    }
+
+    if (pages.length === 0) {
+      const fallbackLabel =
+        template.header.title?.trim() || "Cabecera principal";
+      pages.push({
+        content: [headerBlock],
+        items: [{ type: "header", label: fallbackLabel }],
+      });
+    }
+
+    return {
+      renderPages: pages.map((page) => page.content),
+      planSummary: {
+        pages: pages.map((page) => ({ items: page.items })),
+        sectionToPageMap,
+      } satisfies TemplatePagePlan,
+    };
+  }, [
+    badgeStyle,
+    companyTotalsSection,
+    dailyBreakdownSection,
+    detailPageChunks,
+    headerBlock,
+    renderSection,
+    sectionTitleStyle,
+    template.companyTotalsPageBreak,
+    template.dailyBreakdownPageBreak,
+    template.detailedEntriesDescription,
+    template.detailedEntriesTitle,
+    template.header.title,
+    template.includeDetailedEntries,
+    template.sections,
+    textStyle,
+  ]);
+
+  const planSummaryKey = useMemo(
+    () => JSON.stringify(planSummary),
+    [planSummary]
+  );
+  const planSummaryRef = useRef(planSummary);
+
+  useEffect(() => {
+    planSummaryRef.current = planSummary;
+  }, [planSummary]);
+
+  useEffect(() => {
+    if (!onPlanChange) {
+      return;
+    }
+    onPlanChange(planSummaryRef.current);
+  }, [onPlanChange, planSummaryKey]);
+
   const documentContent = (
     <PdfDocument
       size={template.pageSize}
@@ -834,7 +1249,11 @@ const TemplateDocument: React.FC<{
       margin="0.75in"
     >
       <style>{baseStyles}</style>
-      {documentMain}
+      {renderPages.map((content, index) => (
+        <Page key={`page-${index}`} style={pageContentStyle}>
+          {content}
+        </Page>
+      ))}
       {template.footer?.text ? (
         <PdfFooter
           position="bottom-center"
@@ -842,7 +1261,7 @@ const TemplateDocument: React.FC<{
         >
           {({ currentPage, totalPages }) => (
             <span>
-              {replaceTokens(template.footer?.text ?? "", context)} · Página{" "}
+              {replaceTokens(template.footer?.text ?? "", context)} · Página {" "}
               {currentPage} de {totalPages}
             </span>
           )}
@@ -1291,6 +1710,18 @@ const availableTokens = [
         token: "dailyEntries[0].companies[0].name",
         description: "Empresa asociada al día (ejemplo)",
       },
+      {
+        token: "dailyEntries[0].entries.length",
+        description: "Cantidad de registros en el día (ejemplo)",
+      },
+      {
+        token: "dailyEntries[0].entries[0].description",
+        description: "Descripción del registro (ejemplo)",
+      },
+      {
+        token: "dailyEntries[0].noteEntries[0].text",
+        description: "Nota asociada al día (ejemplo)",
+      },
     ],
   },
 ];
@@ -1330,20 +1761,12 @@ const TemplatesPage: React.FC = () => {
     useState<WorkerHoursSummaryResult | null>(null);
   const [isLoadingHours, setIsLoadingHours] = useState(false);
   const [hoursError, setHoursError] = useState<string | null>(null);
-<<<<<<< ours
-<<<<<<< ours
-  const [hoursLastUpdatedAt, setHoursLastUpdatedAt] = useState<number | null>(
-    null
-  );
-  const [hoursLastUpdatedTicker, setHoursLastUpdatedTicker] = useState(0);
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
+  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
     null
   );
   const [zoom, setZoom] = useState(0.9);
+  const [pagePlan, setPagePlan] = useState<TemplatePagePlan | null>(null);
 
   const copyToken = useCallback((value: string) => {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -1417,6 +1840,7 @@ const TemplatesPage: React.FC = () => {
         });
         if (isActive) {
           setHoursSummary(summary);
+          setLastFetchTime(new Date());
         }
       } catch (error) {
         console.error("Error loading worker hours for templates:", error);
@@ -1456,6 +1880,7 @@ const TemplatesPage: React.FC = () => {
     })
       .then((summary) => {
         setHoursSummary(summary);
+        setLastFetchTime(new Date());
       })
       .catch((error) => {
         console.error("Error refreshing worker hours for templates:", error);
@@ -1564,6 +1989,8 @@ const TemplatesPage: React.FC = () => {
       .map(([dateKey, summary]) => {
         const [year, month, day] = dateKey.split("-").map(Number);
         const date = new Date(year, month - 1, day);
+        const noteEntries = summary.noteEntries ?? [];
+        const entries = summary.entries ?? [];
         return {
           dateKey,
           dateLabel: date.toLocaleDateString("es-ES", {
@@ -1571,16 +1998,47 @@ const TemplatesPage: React.FC = () => {
             month: "long",
           }),
           totalHours: summary.totalHours,
-          notes: summary.notes,
+          notes: summary.notes ?? [],
+          noteEntries,
           companies: summary.companies ?? [],
-        };
+          entries: entries.map((entry, index) => ({
+            id: entry.id ?? `${dateKey}-entry-${index}`,
+            description: entry.description,
+            hours: entry.hours ?? 0,
+            companyId: entry.companyId,
+            companyName:
+              entry.companyName ??
+              (entry.companyId ? companyLookup[entry.companyId] : undefined),
+            workShifts: entry.workShifts ?? [],
+          })),
+        } satisfies TemplateRenderContext["dailyEntries"][number];
       })
       .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
-  }, [hoursSummary]);
+  }, [companyLookup, hoursSummary]);
 
   const totalNotes = useMemo(() => {
     return dailyEntries.reduce((acc, entry) => acc + entry.notes.length, 0);
   }, [dailyEntries]);
+
+  const planItemIcon = (item: TemplatePagePlanItem) => {
+    const iconClass = "text-blue-500";
+    switch (item.type) {
+      case "header":
+        return <FileText size={14} className={iconClass} />;
+      case "section":
+        return <LayoutPanelLeft size={14} className={iconClass} />;
+      case "companyTotals":
+        return <Table size={14} className={iconClass} />;
+      case "dailyBreakdown":
+        return <ListOrdered size={14} className={iconClass} />;
+      case "detailHeader":
+        return <FileText size={14} className={iconClass} />;
+      case "detailTable":
+        return <ListOrdered size={14} className={iconClass} />;
+      default:
+        return <FileText size={14} className={iconClass} />;
+    }
+  };
 
   const renderContext: TemplateRenderContext = useMemo(() => {
     const firstDay = new Date(
@@ -1629,6 +2087,10 @@ const TemplatesPage: React.FC = () => {
     );
   }, [activeTemplate, selectedSectionId]);
 
+  useEffect(() => {
+    setPagePlan(null);
+  }, [activeTemplate?.id]);
+
   const handleTemplateChange = (
     updater: (template: PdfTemplate) => Partial<PdfTemplate>
   ) => {
@@ -1665,6 +2127,7 @@ const TemplatesPage: React.FC = () => {
       title: "Nueva sección",
       body: "Añade contenido personalizado usando tokens como {{worker.name}}",
       layout: "single",
+      pageBreakBefore: false,
     };
 
     updateTemplate(activeTemplate.id, {
@@ -1911,47 +2374,20 @@ const TemplatesPage: React.FC = () => {
                 );
               })}
             </CardContent>
-          </Card>
+        </Card>
 
-          <Card>
-            <CardHeader>
-<<<<<<< ours
-<<<<<<< ours
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                    Datos fuente
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                Datos fuente
+              </div>
+              <div className="flex items-center gap-2">
+                {lastFetchTime ? (
+                  <div className="inline-flex items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                    Actualizado: {lastFetchTime.toLocaleString("es-ES")}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-xs"
-                    onClick={handleRefreshHours}
-                    disabled={
-                      isLoadingHours ||
-                      isLoadingWorkers ||
-                      !selectedWorkerId ||
-                      !externalJwt ||
-                      !apiUrl
-                    }
-                  >
-                    <RefreshCw
-                      size={14}
-                      className={isLoadingHours ? "animate-spin mr-1" : "mr-1"}
-                    />
-                    Actualizar
-                  </Button>
-=======
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  Datos fuente
->>>>>>> theirs
-=======
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  Datos fuente
->>>>>>> theirs
-                </div>
+                ) : null}
                 <Button
                   size="sm"
                   variant="outline"
@@ -1972,7 +2408,8 @@ const TemplatesPage: React.FC = () => {
                   Actualizar
                 </Button>
               </div>
-            </CardHeader>
+            </div>
+          </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 {isLoadingWorkers ? (
@@ -2215,6 +2652,8 @@ const TemplatesPage: React.FC = () => {
                           const canMoveUp = index > 0;
                           const canMoveDown =
                             index < activeTemplate.sections.length - 1;
+                          const sectionPage =
+                            pagePlan?.sectionToPageMap?.[section.id];
 
                           const containerClasses = isActiveSection
                             ? "border-blue-500 bg-blue-50/80 dark:bg-blue-500/10 shadow-md"
@@ -2237,11 +2676,18 @@ const TemplatesPage: React.FC = () => {
                               <div className="p-4 space-y-4">
                                 <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.28em] text-gray-500 dark:text-gray-400">
                                   <span>Sección {index + 1}</span>
-                                  {isActiveSection ? (
-                                    <span className="text-blue-600 dark:text-blue-300 font-semibold tracking-normal">
-                                      Editando
-                                    </span>
-                                  ) : null}
+                                  <div className="flex items-center gap-2">
+                                    {typeof sectionPage === "number" ? (
+                                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold tracking-normal text-slate-600 dark:bg-dark-600 dark:text-slate-300">
+                                        Página {sectionPage + 1}
+                                      </span>
+                                    ) : null}
+                                    {isActiveSection ? (
+                                      <span className="text-blue-600 dark:text-blue-300 font-semibold tracking-normal">
+                                        Editando
+                                      </span>
+                                    ) : null}
+                                  </div>
                                 </div>
 
                                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -2277,6 +2723,28 @@ const TemplatesPage: React.FC = () => {
                                       ]}
                                       className="md:w-52"
                                     />
+                                    <label
+                                      className={`flex items-center gap-2 text-xs md:text-sm text-gray-600 dark:text-gray-300 ${
+                                        index === 0 ? "opacity-60" : ""
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(section.pageBreakBefore)}
+                                        onChange={(e) =>
+                                          handleSectionChange(section.id, () => ({
+                                            pageBreakBefore: e.target.checked,
+                                          }))
+                                        }
+                                        disabled={index === 0}
+                                        title={
+                                          index === 0
+                                            ? "La primera sección siempre aparece en la página inicial"
+                                            : undefined
+                                        }
+                                      />
+                                      Iniciar en nueva página
+                                    </label>
                                     <div className="flex items-center gap-1 md:justify-end">
                                       <Button
                                         size="sm"
@@ -2411,6 +2879,93 @@ const TemplatesPage: React.FC = () => {
                     </label>
                   </div>
 
+                  {activeTemplate.includeCompanyTotals ? (
+                    <label className="ml-1 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={activeTemplate.companyTotalsPageBreak}
+                        onChange={(e) =>
+                          handleTemplateChange(() => ({
+                            companyTotalsPageBreak: e.target.checked,
+                          }))
+                        }
+                      />
+                      Mostrar tabla por empresa en una página separada
+                    </label>
+                  ) : null}
+
+                  {activeTemplate.includeDailyBreakdown ? (
+                    <label className="ml-1 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={activeTemplate.dailyBreakdownPageBreak}
+                        onChange={(e) =>
+                          handleTemplateChange(() => ({
+                            dailyBreakdownPageBreak: e.target.checked,
+                          }))
+                        }
+                      />
+                      Mover el detalle diario a una nueva página
+                    </label>
+                  ) : null}
+
+                  <div className="pt-3 mt-3 border-t border-dashed border-gray-200 dark:border-dark-600">
+                    <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={activeTemplate.includeDetailedEntries}
+                        onChange={(e) =>
+                          handleTemplateChange(() => ({
+                            includeDetailedEntries: e.target.checked,
+                          }))
+                        }
+                      />
+                      Incluir páginas con el detalle de registros individuales
+                    </label>
+
+                    {activeTemplate.includeDetailedEntries ? (
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <Input
+                          label="Título del detalle"
+                          value={activeTemplate.detailedEntriesTitle ?? ""}
+                          onChange={(e) =>
+                            handleTemplateChange(() => ({
+                              detailedEntriesTitle: e.target.value,
+                            }))
+                          }
+                          fullWidth
+                        />
+                        <Input
+                          type="number"
+                          min={5}
+                          max={50}
+                          label="Filas por página"
+                          value={activeTemplate.detailedEntriesRowsPerPage}
+                          onChange={(e) => {
+                            const parsed = Number(e.target.value);
+                            handleTemplateChange(() => ({
+                              detailedEntriesRowsPerPage: Number.isFinite(parsed)
+                                ? Math.min(50, Math.max(5, parsed))
+                                : activeTemplate.detailedEntriesRowsPerPage,
+                            }));
+                          }}
+                        />
+                        <TextArea
+                          label="Descripción opcional"
+                          value={activeTemplate.detailedEntriesDescription ?? ""}
+                          onChange={(e) =>
+                            handleTemplateChange(() => ({
+                              detailedEntriesDescription: e.target.value,
+                            }))
+                          }
+                          rows={3}
+                          fullWidth
+                          className="md:col-span-2"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
                   <TextArea
                     label="Pie de página"
                     value={activeTemplate.footer?.text ?? ""}
@@ -2465,6 +3020,130 @@ const TemplatesPage: React.FC = () => {
                   ))}
                 </CardContent>
               </Card>
+
+              {pagePlan ? (
+                <Card>
+                  <CardHeader>
+                    <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                      Mapa de páginas
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Consulta dónde se renderiza cada bloque y salta rápido a
+                      las secciones.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {pagePlan.pages.map((page, pageIndex) => {
+                      const containsSelected = page.items.some(
+                        (item) =>
+                          item.type === "section" &&
+                          item.sectionId === selectedSectionId
+                      );
+
+                      return (
+                        <div
+                          key={`page-plan-${pageIndex}`}
+                          className={`rounded-xl border bg-white/80 p-4 shadow-sm transition-all dark:bg-dark-700 ${
+                            containsSelected
+                              ? "border-blue-500 ring-2 ring-blue-200 dark:ring-blue-500/30"
+                              : "border-gray-200 dark:border-dark-600"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.3em] text-gray-500 dark:text-gray-400">
+                            <span>Página {pageIndex + 1}</span>
+                            <span className="tracking-normal text-[10px] text-gray-400 dark:text-gray-500">
+                              {page.items.length} bloque{page.items.length === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          <ul className="mt-3 space-y-2 text-sm text-gray-700 dark:text-gray-200">
+                            {page.items.map((item, itemIndex) => {
+                              const icon = planItemIcon(item);
+                              const isSectionItem = item.type === "section";
+                              const isSelected =
+                                isSectionItem &&
+                                item.sectionId === selectedSectionId;
+
+                              const baseClasses =
+                                "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left";
+                              const inactiveClasses =
+                                "border-gray-200 bg-white hover:border-blue-400 hover:bg-blue-50 dark:border-dark-600 dark:bg-dark-700 dark:hover:border-blue-400/60";
+                              const selectedClasses =
+                                "border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-500/10 dark:text-blue-200";
+
+                              const content = (
+                                <span className="flex items-center gap-3">
+                                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                                    {icon}
+                                  </span>
+                                  <span className="flex flex-col">
+                                    <span className="font-medium leading-snug">
+                                      {item.label}
+                                    </span>
+                                    {item.type === "detailTable" ? (
+                                      <span className="text-[11px] font-normal text-gray-500 dark:text-gray-400">
+                                        {item.rangeLabel}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </span>
+                              );
+
+                              if (isSectionItem) {
+                                return (
+                                  <li key={`${item.type}-${item.sectionId}-${itemIndex}`}>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedSectionId(item.sectionId)
+                                      }
+                                      className={`${baseClasses} ${
+                                        isSelected ? selectedClasses : inactiveClasses
+                                      }`}
+                                    >
+                                      {content}
+                                      <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-300">
+                                        Ir
+                                      </span>
+                                    </button>
+                                  </li>
+                                );
+                              }
+
+                              return (
+                                <li key={`${item.type}-${itemIndex}`}>
+                                  <div
+                                    className={`${baseClasses} ${inactiveClasses}`}
+                                  >
+                                    {content}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardHeader>
+                    <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                      Mapa de páginas
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Selecciona una plantilla y un periodo para generar la
+                      estructura del documento.
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
+                      La vista previa actualizará automáticamente esta sección
+                      cuando existan datos disponibles.
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardHeader>
@@ -2557,6 +3236,7 @@ const TemplatesPage: React.FC = () => {
                       zoom={zoom}
                       selectedSectionId={selectedSectionId}
                       onSelectSection={setSelectedSectionId}
+                      onPlanChange={setPagePlan}
                     />
                   </div>
                 </CardContent>

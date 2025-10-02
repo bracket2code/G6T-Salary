@@ -14,6 +14,7 @@ export interface TemplateSection {
   title?: string;
   body: string;
   layout?: "single" | "two-column";
+  pageBreakBefore?: boolean;
 }
 
 export interface PdfTemplate {
@@ -32,6 +33,12 @@ export interface PdfTemplate {
   sections: TemplateSection[];
   includeDailyBreakdown: boolean;
   includeCompanyTotals: boolean;
+  companyTotalsPageBreak: boolean;
+  dailyBreakdownPageBreak: boolean;
+  includeDetailedEntries: boolean;
+  detailedEntriesTitle?: string;
+  detailedEntriesDescription?: string;
+  detailedEntriesRowsPerPage: number;
   footer?: {
     text?: string;
   };
@@ -71,10 +78,17 @@ const buildDefaultTemplate = (): PdfTemplate => {
         body:
           "Este documento resume las horas trabajadas durante {{period.monthName}} del {{period.year}}.",
         layout: "single",
+        pageBreakBefore: false,
       },
     ],
     includeDailyBreakdown: true,
     includeCompanyTotals: true,
+    companyTotalsPageBreak: false,
+    dailyBreakdownPageBreak: false,
+    includeDetailedEntries: false,
+    detailedEntriesTitle: "Detalle de registros",
+    detailedEntriesDescription: "Listado de registros horarios individuales.",
+    detailedEntriesRowsPerPage: 18,
     footer: {
       text: "Documento generado automáticamente. Revisar antes de compartir.",
     },
@@ -100,7 +114,22 @@ export const useTemplatesStore = create<TemplatesState>()(
           sections: template?.sections?.map((section) => ({
             ...section,
             id: section.id ?? createId(),
+            pageBreakBefore: Boolean(section.pageBreakBefore),
           })) ?? base.sections,
+          companyTotalsPageBreak:
+            template?.companyTotalsPageBreak ?? base.companyTotalsPageBreak,
+          dailyBreakdownPageBreak:
+            template?.dailyBreakdownPageBreak ?? base.dailyBreakdownPageBreak,
+          includeDetailedEntries:
+            template?.includeDetailedEntries ?? base.includeDetailedEntries,
+          detailedEntriesTitle:
+            template?.detailedEntriesTitle ?? base.detailedEntriesTitle,
+          detailedEntriesDescription:
+            template?.detailedEntriesDescription ??
+            base.detailedEntriesDescription,
+          detailedEntriesRowsPerPage:
+            template?.detailedEntriesRowsPerPage ??
+            base.detailedEntriesRowsPerPage,
         };
         set((state) => ({
           templates: [...state.templates, nextTemplate],
@@ -132,6 +161,7 @@ export const useTemplatesStore = create<TemplatesState>()(
                 ? changes.sections.map((section) => ({
                     ...section,
                     id: section.id ?? createId(),
+                    pageBreakBefore: Boolean(section.pageBreakBefore),
                   }))
                 : template.sections,
               updatedAt: new Date().toISOString(),
@@ -173,6 +203,7 @@ export const useTemplatesStore = create<TemplatesState>()(
           sections: template.sections.map((section) => ({
             ...section,
             id: createId(),
+            pageBreakBefore: Boolean(section.pageBreakBefore),
           })),
         };
 
@@ -187,6 +218,81 @@ export const useTemplatesStore = create<TemplatesState>()(
     }),
     {
       name: "g6t-salary-templates",
+      version: 2,
+      migrate: (persistedState, version) => {
+        if (!persistedState) {
+          return persistedState as TemplatesState;
+        }
+
+        if (version >= 2) {
+          return persistedState as TemplatesState;
+        }
+
+        const state = persistedState as Partial<TemplatesState> & {
+          templates?: Array<Partial<PdfTemplate>>;
+        };
+
+        if (!state.templates) {
+          return persistedState as TemplatesState;
+        }
+
+        const migratedTemplates = state.templates.map((template) => {
+          const base = buildDefaultTemplate();
+          const migratedSections = (template.sections ?? []).map((section) => ({
+            ...section,
+            id: section?.id ?? createId(),
+            pageBreakBefore: Boolean(section?.pageBreakBefore),
+          }));
+
+          const detailedRowsPerPage =
+            typeof template.detailedEntriesRowsPerPage === "number" &&
+            Number.isFinite(template.detailedEntriesRowsPerPage)
+              ? template.detailedEntriesRowsPerPage
+              : base.detailedEntriesRowsPerPage;
+
+          return {
+            ...base,
+            ...template,
+            id: template.id ?? base.id,
+            name: template.name ?? base.name,
+            createdAt: template.createdAt ?? base.createdAt,
+            updatedAt: template.updatedAt ?? base.updatedAt,
+            sections:
+              migratedSections.length > 0 ? migratedSections : base.sections,
+            includeCompanyTotals:
+              typeof template.includeCompanyTotals === "boolean"
+                ? template.includeCompanyTotals
+                : base.includeCompanyTotals,
+            includeDailyBreakdown:
+              typeof template.includeDailyBreakdown === "boolean"
+                ? template.includeDailyBreakdown
+                : base.includeDailyBreakdown,
+            companyTotalsPageBreak:
+              typeof template.companyTotalsPageBreak === "boolean"
+                ? template.companyTotalsPageBreak
+                : base.companyTotalsPageBreak,
+            dailyBreakdownPageBreak:
+              typeof template.dailyBreakdownPageBreak === "boolean"
+                ? template.dailyBreakdownPageBreak
+                : base.dailyBreakdownPageBreak,
+            includeDetailedEntries:
+              typeof template.includeDetailedEntries === "boolean"
+                ? template.includeDetailedEntries
+                : base.includeDetailedEntries,
+            detailedEntriesTitle:
+              template.detailedEntriesTitle ?? base.detailedEntriesTitle,
+            detailedEntriesDescription:
+              template.detailedEntriesDescription ??
+              base.detailedEntriesDescription,
+            detailedEntriesRowsPerPage: detailedRowsPerPage,
+          } as PdfTemplate;
+        });
+
+        return {
+          ...state,
+          templates: migratedTemplates,
+        } as TemplatesState;
+      },
       partialize: (state) => ({
         templates: state.templates,
         activeTemplateId: state.activeTemplateId,
