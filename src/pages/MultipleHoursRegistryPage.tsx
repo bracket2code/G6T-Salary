@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock, Save, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { Clock, Save, ChevronDown, ChevronRight } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { HourEntry } from '../types/salary';
 import { formatDate } from '../lib/utils';
@@ -695,7 +694,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 Alterna entre empresas y trabajadores para ver las horas desde las dos perspectivas.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 lg:ml-auto lg:justify-end">
               <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800">
                 {[
                   { value: 'company', label: 'Por empresa' },
@@ -715,17 +714,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   </button>
                 ))}
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  setViewMode((prev) => (prev === 'company' ? 'worker' : 'company'))
-                }
-                leftIcon={<RefreshCw size={16} />}
-              >
-                Cambiar vista
-              </Button>
             </div>
           </div>
         </CardHeader>

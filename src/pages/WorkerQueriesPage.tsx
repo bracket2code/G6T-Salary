@@ -83,11 +83,20 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
   }
 };
 
+const createGroupId = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "") || "sin-categoria";
+
 interface WorkerSearchSelectProps {
   workers: Worker[];
   selectedWorkerId: string;
   onWorkerSelect: (workerId: string) => void;
   placeholder?: string;
+  label?: string;
 }
 
 const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
@@ -95,6 +104,7 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
   selectedWorkerId,
   onWorkerSelect,
   placeholder = "Buscar trabajador...",
+  label = "Trabajador",
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -283,7 +293,7 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
   return (
     <div className="relative" ref={dropdownRef}>
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        Trabajador
+        {label}
       </label>
 
       <div
@@ -405,6 +415,326 @@ const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
   );
 };
 
+interface WorkerGroupOption {
+  id: string;
+  label: string;
+  description?: string;
+  memberCount: number;
+}
+
+interface GroupSearchSelectProps {
+  groups: WorkerGroupOption[];
+  selectedGroupId: string;
+  onGroupSelect: (groupId: string) => void;
+  placeholder?: string;
+  clearOptionId?: string;
+}
+
+const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
+  groups,
+  selectedGroupId,
+  onGroupSelect,
+  placeholder = "Buscar grupo...",
+  clearOptionId = "",
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [inputValue, setInputValue] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const selectedGroup = useMemo(
+    () => groups.find((group) => group.id === selectedGroupId) ?? null,
+    [groups, selectedGroupId]
+  );
+
+  const filteredGroups = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const result = groups.filter((group) => {
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      const labelMatch = group.label.toLowerCase().includes(normalizedQuery);
+      const descriptionMatch = group.description
+        ?.toLowerCase()
+        .includes(normalizedQuery);
+      return labelMatch || descriptionMatch;
+    });
+
+    return result;
+  }, [groups, searchQuery]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+        if (selectedGroup) {
+          setInputValue(selectedGroup.label);
+        } else {
+          setInputValue("");
+        }
+        setSearchQuery("");
+        setHighlightedIndex(-1);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [selectedGroup]);
+
+  useEffect(() => {
+    if (selectedGroup) {
+      setInputValue(selectedGroup.label);
+    } else {
+      setInputValue("");
+    }
+  }, [selectedGroup]);
+
+  useEffect(() => {
+    itemRefs.current = itemRefs.current.slice(0, filteredGroups.length);
+  }, [filteredGroups.length]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (filteredGroups.length === 0) {
+      setHighlightedIndex(-1);
+      return;
+    }
+
+    if (highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    } else if (highlightedIndex >= filteredGroups.length) {
+      setHighlightedIndex(filteredGroups.length - 1);
+    }
+  }, [filteredGroups, isOpen, highlightedIndex]);
+
+  useEffect(() => {
+    if (highlightedIndex >= 0) {
+      itemRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedIndex]);
+
+  const handleGroupSelect = (group: WorkerGroupOption) => {
+    onGroupSelect(group.id);
+    setInputValue(group.label);
+    setIsOpen(false);
+    setSearchQuery("");
+    setHighlightedIndex(-1);
+  };
+
+  const handleClear = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onGroupSelect(clearOptionId);
+    setInputValue("");
+    setSearchQuery("");
+    setIsOpen(false);
+    setHighlightedIndex(-1);
+  };
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setInputValue(value);
+    setSearchQuery(value);
+    setIsOpen(true);
+    setHighlightedIndex(-1);
+
+    if (value === "") {
+      onGroupSelect(clearOptionId);
+    }
+  };
+
+  const handleInputFocus = () => {
+    setIsOpen(true);
+    if (selectedGroup) {
+      setInputValue("");
+      setSearchQuery("");
+    }
+    if (filteredGroups.length > 0) {
+      setHighlightedIndex(0);
+    }
+  };
+
+  const handleInputClick = () => {
+    setIsOpen(true);
+    if (filteredGroups.length > 0 && highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    }
+  };
+
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setIsOpen(false);
+      setHighlightedIndex(-1);
+      if (selectedGroup) {
+        setInputValue(selectedGroup.label);
+      }
+      return;
+    }
+
+    if (!isOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      setIsOpen(true);
+    }
+
+    if (!filteredGroups.length) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHighlightedIndex((prev) => {
+        const nextIndex = prev + 1;
+        if (nextIndex >= filteredGroups.length || prev === -1) {
+          return 0;
+        }
+        return nextIndex;
+      });
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightedIndex((prev) => {
+        if (prev <= 0) {
+          return filteredGroups.length - 1;
+        }
+        return prev - 1;
+      });
+    } else if (event.key === "Enter") {
+      if (highlightedIndex >= 0 && highlightedIndex < filteredGroups.length) {
+        event.preventDefault();
+        handleGroupSelect(filteredGroups[highlightedIndex]);
+      }
+    }
+  };
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+        Grupo
+      </label>
+
+      <div
+        className={`
+          min-h-[42px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600
+          rounded-md flex items-center
+          hover:border-gray-400 dark:hover:border-gray-500
+          ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
+        `}
+      >
+        <div className="flex-1 flex items-center px-3 py-2">
+          <Search size={18} className="text-gray-400 mr-2" />
+          <input
+            type="text"
+            value={inputValue}
+            onChange={handleInputChange}
+            onFocus={handleInputFocus}
+            onClick={handleInputClick}
+            onKeyDown={handleInputKeyDown}
+            placeholder={placeholder}
+            className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none"
+          />
+        </div>
+        <div className="flex items-center space-x-1">
+          {(selectedGroup || inputValue) && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="p-1 mr-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            >
+              <X size={14} className="text-gray-400" />
+            </button>
+          )}
+          <ChevronDown
+            size={16}
+            className={`text-gray-400 transition-transform duration-200 mr-2 ${
+              isOpen ? "rotate-180" : ""
+            }`}
+            onClick={() => setIsOpen(!isOpen)}
+          />
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className="w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-hidden">
+          <div className="max-h-48 overflow-y-auto">
+            {filteredGroups.length === 0 ? (
+              <div className="px-3 py-4 text-center text-gray-500 dark:text-gray-400 text-sm">
+                {searchQuery
+                  ? `No se encontraron grupos con "${searchQuery}"`
+                  : "No hay grupos disponibles"}
+              </div>
+            ) : (
+              <>
+                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
+                  {searchQuery
+                    ? `${filteredGroups.length} de ${groups.length} grupos`
+                    : `${groups.length} grupos disponibles`}
+                </div>
+
+                {filteredGroups.map((group, index) => {
+                  const isHighlighted = highlightedIndex === index;
+                  const isSelected = selectedGroupId === group.id;
+                  const baseClasses = `px-3 py-3 cursor-pointer flex items-center justify-between border-b border-gray-100 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700`;
+                  const highlightClass = isSelected
+                    ? "bg-blue-50 dark:bg-blue-900/20"
+                    : isHighlighted
+                    ? "bg-gray-100 dark:bg-gray-700"
+                    : "";
+
+                  return (
+                    <div
+                      key={`${group.id}-${index}`}
+                      ref={(el) => {
+                        itemRefs.current[index] = el;
+                      }}
+                      className={`${baseClasses} ${highlightClass}`}
+                      onClick={() => handleGroupSelect(group)}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                    >
+                      <div className="flex-1 min-w-0 pr-3">
+                        <p
+                          className={`text-sm font-medium truncate ${
+                            isSelected
+                              ? "text-blue-700 dark:text-blue-300"
+                              : "text-gray-900 dark:text-white"
+                          }`}
+                        >
+                          {group.label}
+                        </p>
+                        {group.description && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                            {group.description}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <Users size={14} className="text-gray-400 dark:text-gray-500" />
+                        <span>{group.memberCount}</span>
+                      </div>
+                      {selectedGroupId === group.id && (
+                        <Check
+                          size={16}
+                          className="text-blue-600 dark:text-blue-400 ml-2"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const formatCurrencyValue = (amount: number) => {
   return new Intl.NumberFormat("es-ES", {
     style: "currency",
@@ -429,6 +759,7 @@ export const WorkerQueriesPage: React.FC = () => {
   const { externalJwt } = useAuthStore();
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("all");
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -458,6 +789,84 @@ export const WorkerQueriesPage: React.FC = () => {
     return selectedWorkerPhone ? buildWhatsAppLink(selectedWorkerPhone) : null;
   }, [selectedWorkerPhone]);
 
+  const { groupOptions, groupMembersById } = useMemo(() => {
+    const groupsMap = new Map<
+      string,
+      { id: string; label: string; memberIds: string[] }
+    >();
+
+    allWorkers.forEach((worker) => {
+      const rawGroupName = (worker.department ?? "Sin categoría").trim();
+      const groupId = createGroupId(rawGroupName);
+
+      if (!groupsMap.has(groupId)) {
+        groupsMap.set(groupId, {
+          id: groupId,
+          label: rawGroupName || "Sin categoría",
+          memberIds: [],
+        });
+      }
+
+      groupsMap.get(groupId)?.memberIds.push(worker.id);
+    });
+
+    const rawGroups = Array.from(groupsMap.values());
+
+    const sortedGroups: WorkerGroupOption[] = rawGroups
+      .map((group) => ({
+        id: group.id,
+        label: group.label,
+        memberCount: group.memberIds.length,
+        description:
+          group.memberIds.length === 1
+            ? "1 trabajador asignado"
+            : `${group.memberIds.length} trabajadores asignados`,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" }));
+
+    const membersRecord: Record<string, string[]> = {};
+    rawGroups.forEach((group) => {
+      membersRecord[group.id] = [...group.memberIds];
+    });
+
+    const allGroupId = "all";
+    membersRecord[allGroupId] = allWorkers.map((worker) => worker.id);
+
+    const allGroupOption: WorkerGroupOption = {
+      id: allGroupId,
+      label: "Todos los trabajadores",
+      description: sortedGroups.length
+        ? "Incluye todas las categorías"
+        : "No hay categorías disponibles",
+      memberCount: allWorkers.length,
+    };
+
+    return {
+      groupOptions: [allGroupOption, ...sortedGroups],
+      groupMembersById: membersRecord,
+    };
+  }, [allWorkers]);
+
+  const selectedGroupOption = useMemo(
+    () => groupOptions.find((group) => group.id === selectedGroupId) ?? null,
+    [groupOptions, selectedGroupId]
+  );
+
+  const filteredWorkers = useMemo(() => {
+    const allowedIds = groupMembersById[selectedGroupId] ?? [];
+
+    if (selectedGroupId === "all") {
+      return allWorkers;
+    }
+
+    if (!allowedIds.length) {
+      return [];
+    }
+
+    const allowedSet = new Set(allowedIds);
+    return allWorkers.filter((worker) => allowedSet.has(worker.id));
+  }, [allWorkers, groupMembersById, selectedGroupId]);
+
   useEffect(
     () => () => {
       if (copyFeedbackTimeoutRef.current) {
@@ -481,6 +890,28 @@ export const WorkerQueriesPage: React.FC = () => {
     },
     []
   );
+
+  useEffect(() => {
+    if (!groupOptions.find((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(groupOptions[0]?.id ?? "all");
+    }
+  }, [groupOptions, selectedGroupId]);
+
+  useEffect(() => {
+    const allowedWorkerIds = groupMembersById[selectedGroupId] ?? [];
+    setSelectedWorkerIds((prev) => {
+      if (!prev.length) {
+        return prev;
+      }
+
+      const filtered = prev.filter((id) => allowedWorkerIds.includes(id));
+      if (filtered.length === prev.length) {
+        return prev;
+      }
+      return filtered;
+    });
+    setExpandedCompany(null);
+  }, [groupMembersById, selectedGroupId]);
 
   const handleEmailCopy = useCallback(
     async (emailToCopy?: string | null) => {
@@ -617,11 +1048,11 @@ export const WorkerQueriesPage: React.FC = () => {
           <div className="flex flex-col gap-1.5">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
-                <User
+                <Users
                   size={20}
                   className="mr-2 text-blue-600 dark:text-blue-400"
                 />
-                Selección de Trabajador
+                Selección de Grupo
               </h2>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
@@ -630,6 +1061,12 @@ export const WorkerQueriesPage: React.FC = () => {
                     ? lastFetchTime.toLocaleString("es-ES")
                     : "Sin sincronizar"}
                 </div>
+                {selectedGroupOption && (
+                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
+                    {selectedGroupOption.label}: {selectedGroupOption.memberCount} trabajador
+                    {selectedGroupOption.memberCount === 1 ? "" : "es"}
+                  </div>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -648,7 +1085,7 @@ export const WorkerQueriesPage: React.FC = () => {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500" />
@@ -658,14 +1095,37 @@ export const WorkerQueriesPage: React.FC = () => {
             </div>
           ) : (
             <>
-              <WorkerSearchSelect
-                workers={allWorkers}
-                selectedWorkerId={selectedWorkerId}
-                onWorkerSelect={handleWorkerSelectionChange}
-                placeholder="Buscar y seleccionar trabajador..."
+              <GroupSearchSelect
+                groups={groupOptions}
+                selectedGroupId={selectedGroupId}
+                onGroupSelect={setSelectedGroupId}
+                placeholder="Buscar y seleccionar grupo..."
+                clearOptionId="all"
               />
+
+              {filteredWorkers.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+                  No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza para obtener más registros.
+                </div>
+              ) : (
+                <WorkerSearchSelect
+                  workers={filteredWorkers}
+                  selectedWorkerId={selectedWorkerId}
+                  onWorkerSelect={handleWorkerSelectionChange}
+                  placeholder={
+                    selectedGroupId === "all"
+                      ? "Buscar y seleccionar trabajador..."
+                      : "Buscar trabajador dentro del grupo..."
+                  }
+                  label={
+                    selectedGroupId === "all"
+                      ? "Trabajador"
+                      : "Trabajador del grupo"
+                  }
+                />
+              )}
               {workersError && (
-                <p className="mt-3 text-sm text-red-600 dark:text-red-400">
+                <p className="text-sm text-red-600 dark:text-red-400">
                   {workersError}
                 </p>
               )}
