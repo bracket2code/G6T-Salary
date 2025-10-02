@@ -1490,6 +1490,20 @@ export const SalaryCalculatorPage: React.FC = () => {
     };
   }, [tierPaymentRules, results?.totalAmount]);
 
+  const hasConfiguredTierPayments = useMemo(() => {
+    return tierPaymentRules.some((rule) => {
+      if (rule.applyToRemainder) {
+        return false;
+      }
+      const trimmedValue = rule.value.trim();
+      if (trimmedValue === "") {
+        return false;
+      }
+      const numeric = parseFloat(trimmedValue.replace(",", "."));
+      return Number.isFinite(numeric) && numeric > 0;
+    });
+  }, [tierPaymentRules]);
+
   const tieredPaymentAmounts = useMemo(() => {
     const map = new Map<string, number>();
     tieredPayments.items.forEach((item) => {
@@ -2520,7 +2534,7 @@ export const SalaryCalculatorPage: React.FC = () => {
       });
     }
 
-    if (tierPaymentRules.length > 0) {
+    if (hasConfiguredTierPayments) {
       lines.push(" ");
       lines.push("Pagos por tramos:");
       tieredPayments.items.forEach((item, index) => {
@@ -2772,7 +2786,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         // Al seleccionar trabajador: abrir todos los módulos
         setIsCalcDataCollapsed(false);
         setIsCalendarCollapsed(false);
-        setIsOtherOpsCollapsed(false);
+        setIsOtherOpsCollapsed(true);
         setIsResultsCollapsed(false);
       }
 
@@ -7176,7 +7190,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                       );
                     })()}
 
-                    {tierPaymentRules.length > 0 && (
+                    {hasConfiguredTierPayments && (
                       <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm dark:border-gray-700 dark:bg-gray-900/40">
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                           <h5 className="font-semibold text-gray-900 dark:text-gray-100">
