@@ -857,7 +857,9 @@ export const SalaryCalculatorPage: React.FC = () => {
           filteredTargets.some(
             (target, index) => target !== currentTargets[index]
           );
-        const normalizedTargets = targetsChanged ? filteredTargets : currentTargets;
+        const normalizedTargets = targetsChanged
+          ? filteredTargets
+          : currentTargets;
 
         const basis = existing.autoConfig?.basis ?? "hours";
         const method = existing.autoConfig?.method ?? "bank";
@@ -1079,8 +1081,11 @@ export const SalaryCalculatorPage: React.FC = () => {
   ) => {
     setSplitConfigs((prev) => {
       const existing = prev[sourceKey] ?? createDefaultSplitConfig();
-      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
-      let targets = existingAuto.targets.filter((target) => target !== SELF_TARGET_KEY);
+      const existingAuto =
+        existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      let targets = existingAuto.targets.filter(
+        (target) => target !== SELF_TARGET_KEY
+      );
       if (mode === "auto" && targets.length === 0) {
         const defaults = availableCompanies
           .filter((company) => company.key !== sourceKey)
@@ -1113,14 +1118,15 @@ export const SalaryCalculatorPage: React.FC = () => {
         existing.rules
           .map((rule) => rule.targetKey)
           .filter(
-            (key): key is CompanyKey =>
-              Boolean(key) && key !== SELF_TARGET_KEY
+            (key): key is CompanyKey => Boolean(key) && key !== SELF_TARGET_KEY
           )
       );
       const defaultTarget =
         candidateDestinations.find(
           (company) => !existingTargets.has(company.key)
-        )?.key ?? (candidateDestinations[0]?.key ?? SELF_TARGET_KEY);
+        )?.key ??
+        candidateDestinations[0]?.key ??
+        SELF_TARGET_KEY;
 
       const newRule: SplitPaymentRule = {
         id:
@@ -1189,7 +1195,8 @@ export const SalaryCalculatorPage: React.FC = () => {
   ) => {
     setSplitConfigs((prev) => {
       const existing = prev[sourceKey] ?? createDefaultSplitConfig();
-      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      const existingAuto =
+        existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
       return {
         ...prev,
         [sourceKey]: {
@@ -1206,7 +1213,8 @@ export const SalaryCalculatorPage: React.FC = () => {
   const setAutoSplitMethod = (sourceKey: CompanyKey, method: PaymentMethod) => {
     setSplitConfigs((prev) => {
       const existing = prev[sourceKey] ?? createDefaultSplitConfig();
-      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      const existingAuto =
+        existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
       return {
         ...prev,
         [sourceKey]: {
@@ -1226,7 +1234,8 @@ export const SalaryCalculatorPage: React.FC = () => {
   ) => {
     setSplitConfigs((prev) => {
       const existing = prev[sourceKey] ?? createDefaultSplitConfig();
-      const existingAuto = existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
+      const existingAuto =
+        existing.autoConfig ?? createDefaultSplitConfig().autoConfig;
       if (targetKey === SELF_TARGET_KEY) {
         return prev;
       }
@@ -1292,7 +1301,10 @@ export const SalaryCalculatorPage: React.FC = () => {
       }
     >();
 
-    const companyMap = new Map<CompanyKey, (typeof availableCompanies)[number]>();
+    const companyMap = new Map<
+      CompanyKey,
+      (typeof availableCompanies)[number]
+    >();
     availableCompanies.forEach((item) => companyMap.set(item.key, item));
 
     availableCompanies.forEach((company) => {
@@ -1341,7 +1353,8 @@ export const SalaryCalculatorPage: React.FC = () => {
       }
 
       if (config.mode === "auto") {
-        const autoConfig = config.autoConfig ?? createDefaultSplitConfig().autoConfig;
+        const autoConfig =
+          config.autoConfig ?? createDefaultSplitConfig().autoConfig;
         const explicitTargets = (autoConfig.targets ?? []).filter(
           (target) => target && target !== SELF_TARGET_KEY
         ) as CompanyKey[];
@@ -1590,7 +1603,8 @@ export const SalaryCalculatorPage: React.FC = () => {
             </div>
 
             {availableCompanies.map((company) => {
-              const config = splitConfigs[company.key] ?? createDefaultSplitConfig();
+              const config =
+                splitConfigs[company.key] ?? createDefaultSplitConfig();
               const summary =
                 splitSummaries.get(company.key) ??
                 ({
@@ -1647,7 +1661,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                           }`}
                         >
                           <span className="h-2 w-2 rounded-full bg-current/60" />
-                          {formatCurrency(summary.remaining)} restante · {remainderLabel}
+                          {formatCurrency(summary.remaining)} restante ·{" "}
+                          {remainderLabel}
                         </span>
                       </div>
                     </div>
@@ -1714,8 +1729,8 @@ export const SalaryCalculatorPage: React.FC = () => {
 
                   {isAuto && (
                     <p className="text-xs text-gray-600 dark:text-gray-400">
-                      El importe se repartirá automáticamente entre las
-                      empresas seleccionadas según el criterio elegido.
+                      El importe se repartirá automáticamente entre las empresas
+                      seleccionadas según el criterio elegido.
                     </p>
                   )}
 
@@ -1729,7 +1744,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                           <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
                             <button
                               type="button"
-                              onClick={() => setAutoSplitBasis(company.key, "hours")}
+                              onClick={() =>
+                                setAutoSplitBasis(company.key, "hours")
+                              }
                               className={`px-3 py-1.5 text-xs font-medium transition ${
                                 config.autoConfig?.basis !== "count"
                                   ? "bg-indigo-600 text-white"
@@ -1740,7 +1757,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setAutoSplitBasis(company.key, "count")}
+                              onClick={() =>
+                                setAutoSplitBasis(company.key, "count")
+                              }
                               className={`px-3 py-1.5 text-xs font-medium transition ${
                                 config.autoConfig?.basis === "count"
                                   ? "bg-indigo-600 text-white"
@@ -1759,7 +1778,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                           <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
                             <button
                               type="button"
-                              onClick={() => setAutoSplitMethod(company.key, "bank")}
+                              onClick={() =>
+                                setAutoSplitMethod(company.key, "bank")
+                              }
                               className={`px-3 py-1.5 text-xs font-medium transition ${
                                 config.autoConfig?.method !== "cash"
                                   ? "bg-blue-600 text-white"
@@ -1772,7 +1793,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setAutoSplitMethod(company.key, "cash")}
+                              onClick={() =>
+                                setAutoSplitMethod(company.key, "cash")
+                              }
                               className={`px-3 py-1.5 text-xs font-medium transition ${
                                 config.autoConfig?.method === "cash"
                                   ? "bg-blue-600 text-white"
@@ -1791,10 +1814,12 @@ export const SalaryCalculatorPage: React.FC = () => {
                             Tramos generados
                           </span>
                           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                            {formatCurrency(summary.autoDistribution?.reduce(
-                              (sum, entry) => sum + entry.amount,
-                              0
-                            ) ?? 0)}
+                            {formatCurrency(
+                              summary.autoDistribution?.reduce(
+                                (sum, entry) => sum + entry.amount,
+                                0
+                              ) ?? 0
+                            )}
                           </span>
                         </div>
                       </div>
@@ -1811,7 +1836,10 @@ export const SalaryCalculatorPage: React.FC = () => {
                                 key={candidate.key}
                                 type="button"
                                 onClick={() =>
-                                  toggleAutoSplitTarget(company.key, candidate.key)
+                                  toggleAutoSplitTarget(
+                                    company.key,
+                                    candidate.key
+                                  )
                                 }
                                 className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium transition ${
                                   selected
@@ -1876,8 +1904,8 @@ export const SalaryCalculatorPage: React.FC = () => {
                         )}
 
                       <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Ajusta empresas y método para repartir automáticamente. El
-                        resto seguirá la forma de pago seleccionada arriba.
+                        Ajusta empresas y método para repartir automáticamente.
+                        El resto seguirá la forma de pago seleccionada arriba.
                       </p>
                     </div>
                   )}
@@ -2242,7 +2270,11 @@ export const SalaryCalculatorPage: React.FC = () => {
                       <input
                         value={rule.label}
                         onChange={(e) =>
-                          updateTierPaymentRule(rule.id, "label", e.target.value)
+                          updateTierPaymentRule(
+                            rule.id,
+                            "label",
+                            e.target.value
+                          )
                         }
                         placeholder={`Tramo ${index + 1}`}
                         className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
@@ -2264,7 +2296,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => updateTierPaymentRule(rule.id, "mode", "amount")}
+                          onClick={() =>
+                            updateTierPaymentRule(rule.id, "mode", "amount")
+                          }
                           className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
                             rule.mode === "amount"
                               ? "border-indigo-500 bg-indigo-600 text-white"
@@ -2276,7 +2310,9 @@ export const SalaryCalculatorPage: React.FC = () => {
                         </button>
                         <button
                           type="button"
-                          onClick={() => updateTierPaymentRule(rule.id, "mode", "percentage")}
+                          onClick={() =>
+                            updateTierPaymentRule(rule.id, "mode", "percentage")
+                          }
                           className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition ${
                             rule.mode === "percentage"
                               ? "border-indigo-500 bg-indigo-600 text-white"
@@ -2296,9 +2332,15 @@ export const SalaryCalculatorPage: React.FC = () => {
                           min="0"
                           value={rule.value}
                           onChange={(e) =>
-                            updateTierPaymentRule(rule.id, "value", e.target.value)
+                            updateTierPaymentRule(
+                              rule.id,
+                              "value",
+                              e.target.value
+                            )
                           }
-                          placeholder={rule.mode === "percentage" ? "0" : "0,00"}
+                          placeholder={
+                            rule.mode === "percentage" ? "0" : "0,00"
+                          }
                           className="w-28 rounded-lg border border-gray-300 bg-white px-3 py-2 text-right text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
                           disabled={rule.applyToRemainder}
                         />
@@ -2344,8 +2386,8 @@ export const SalaryCalculatorPage: React.FC = () => {
 
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-gray-600 dark:text-gray-400">
-                Los tramos se aplican en orden. El primero que marque "Aplicar al
-                resto" absorberá el importe disponible restante.
+                Los tramos se aplican en orden. El primero que marque "Aplicar
+                al resto" absorberá el importe disponible restante.
               </div>
               <Button variant="outline" size="sm" onClick={addTierPaymentRule}>
                 Añadir tramo
@@ -2456,7 +2498,9 @@ export const SalaryCalculatorPage: React.FC = () => {
               ? `${company.name} (mismo origen)`
               : destination?.name ?? "Destino sin asignar";
           lines.push(
-            `   ${index + 1}. ${destinationLabel} · ${methodLabel} → ${formatCurrency(
+            `   ${
+              index + 1
+            }. ${destinationLabel} · ${methodLabel} → ${formatCurrency(
               computed
             )} (base ${baseValueLabel})`
           );
@@ -2483,9 +2527,9 @@ export const SalaryCalculatorPage: React.FC = () => {
         const methodLabel = item.method === "cash" ? "Efectivo" : "Banco";
         const remainderNote = item.applyToRemainder ? " · Resto" : "";
         lines.push(
-          ` ${index + 1}. ${item.label} · ${methodLabel}${remainderNote}: ${formatCurrency(
-            item.amount
-          )}`
+          ` ${index + 1}. ${
+            item.label
+          } · ${methodLabel}${remainderNote}: ${formatCurrency(item.amount)}`
         );
       });
       if (tieredPayments.remaining > 0.01) {
@@ -2701,11 +2745,11 @@ export const SalaryCalculatorPage: React.FC = () => {
     companyContractInputs: {},
   });
 
-// Calculation results moved earlier
-const [copyFeedback, setCopyFeedback] = useState<{
-  type: "email" | "phone";
-  message: string;
-  target?: string;
+  // Calculation results moved earlier
+  const [copyFeedback, setCopyFeedback] = useState<{
+    type: "email" | "phone";
+    message: string;
+    target?: string;
   } | null>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -4263,7 +4307,9 @@ const [copyFeedback, setCopyFeedback] = useState<{
         value: key,
         label: info.companyName,
       }))
-      .sort((a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" }));
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+      );
 
     return [{ value: "", label: "Sin empresa" }, ...options];
   }, [companyKeyToInfo]);
@@ -4286,7 +4332,10 @@ const [copyFeedback, setCopyFeedback] = useState<{
                     : "bank",
               };
             }
-            if (item.paymentMethod !== "cash" && item.paymentMethod !== "bank") {
+            if (
+              item.paymentMethod !== "cash" &&
+              item.paymentMethod !== "bank"
+            ) {
               changed = true;
               return {
                 ...item,
@@ -4332,7 +4381,8 @@ const [copyFeedback, setCopyFeedback] = useState<{
             signedAmount = -parsed;
           }
 
-          const flow: OtherPaymentFlow = signedAmount >= 0 ? "income" : "expense";
+          const flow: OtherPaymentFlow =
+            signedAmount >= 0 ? "income" : "expense";
           const magnitude = Math.abs(signedAmount);
 
           if (flow === "income") {
@@ -4847,10 +4897,15 @@ const [copyFeedback, setCopyFeedback] = useState<{
       const extras = totalAmount - baseAmountTotal;
 
       const baseKeys = filteredCompanies.map((company) =>
-        company.companyId ? `id:${company.companyId}` : `name:${company.companyName}`
+        company.companyId
+          ? `id:${company.companyId}`
+          : `name:${company.companyName}`
       );
 
-      const baseCompanyMap = new Map<CompanyKey, (typeof filteredCompanies)[number]>();
+      const baseCompanyMap = new Map<
+        CompanyKey,
+        (typeof filteredCompanies)[number]
+      >();
       baseKeys.forEach((key, index) => {
         baseCompanyMap.set(key, filteredCompanies[index]);
       });
@@ -5014,7 +5069,10 @@ const [copyFeedback, setCopyFeedback] = useState<{
     const baseKeys = breakdownSource.map((item) =>
       item.companyId ? `id:${item.companyId}` : `name:${item.name ?? ""}`
     );
-    const baseCompanyMap = new Map<CompanyKey, typeof breakdownSource[number]>();
+    const baseCompanyMap = new Map<
+      CompanyKey,
+      (typeof breakdownSource)[number]
+    >();
     baseKeys.forEach((key, index) => {
       baseCompanyMap.set(key, breakdownSource[index]);
     });
@@ -5182,8 +5240,8 @@ const [copyFeedback, setCopyFeedback] = useState<{
         {/* Worker Selection and Input Form */}
         <Card className="h-full">
           <CardHeader>
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
                   <User
                     size={20}
@@ -5191,11 +5249,6 @@ const [copyFeedback, setCopyFeedback] = useState<{
                   />
                   Selección de Trabajador
                 </h2>
-                {lastFetchTime && (
-                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                    Actualizado: {lastFetchTime.toLocaleString("es-ES")}
-                  </div>
-                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -5211,6 +5264,11 @@ const [copyFeedback, setCopyFeedback] = useState<{
                   Actualizar
                 </Button>
               </div>
+              {lastFetchTime && (
+                <div className="inline-flex w-full items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                  Actualizado: {lastFetchTime.toLocaleString("es-ES")}
+                </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -5904,7 +5962,6 @@ const [copyFeedback, setCopyFeedback] = useState<{
                   placeholder="Notas adicionales..."
                   fullWidth
                 />
-
               </CardContent>
             )}
           </Card>
@@ -6641,13 +6698,16 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                     amount: c.amount,
                                     method: undefined,
                                     isGroup: false,
-                                    companyKey: c.companyKey ?? getCompanyKey(c),
+                                    companyKey:
+                                      c.companyKey ?? getCompanyKey(c),
                                     otherPayments: c.otherPayments ?? [],
                                   }));
                             const filteredRows = rows
                               .map((company) => {
                                 if (company.isGroup) {
-                                  const items = ((company as any).items ?? []).filter(
+                                  const items = (
+                                    (company as any).items ?? []
+                                  ).filter(
                                     (item: any) =>
                                       Math.abs(item.amount) > 0.01 ||
                                       Math.abs(item.hours) > 0.01
@@ -6665,8 +6725,9 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                   Math.abs(company.hours ?? 0) > 0.01;
                                 return hasData ? company : null;
                               })
-                              .filter((company): company is typeof rows[number] =>
-                                company !== null
+                              .filter(
+                                (company): company is (typeof rows)[number] =>
+                                  company !== null
                               );
 
                             return filteredRows.flatMap((company, idx) => {
@@ -6677,8 +6738,9 @@ const [copyFeedback, setCopyFeedback] = useState<{
                               const expanded = groupId
                                 ? expandedResultGroups[groupId]
                                 : false;
-                              const companyKey = (company as any)
-                                .companyKey as string | undefined;
+                              const companyKey = (company as any).companyKey as
+                                | string
+                                | undefined;
                               const otherPayments = (company as any)
                                 .otherPayments as
                                 | OtherPaymentDetailSummary[]
@@ -6746,7 +6808,8 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                               setExpandedCompanyAdjustments(
                                                 (prev) => ({
                                                   ...prev,
-                                                  [companyKey]: !adjustmentsExpanded,
+                                                  [companyKey]:
+                                                    !adjustmentsExpanded,
                                                 })
                                               )
                                             }
@@ -6827,29 +6890,42 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                             <p className="font-medium text-gray-800 dark:text-gray-100 text-left">
                                               {item.label}
                                             </p>
-                                        <div className="flex flex-col gap-1 text-left">
-                                          <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
-                                            {item.paymentMethod === "cash" ? (
-                                              <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
-                                            ) : (
-                                              <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
-                                            )}
-                                            {item.paymentMethod === "cash"
-                                              ? "Efectivo"
-                                              : "Banco"}
-                                          </span>
-                                          <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                            {item.type === "income"
-                                              ? "Ingreso"
-                                              : "Gasto"}
-                                            {" · "}
-                                            {OTHER_PAYMENTS_LABELS[item.category]}
-                                          </span>
-                                        </div>
+                                            <div className="flex flex-col gap-1 text-left">
+                                              <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                                                {item.paymentMethod ===
+                                                "cash" ? (
+                                                  <Banknote
+                                                    size={14}
+                                                    className="text-amber-600 dark:text-amber-300"
+                                                  />
+                                                ) : (
+                                                  <Landmark
+                                                    size={14}
+                                                    className="text-blue-600 dark:text-blue-400"
+                                                  />
+                                                )}
+                                                {item.paymentMethod === "cash"
+                                                  ? "Efectivo"
+                                                  : "Banco"}
+                                              </span>
+                                              <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                                {item.type === "income"
+                                                  ? "Ingreso"
+                                                  : "Gasto"}
+                                                {" · "}
+                                                {
+                                                  OTHER_PAYMENTS_LABELS[
+                                                    item.category
+                                                  ]
+                                                }
+                                              </span>
+                                            </div>
                                             <span
                                               className={`text-sm font-semibold ${amountClass} text-right justify-self-end`}
                                             >
-                                              {item.type === "income" ? "+" : ""}
+                                              {item.type === "income"
+                                                ? "+"
+                                                : ""}
                                               {formatCurrency(signed)}
                                             </span>
                                           </div>
@@ -6927,13 +7003,11 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                                     {it.otherPayments.map(
                                                       (item) => {
                                                         const signed =
-                                                          item.type ===
-                                                          "income"
+                                                          item.type === "income"
                                                             ? item.amount
                                                             : -item.amount;
                                                         const amountClass =
-                                                          item.type ===
-                                                          "income"
+                                                          item.type === "income"
                                                             ? "text-emerald-600 dark:text-emerald-300"
                                                             : "text-rose-600 dark:text-rose-300";
                                                         return (
@@ -6946,12 +7020,20 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                                             </span>
                                                             <div className="flex flex-col gap-1 text-left">
                                                               <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
-                                                                {item.paymentMethod === "cash" ? (
-                                                                  <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
+                                                                {item.paymentMethod ===
+                                                                "cash" ? (
+                                                                  <Banknote
+                                                                    size={14}
+                                                                    className="text-amber-600 dark:text-amber-300"
+                                                                  />
                                                                 ) : (
-                                                                  <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
+                                                                  <Landmark
+                                                                    size={14}
+                                                                    className="text-blue-600 dark:text-blue-400"
+                                                                  />
                                                                 )}
-                                                                {item.paymentMethod === "cash"
+                                                                {item.paymentMethod ===
+                                                                "cash"
                                                                   ? "Efectivo"
                                                                   : "Banco"}
                                                               </span>
@@ -6963,7 +7045,8 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                                                 {" · "}
                                                                 {
                                                                   OTHER_PAYMENTS_LABELS[
-                                                                    item.category
+                                                                    item
+                                                                      .category
                                                                   ]
                                                                 }
                                                               </span>
@@ -7029,7 +7112,9 @@ const [copyFeedback, setCopyFeedback] = useState<{
                             <h5 className="font-semibold text-gray-900 dark:text-gray-100">
                               Otros pagos sin empresa
                             </h5>
-                            <span className={`text-sm font-semibold ${totalClass}`}>
+                            <span
+                              className={`text-sm font-semibold ${totalClass}`}
+                            >
                               {unassigned.total > 0 ? "+" : ""}
                               {formatCurrency(unassigned.total)}
                             </span>
@@ -7055,14 +7140,24 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                   <div className="flex flex-col gap-1 text-left">
                                     <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
                                       {item.paymentMethod === "cash" ? (
-                                        <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
+                                        <Banknote
+                                          size={14}
+                                          className="text-amber-600 dark:text-amber-300"
+                                        />
                                       ) : (
-                                        <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
+                                        <Landmark
+                                          size={14}
+                                          className="text-blue-600 dark:text-blue-400"
+                                        />
                                       )}
-                                      {item.paymentMethod === "cash" ? "Efectivo" : "Banco"}
+                                      {item.paymentMethod === "cash"
+                                        ? "Efectivo"
+                                        : "Banco"}
                                     </span>
                                     <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                      {item.type === "income" ? "Ingreso" : "Gasto"}
+                                      {item.type === "income"
+                                        ? "Ingreso"
+                                        : "Gasto"}
                                       {" · "}
                                       {OTHER_PAYMENTS_LABELS[item.category]}
                                     </span>
@@ -7118,11 +7213,19 @@ const [copyFeedback, setCopyFeedback] = useState<{
                                 </span>
                                 <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
                                   {item.method === "cash" ? (
-                                    <Banknote size={14} className="text-amber-600 dark:text-amber-300" />
+                                    <Banknote
+                                      size={14}
+                                      className="text-amber-600 dark:text-amber-300"
+                                    />
                                   ) : (
-                                    <Landmark size={14} className="text-blue-600 dark:text-blue-400" />
+                                    <Landmark
+                                      size={14}
+                                      className="text-blue-600 dark:text-blue-400"
+                                    />
                                   )}
-                                  {item.method === "cash" ? "Efectivo" : "Banco"}
+                                  {item.method === "cash"
+                                    ? "Efectivo"
+                                    : "Banco"}
                                   {item.applyToRemainder && (
                                     <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
                                       Resto

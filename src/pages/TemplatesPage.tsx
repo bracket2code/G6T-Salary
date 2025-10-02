@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FileText,
   Plus,
@@ -9,7 +15,16 @@ import {
   Users,
   RefreshCw,
   Loader2,
+  ZoomIn,
+  ZoomOut,
+  ArrowUp,
+  ArrowDown,
+  Search,
+  X,
+  ChevronDown,
+  Check,
 } from "lucide-react";
+import { Page } from "@htmldocs/react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -88,6 +103,223 @@ const pageDimensions = {
   },
 } as const;
 
+const clampZoom = (value: number) => Math.min(1.5, Math.max(0.6, value));
+const zoomPresets = [0.75, 0.9, 1, 1.2] as const;
+
+type RunningContentRenderer = (args: {
+  currentPage: React.ReactNode;
+  totalPages: React.ReactNode;
+}) => React.ReactNode;
+
+const cssFromProperties = (rules?: React.CSSProperties) =>
+  rules
+    ? Object.entries(rules)
+        .filter(
+          ([, value]) => value !== undefined && value !== null && value !== ""
+        )
+        .map(
+          ([key, value]) =>
+            `${key.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${String(value)};`
+        )
+        .join("\n")
+    : "";
+
+interface PdfMarginBoxProps {
+  children?: React.ReactNode;
+  position: string;
+  pageType?: "all" | "even" | "odd" | "blank";
+  className?: string;
+  style?: React.CSSProperties;
+  marginBoxStyles?: React.CSSProperties;
+  runningName: string;
+}
+
+const PdfMarginBox: React.FC<PdfMarginBoxProps> = ({
+  children,
+  position,
+  pageType = "all",
+  className,
+  style,
+  marginBoxStyles,
+  runningName,
+}) => {
+  const css = `
+    /* Set up running element */
+    .${runningName} {
+      position: running(${runningName});
+    }
+
+    /* Apply to specified margin box */
+    @page {
+      @${position} {
+        content: element(${runningName});
+        ${cssFromProperties(marginBoxStyles)}
+      }
+    }
+
+    /* Page type specific styles */
+    ${
+      pageType === "even"
+        ? `
+      @page:odd {
+        @${position} { content: none; }
+      }
+    `
+        : pageType === "odd"
+        ? `
+      @page:even {
+        @${position} { content: none; }
+      }
+    `
+        : pageType === "blank"
+        ? `
+      @page:blank {
+        @${position} { content: none; }
+      }
+    `
+        : ""
+    }
+
+    /* Default alignments based on position */
+    .${runningName} {
+      ${
+        position.includes("left")
+          ? "text-align: left;"
+          : position.includes("right")
+          ? "text-align: right;"
+          : "text-align: center;"
+      }
+      ${
+        position.includes("top")
+          ? "vertical-align: top;"
+          : position.includes("bottom")
+          ? "vertical-align: bottom;"
+          : "vertical-align: middle;"
+      }
+      ${cssFromProperties(style)}
+    }
+  `;
+
+  const combinedClassName = [runningName, className].filter(Boolean).join(" ");
+
+  return (
+    <>
+      <style>{css}</style>
+      <div className={combinedClassName || undefined}>{children}</div>
+    </>
+  );
+};
+
+interface PdfFooterProps {
+  children?: React.ReactNode | RunningContentRenderer;
+  position?: string;
+  pageType?: "all" | "even" | "odd" | "blank";
+  className?: string;
+  style?: React.CSSProperties;
+  marginBoxStyles?: React.CSSProperties;
+}
+
+const PdfFooter: React.FC<PdfFooterProps> = ({
+  children = ({ currentPage, totalPages }) => (
+    <span className="page-number">
+      Página {currentPage} de {totalPages}
+    </span>
+  ),
+  position = "bottom-center",
+  pageType = "all",
+  className,
+  style,
+  marginBoxStyles,
+}) => {
+  const footerCss = `
+    ${cssFromProperties(style)}
+
+    .page-counter::after {
+      content: counter(page);
+    }
+
+    .pages-counter::after {
+      content: counter(pages);
+    }
+
+    .page-number {
+      display: ${typeof children === "function" ? "inline" : "none"};
+    }
+  `;
+
+  const content =
+    typeof children === "function"
+      ? children({
+          currentPage: <span className="page-counter" />,
+          totalPages: <span className="pages-counter" />,
+        })
+      : children;
+
+  return (
+    <>
+      <style>{footerCss}</style>
+      <PdfMarginBox
+        position={position}
+        pageType={pageType}
+        className={className}
+        style={style}
+        marginBoxStyles={marginBoxStyles}
+        runningName="print-footer"
+      >
+        {content}
+      </PdfMarginBox>
+    </>
+  );
+};
+
+interface PdfDocumentProps {
+  size?: string;
+  orientation: "portrait" | "landscape";
+  margin?: string | number;
+  children: React.ReactNode;
+}
+
+const pdfSizes = ["A3", "A4", "A5", "letter", "legal"];
+
+const PdfDocument: React.FC<PdfDocumentProps> = ({
+  size = "A4",
+  orientation,
+  margin,
+  children,
+}) => {
+  const formatMargin = (value: PdfDocumentProps["margin"]) =>
+    typeof value === "number" ? `${value}px` : value ?? "0.39in";
+
+  const formatSize = (value: PdfDocumentProps["size"]) =>
+    value && pdfSizes.includes(value) ? value : `${value ?? "A4"}`;
+
+  const childrenArray = React.Children.toArray(children);
+  const footerChild = childrenArray.find(
+    (child) => React.isValidElement(child) && child.type === PdfFooter
+  );
+  const orderedChildren = footerChild
+    ? [footerChild, ...childrenArray.filter((child) => child !== footerChild)]
+    : childrenArray;
+
+  const css = `
+    @page {
+      size: ${formatSize(size)} ${orientation};
+      margin: ${formatMargin(margin)};
+    }
+  `;
+
+  return (
+    <div
+      id="document"
+      data-size={formatSize(size)}
+      data-orientation={orientation}
+    >
+      <style>{css}</style>
+      {orderedChildren}
+    </div>
+  );
+};
+
 const resolvePath = (path: string, context: TemplateRenderContext): unknown => {
   const parts = path
     .split(".")
@@ -156,32 +388,30 @@ const TemplateDocument: React.FC<{
   template: PdfTemplate;
   context: TemplateRenderContext;
   preview?: boolean;
-}> = ({ template, context, preview = true }) => {
+  selectedSectionId?: string | null;
+  onSelectSection?: (sectionId: string) => void;
+  zoom?: number;
+}> = ({
+  template,
+  context,
+  preview = true,
+  selectedSectionId,
+  onSelectSection,
+  zoom = 1,
+}) => {
   const accentColor = template.accentColor || "#2563eb";
   const dimensions = pageDimensions[template.pageSize] ?? pageDimensions.A4;
   const { width, height } = dimensions[template.orientation];
+  const safeZoom = preview ? Math.min(Math.max(zoom, 0.55), 1.6) : 1;
+  const baseFontFamily =
+    "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
-  const containerStyle: React.CSSProperties = {
-    width: `${width}px`,
-    minHeight: `${height}px`,
-    margin: preview ? "0 auto" : "0",
-    backgroundColor: "#ffffff",
+  const pageContentStyle: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: "24px",
     color: "#0f172a",
-    padding: preview ? "48px" : "40px",
-    boxShadow: preview ? "0 25px 60px rgba(15, 23, 42, 0.12)" : undefined,
-    borderRadius: preview ? "18px" : "0",
-    display: "flex",
-    flexDirection: "column",
-    gap: "32px",
-    fontFamily: `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`,
-  };
-
-  const headerStyle: React.CSSProperties = {
-    borderBottom: `4px solid ${accentColor}`,
-    paddingBottom: "24px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
+    fontFamily: baseFontFamily,
   };
 
   const badgeStyle: React.CSSProperties = {
@@ -194,83 +424,180 @@ const TemplateDocument: React.FC<{
     color: accentColor,
     fontSize: "13px",
     fontWeight: 600,
-    letterSpacing: "0.02em",
-    textTransform: "uppercase" as const,
-  };
-
-  const sectionStyle: React.CSSProperties = {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
   };
 
   const sectionTitleStyle: React.CSSProperties = {
     fontSize: "18px",
     fontWeight: 700,
     color: "#0f172a",
+    margin: 0,
   };
 
   const textStyle: React.CSSProperties = {
     fontSize: "15px",
     lineHeight: 1.7,
     color: "#1f2937",
+    margin: 0,
   };
 
-  const tableStyle: React.CSSProperties = {
-    width: "100%",
-    borderCollapse: "collapse" as const,
-    fontSize: "14px",
+  const renderSectionBody = (
+    body: string,
+    layout: TemplateSection["layout"] | undefined
+  ) => {
+    const replaced = replaceTokens(body, context);
+    const paragraphs = replaced
+      .split(/\n{2,}/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean);
+
+    const renderLines = (value: string) =>
+      value.split(/\n/).map((line, index, arr) => (
+        <React.Fragment key={`${line}-${index}`}>
+          {line}
+          {index < arr.length - 1 ? <br /> : null}
+        </React.Fragment>
+      ));
+
+    if (paragraphs.length === 0) {
+      return (
+        <p style={{ ...textStyle, color: "#94a3b8" }}>
+          Añade contenido dinámico utilizando tokens como {"{{worker.name}}"}.
+        </p>
+      );
+    }
+
+    const wrapperStyle: React.CSSProperties =
+      layout === "two-column"
+        ? {
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: "18px",
+          }
+        : {
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px",
+          };
+
+    return (
+      <div style={wrapperStyle}>
+        {paragraphs.map((paragraph, index) => (
+          <p key={index} style={textStyle}>
+            {renderLines(paragraph)}
+          </p>
+        ))}
+      </div>
+    );
   };
 
-  const renderSections = (sections: TemplateSection[]) =>
-    sections.map((section) => (
-      <div key={section.id} style={sectionStyle}>
+  const renderSection = (section: TemplateSection, index: number) => {
+    const isSelected = preview && selectedSectionId === section.id;
+    const interactive = preview && typeof onSelectSection === "function";
+
+    const containerStyle: React.CSSProperties = preview
+      ? {
+          padding: "20px 24px",
+          borderRadius: "18px",
+          border: isSelected ? `2px solid ${accentColor}` : "1px solid #e2e8f0",
+          backgroundColor: isSelected ? `${accentColor}16` : "#ffffff",
+          boxShadow: isSelected
+            ? "0 18px 46px rgba(37, 99, 235, 0.18)"
+            : "0 10px 30px rgba(15, 23, 42, 0.1)",
+          cursor: interactive ? "pointer" : "default",
+          transition: "all 0.2s ease",
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+        }
+      : {
+          margin: "6px 0",
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+        };
+
+    const handleSelect = () => {
+      if (interactive && onSelectSection) {
+        onSelectSection(section.id);
+      }
+    };
+
+    const handleKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (
+      event
+    ) => {
+      if (!interactive) {
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onSelectSection?.(section.id);
+      }
+    };
+
+    return (
+      <div
+        key={section.id}
+        style={containerStyle}
+        onClick={handleSelect}
+        onKeyDown={handleKeyDown}
+        role={interactive ? "button" : undefined}
+        tabIndex={interactive ? 0 : undefined}
+      >
+        <div
+          style={{
+            fontSize: "12px",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            color: "#64748b",
+          }}
+        >
+          Sección {index + 1}
+        </div>
         {section.title ? (
           <h3 style={sectionTitleStyle}>
             {replaceTokens(section.title, context)}
           </h3>
         ) : null}
-        <p style={textStyle}>{replaceTokens(section.body, context)}</p>
+        {renderSectionBody(section.body, section.layout)}
       </div>
-    ));
+    );
+  };
 
-  return (
-    <div style={containerStyle}>
-      <header style={headerStyle}>
-        <div style={badgeStyle}>
-          <FileText size={14} />
-          Plantilla PDF
-        </div>
-        <div>
-          {template.header.title ? (
-            <h1
-              style={{
-                fontSize: "32px",
-                fontWeight: 700,
-                marginBottom: "8px",
-              }}
-            >
-              {replaceTokens(template.header.title, context)}
-            </h1>
-          ) : null}
-          {template.header.subtitle ? (
-            <p
-              style={{
-                fontSize: "16px",
-                color: "#475569",
-              }}
-            >
-              {replaceTokens(template.header.subtitle, context)}
-            </p>
-          ) : null}
-        </div>
+  const headerBlock = (
+    <header
+      style={{
+        borderBottom: `4px solid ${accentColor}`,
+        paddingBottom: "24px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
+      }}
+    >
+      <div style={badgeStyle}>
+        <FileText size={14} />
+        Plantilla PDF
+      </div>
+      <div>
+        {template.header.title ? (
+          <h1 style={{ fontSize: "32px", fontWeight: 700, margin: 0 }}>
+            {replaceTokens(template.header.title, context)}
+          </h1>
+        ) : null}
+        {template.header.subtitle ? (
+          <p style={{ fontSize: "16px", color: "#475569", margin: 0 }}>
+            {replaceTokens(template.header.subtitle, context)}
+          </p>
+        ) : null}
+      </div>
+      {(template.header.showWorkerInfo && context.worker) ||
+      template.header.showPeriodSummary ? (
         <div
           style={{
             display: "flex",
             flexWrap: "wrap",
             gap: "12px",
-            color: "#1e293b",
-            fontSize: "14px",
           }}
         >
           {template.header.showWorkerInfo && context.worker ? (
@@ -313,14 +640,26 @@ const TemplateDocument: React.FC<{
             </div>
           ) : null}
         </div>
-      </header>
+      ) : null}
+    </header>
+  );
 
-      {renderSections(template.sections)}
-
+  const documentMain = (
+    <Page style={pageContentStyle}>
+      {headerBlock}
+      {template.sections.map((section, index) => renderSection(section, index))}
       {template.includeCompanyTotals && context.companyTotals.length > 0 ? (
-        <section style={sectionStyle}>
+        <section
+          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+        >
           <h3 style={sectionTitleStyle}>Horas por empresa</h3>
-          <table style={tableStyle}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "14px",
+            }}
+          >
             <thead>
               <tr style={{ backgroundColor: "#f8fafc" }}>
                 <th
@@ -370,11 +709,18 @@ const TemplateDocument: React.FC<{
           </table>
         </section>
       ) : null}
-
       {template.includeDailyBreakdown && context.dailyEntries.length > 0 ? (
-        <section style={sectionStyle}>
+        <section
+          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+        >
           <h3 style={sectionTitleStyle}>Detalle diario</h3>
-          <table style={tableStyle}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "13px",
+            }}
+          >
             <thead>
               <tr style={{ backgroundColor: "#f8fafc" }}>
                 <th
@@ -441,23 +787,23 @@ const TemplateDocument: React.FC<{
                     style={{
                       padding: "10px 14px",
                       borderTop: "1px solid #e2e8f0",
-                      color: "#1f2937",
                     }}
                   >
-                    {entry.companies
-                      .map(
-                        (company) =>
-                          `${company.name ?? ""} (${company.hours.toFixed(
-                            2
-                          )} h)`
-                      )
-                      .join(" · ") || "—"}
+                    {entry.companies.length > 0
+                      ? entry.companies
+                          .map(
+                            (company) =>
+                              `${
+                                company.name ?? "Sin empresa"
+                              } (${company.hours.toFixed(2)} h)`
+                          )
+                          .join(" · ")
+                      : "—"}
                   </td>
                   <td
                     style={{
                       padding: "10px 14px",
                       borderTop: "1px solid #e2e8f0",
-                      color: "#1f2937",
                     }}
                   >
                     {entry.notes.length > 0 ? entry.notes.join(" | ") : "—"}
@@ -468,21 +814,412 @@ const TemplateDocument: React.FC<{
           </table>
         </section>
       ) : null}
+    </Page>
+  );
 
+  const baseStyles = `
+    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ${baseFontFamily}; color: #0f172a; background-color: #ffffff; }
+    table { width: 100%; border-collapse: collapse; }
+    h1, h2, h3, h4, h5, h6 { margin: 0; }
+    p { margin: 0; }
+  `;
+
+  const documentContent = (
+    <PdfDocument
+      size={template.pageSize}
+      orientation={template.orientation}
+      margin="0.75in"
+    >
+      <style>{baseStyles}</style>
+      {documentMain}
       {template.footer?.text ? (
-        <footer
-          style={{
-            borderTop: "1px solid #e2e8f0",
-            paddingTop: "16px",
-            marginTop: "16px",
-            fontSize: "13px",
-            color: "#64748b",
-            textAlign: "center" as const,
-          }}
+        <PdfFooter
+          position="bottom-center"
+          style={{ color: "#64748b", fontSize: "12px" }}
         >
-          {replaceTokens(template.footer.text, context)}
-        </footer>
+          {({ currentPage, totalPages }) => (
+            <span>
+              {replaceTokens(template.footer?.text ?? "", context)} · Página{" "}
+              {currentPage} de {totalPages}
+            </span>
+          )}
+        </PdfFooter>
       ) : null}
+    </PdfDocument>
+  );
+
+  if (!preview) {
+    return documentContent;
+  }
+
+  const scaledWidth = width * safeZoom;
+  const scaledHeight = height * safeZoom;
+
+  return (
+    <div
+      style={{
+        width: `${Math.max(scaledWidth + 96, width + 96)}px`,
+        minHeight: `${scaledHeight + 96}px`,
+        margin: "0 auto",
+        padding: "40px 32px",
+        background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+        borderRadius: "32px",
+        boxShadow: "0 40px 90px rgba(15, 23, 42, 0.16)",
+        transition: "all 0.3s ease",
+      }}
+    >
+      <div
+        style={{
+          transform: `scale(${safeZoom})`,
+          transformOrigin: "top center",
+          width: `${width}px`,
+          minHeight: `${height}px`,
+          margin: "0 auto",
+        }}
+      >
+        {documentContent}
+      </div>
+    </div>
+  );
+};
+
+interface WorkerSearchSelectProps {
+  workers: Worker[];
+  selectedWorkerId: string;
+  onWorkerSelect: (workerId: string) => void;
+  placeholder?: string;
+}
+
+const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
+  workers,
+  selectedWorkerId,
+  onWorkerSelect,
+  placeholder = "Buscar trabajador...",
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [inputValue, setInputValue] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const selectedWorker = useMemo(
+    () => workers.find((worker) => worker.id === selectedWorkerId) ?? null,
+    [workers, selectedWorkerId]
+  );
+
+  const filteredWorkers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return [...workers].sort((a, b) =>
+        a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+      );
+    }
+
+    return workers
+      .filter((worker) => {
+        const lowerName = worker.name?.toLowerCase() ?? "";
+        const lowerEmail = worker.email?.toLowerCase() ?? "";
+        const lowerPhone = worker.phone?.toLowerCase() ?? "";
+        const lowerDepartment = worker.department?.toLowerCase() ?? "";
+        const lowerPosition = worker.position?.toLowerCase() ?? "";
+        const companies = worker.companyNames ?? [];
+        return (
+          lowerName.includes(query) ||
+          lowerEmail.includes(query) ||
+          lowerPhone.includes(query) ||
+          lowerDepartment.includes(query) ||
+          lowerPosition.includes(query) ||
+          companies.some((company) => company.toLowerCase().includes(query))
+        );
+      })
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+      );
+  }, [workers, searchQuery]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+        if (selectedWorker) {
+          setInputValue(selectedWorker.name);
+        } else {
+          setInputValue("");
+        }
+        setSearchQuery("");
+        setHighlightedIndex(-1);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [selectedWorker]);
+
+  useEffect(() => {
+    if (selectedWorker) {
+      setInputValue(selectedWorker.name);
+    } else {
+      setInputValue("");
+    }
+  }, [selectedWorker]);
+
+  useEffect(() => {
+    itemRefs.current = itemRefs.current.slice(0, filteredWorkers.length);
+  }, [filteredWorkers.length]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (filteredWorkers.length === 0) {
+      setHighlightedIndex(-1);
+      return;
+    }
+
+    if (highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    } else if (highlightedIndex >= filteredWorkers.length) {
+      setHighlightedIndex(filteredWorkers.length - 1);
+    }
+  }, [filteredWorkers, isOpen, highlightedIndex]);
+
+  useEffect(() => {
+    if (highlightedIndex >= 0) {
+      itemRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedIndex]);
+
+  const handleWorkerSelect = (worker: Worker) => {
+    onWorkerSelect(worker.id);
+    setInputValue(worker.name);
+    setIsOpen(false);
+    setSearchQuery("");
+    setHighlightedIndex(-1);
+  };
+
+  const handleClear = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onWorkerSelect("");
+    setInputValue("");
+    setSearchQuery("");
+    setIsOpen(false);
+    setHighlightedIndex(-1);
+  };
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setInputValue(value);
+    setSearchQuery(value);
+    setIsOpen(true);
+    setHighlightedIndex(-1);
+
+    if (value === "") {
+      onWorkerSelect("");
+    }
+  };
+
+  const handleInputFocus = () => {
+    setIsOpen(true);
+    if (selectedWorker) {
+      setInputValue("");
+      setSearchQuery("");
+    }
+    if (filteredWorkers.length > 0) {
+      setHighlightedIndex(0);
+    }
+  };
+
+  const handleInputClick = () => {
+    setIsOpen(true);
+    if (filteredWorkers.length > 0 && highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    }
+  };
+
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setIsOpen(false);
+      setHighlightedIndex(-1);
+      if (selectedWorker) {
+        setInputValue(selectedWorker.name);
+      }
+      return;
+    }
+
+    if (!isOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      setIsOpen(true);
+    }
+
+    if (!filteredWorkers.length) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHighlightedIndex((prev) => {
+        const nextIndex = prev + 1;
+        if (nextIndex >= filteredWorkers.length || prev === -1) {
+          return 0;
+        }
+        return nextIndex;
+      });
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightedIndex((prev) => {
+        if (prev <= 0) {
+          return filteredWorkers.length - 1;
+        }
+        return prev - 1;
+      });
+    } else if (event.key === "Enter") {
+      if (highlightedIndex >= 0 && highlightedIndex < filteredWorkers.length) {
+        event.preventDefault();
+        handleWorkerSelect(filteredWorkers[highlightedIndex]);
+      }
+    }
+  };
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+        Trabajador
+      </label>
+
+      <div
+        className={`
+          min-h-[42px] w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600
+          rounded-md flex items-center overflow-hidden
+          hover:border-gray-400 dark:hover:border-gray-500
+          ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
+        `}
+      >
+        <div className="flex-1 flex items-center px-3 py-2">
+          <Search size={18} className="text-gray-400 mr-2" />
+          <input
+            type="text"
+            value={inputValue}
+            onChange={handleInputChange}
+            onFocus={handleInputFocus}
+            onClick={handleInputClick}
+            onKeyDown={handleInputKeyDown}
+            placeholder={placeholder}
+            className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none"
+          />
+        </div>
+        <div className="flex items-stretch">
+          {(selectedWorker || inputValue) && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="flex items-center justify-center h-full px-2 hover:bg-gray-100 dark:hover:bg-gray-700"
+              aria-label="Limpiar selección"
+            >
+              <X size={14} className="text-gray-400" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsOpen((prev) => !prev)}
+            className="flex items-center justify-center h-full w-10 border-l border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none"
+            aria-label={
+              isOpen
+                ? "Cerrar lista de trabajadores"
+                : "Abrir lista de trabajadores"
+            }
+          >
+            <ChevronDown
+              size={16}
+              className={`text-blue-500 transition-transform duration-200 ${
+                isOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className="w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-hidden">
+          <div className="max-h-48 overflow-y-auto">
+            {filteredWorkers.length === 0 ? (
+              <div className="px-3 py-4 text-center text-gray-500 dark:text-gray-400 text-sm">
+                {searchQuery
+                  ? `No se encontraron trabajadores con "${searchQuery}"`
+                  : "Escribe para buscar trabajadores"}
+              </div>
+            ) : (
+              <>
+                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
+                  {searchQuery
+                    ? `${filteredWorkers.length} de ${workers.length} trabajadores`
+                    : `${workers.length} trabajadores disponibles`}
+                </div>
+
+                {filteredWorkers.map((worker, index) => {
+                  const isHighlighted = highlightedIndex === index;
+                  const isSelected = selectedWorkerId === worker.id;
+                  const baseClasses = `px-3 py-3 cursor-pointer flex items-center justify-between border-b border-gray-100 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700`;
+                  const highlightClass = isSelected
+                    ? "bg-blue-50 dark:bg-blue-900/20"
+                    : isHighlighted
+                    ? "bg-gray-100 dark:bg-gray-700"
+                    : "";
+
+                  return (
+                    <div
+                      key={`${worker.id}-${index}`}
+                      ref={(element) => {
+                        itemRefs.current[index] = element;
+                      }}
+                      className={`${baseClasses} ${highlightClass}`}
+                      onClick={() => handleWorkerSelect(worker)}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className={`text-sm font-medium truncate ${
+                            isSelected
+                              ? "text-blue-700 dark:text-blue-300"
+                              : "text-gray-900 dark:text-white"
+                          }`}
+                        >
+                          {worker.name}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                          {worker.companyNames && worker.companyNames.length > 0
+                            ? worker.companyNames.join(", ")
+                            : "Sin empresas asignadas"}
+                        </p>
+                        {(worker.department || worker.position) && (
+                          <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                            {[worker.department, worker.position]
+                              .filter(Boolean)
+                              .join(" • ")}
+                          </p>
+                        )}
+                      </div>
+                      {selectedWorkerId === worker.id && (
+                        <Check
+                          size={16}
+                          className="text-blue-600 dark:text-blue-400 ml-2"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -516,6 +1253,44 @@ const availableTokens = [
       { token: "totals.totalTrackedDays", description: "Días con horas" },
       { token: "totals.averageHours", description: "Promedio diario" },
       { token: "totals.noteCount", description: "Número de notas" },
+    ],
+  },
+  {
+    category: "Empresas (resumen)",
+    items: [
+      {
+        token: "companyTotals.length",
+        description: "Cantidad de empresas con horas",
+      },
+      {
+        token: "companyTotals[0].name",
+        description: "Nombre de la primera empresa (ejemplo)",
+      },
+      {
+        token: "companyTotals[0].hours",
+        description: "Horas de la primera empresa (ejemplo)",
+      },
+    ],
+  },
+  {
+    category: "Detalle diario",
+    items: [
+      {
+        token: "dailyEntries.length",
+        description: "Número de días con registro",
+      },
+      {
+        token: "dailyEntries[0].dateLabel",
+        description: "Fecha de ejemplo",
+      },
+      {
+        token: "dailyEntries[0].totalHours",
+        description: "Horas del día (ejemplo)",
+      },
+      {
+        token: "dailyEntries[0].companies[0].name",
+        description: "Empresa asociada al día (ejemplo)",
+      },
     ],
   },
 ];
@@ -555,6 +1330,26 @@ const TemplatesPage: React.FC = () => {
     useState<WorkerHoursSummaryResult | null>(null);
   const [isLoadingHours, setIsLoadingHours] = useState(false);
   const [hoursError, setHoursError] = useState<string | null>(null);
+<<<<<<< ours
+<<<<<<< ours
+  const [hoursLastUpdatedAt, setHoursLastUpdatedAt] = useState<number | null>(
+    null
+  );
+  const [hoursLastUpdatedTicker, setHoursLastUpdatedTicker] = useState(0);
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
+    null
+  );
+  const [zoom, setZoom] = useState(0.9);
+
+  const copyToken = useCallback((value: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(value).catch(() => undefined);
+    }
+  }, []);
 
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
 
@@ -608,6 +1403,47 @@ const TemplatesPage: React.FC = () => {
     }
 
     let isActive = true;
+    const load = async () => {
+      setIsLoadingHours(true);
+      setHoursError(null);
+
+      try {
+        const summary = await fetchWorkerHoursSummary({
+          apiUrl,
+          token: externalJwt,
+          workerId: selectedWorkerId,
+          month: selectedMonth,
+          companyLookup,
+        });
+        if (isActive) {
+          setHoursSummary(summary);
+        }
+      } catch (error) {
+        console.error("Error loading worker hours for templates:", error);
+        if (isActive) {
+          setHoursError(
+            "No se pudieron cargar las horas del trabajador seleccionado."
+          );
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingHours(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      isActive = false;
+    };
+  }, [apiUrl, companyLookup, externalJwt, selectedMonth, selectedWorkerId]);
+
+  const handleRefreshHours = useCallback(() => {
+    if (!selectedWorkerId || !externalJwt || !apiUrl) {
+      return;
+    }
+
     setIsLoadingHours(true);
     setHoursError(null);
 
@@ -619,27 +1455,17 @@ const TemplatesPage: React.FC = () => {
       companyLookup,
     })
       .then((summary) => {
-        if (isActive) {
-          setHoursSummary(summary);
-        }
+        setHoursSummary(summary);
       })
       .catch((error) => {
-        console.error("Error loading worker hours for templates:", error);
-        if (isActive) {
-          setHoursError(
-            "No se pudieron cargar las horas del trabajador seleccionado."
-          );
-        }
+        console.error("Error refreshing worker hours for templates:", error);
+        setHoursError(
+          "No se pudieron cargar las horas del trabajador seleccionado."
+        );
       })
       .finally(() => {
-        if (isActive) {
-          setIsLoadingHours(false);
-        }
+        setIsLoadingHours(false);
       });
-
-    return () => {
-      isActive = false;
-    };
   }, [apiUrl, companyLookup, externalJwt, selectedMonth, selectedWorkerId]);
 
   const activeTemplate = useMemo(() => {
@@ -654,11 +1480,75 @@ const TemplatesPage: React.FC = () => {
     );
   }, [activeTemplateId, templates]);
 
+  const defaultZoom = useMemo(() => {
+    if (!activeTemplate) {
+      return 0.9;
+    }
+    return activeTemplate.orientation === "landscape" ? 0.75 : 0.9;
+  }, [activeTemplate]);
+
+  useEffect(() => {
+    setZoom((current) => {
+      const next = clampZoom(defaultZoom);
+      return Math.abs(current - next) < 0.001 ? current : next;
+    });
+  }, [defaultZoom]);
+
   useEffect(() => {
     if (!activeTemplateId && templates.length > 0) {
       setActiveTemplate(templates[0].id);
     }
   }, [activeTemplateId, setActiveTemplate, templates]);
+
+  useEffect(() => {
+    if (!activeTemplate || activeTemplate.sections.length === 0) {
+      setSelectedSectionId(null);
+      return;
+    }
+
+    setSelectedSectionId((current) =>
+      current &&
+      activeTemplate.sections.some((section) => section.id === current)
+        ? current
+        : activeTemplate.sections[0].id
+    );
+  }, [activeTemplate]);
+
+  const applyZoom = useCallback((value: number) => {
+    setZoom(clampZoom(value));
+  }, []);
+
+  const increaseZoom = useCallback(() => {
+    setZoom((current) => clampZoom(current + 0.1));
+  }, []);
+
+  const decreaseZoom = useCallback(() => {
+    setZoom((current) => clampZoom(current - 0.1));
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    setZoom((current) => {
+      const next = clampZoom(defaultZoom);
+      return Math.abs(current - next) < 0.001 ? current : next;
+    });
+  }, [defaultZoom]);
+
+  const zoomPercentage = Math.round(zoom * 100);
+
+  const previewMetrics = useMemo(() => {
+    if (!activeTemplate) {
+      return null;
+    }
+    const dimensions =
+      pageDimensions[activeTemplate.pageSize] ?? pageDimensions.A4;
+    const { width, height } = dimensions[activeTemplate.orientation];
+    return {
+      width,
+      height,
+      scaledWidth: Math.round(width * zoom),
+      scaledHeight: Math.round(height * zoom),
+    };
+  }, [activeTemplate, zoom]);
 
   const selectedWorker = useMemo(
     () => workers.find((worker) => worker.id === selectedWorkerId) ?? null,
@@ -728,6 +1618,17 @@ const TemplatesPage: React.FC = () => {
     };
   }, [dailyEntries, hoursSummary, selectedMonth, selectedWorker, totalNotes]);
 
+  const selectedSection = useMemo(() => {
+    if (!activeTemplate || !selectedSectionId) {
+      return null;
+    }
+    return (
+      activeTemplate.sections.find(
+        (section) => section.id === selectedSectionId
+      ) ?? null
+    );
+  }, [activeTemplate, selectedSectionId]);
+
   const handleTemplateChange = (
     updater: (template: PdfTemplate) => Partial<PdfTemplate>
   ) => {
@@ -754,7 +1655,7 @@ const TemplatesPage: React.FC = () => {
     updateTemplate(activeTemplate.id, { sections: nextSections });
   };
 
-  const addSection = () => {
+  const addSection = useCallback(() => {
     if (!activeTemplate) {
       return;
     }
@@ -769,19 +1670,94 @@ const TemplatesPage: React.FC = () => {
     updateTemplate(activeTemplate.id, {
       sections: [...activeTemplate.sections, newSection],
     });
-  };
+    setSelectedSectionId(newSection.id);
+  }, [activeTemplate, updateTemplate]);
 
-  const removeSection = (sectionId: string) => {
-    if (!activeTemplate) {
-      return;
-    }
+  const removeSection = useCallback(
+    (sectionId: string) => {
+      if (!activeTemplate) {
+        return;
+      }
 
-    const remaining = activeTemplate.sections.filter(
-      (section) => section.id !== sectionId
-    );
+      const index = activeTemplate.sections.findIndex(
+        (section) => section.id === sectionId
+      );
+      if (index === -1) {
+        return;
+      }
 
-    updateTemplate(activeTemplate.id, { sections: remaining });
-  };
+      const remaining = activeTemplate.sections.filter(
+        (section) => section.id !== sectionId
+      );
+
+      updateTemplate(activeTemplate.id, { sections: remaining });
+
+      if (remaining.length === 0) {
+        setSelectedSectionId(null);
+      } else {
+        const nextIndex = Math.min(index, remaining.length - 1);
+        setSelectedSectionId(remaining[nextIndex].id);
+      }
+    },
+    [activeTemplate, updateTemplate]
+  );
+
+  const moveSection = useCallback(
+    (sectionId: string, direction: -1 | 1) => {
+      if (!activeTemplate) {
+        return;
+      }
+
+      const index = activeTemplate.sections.findIndex(
+        (section) => section.id === sectionId
+      );
+      if (index === -1) {
+        return;
+      }
+
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= activeTemplate.sections.length) {
+        return;
+      }
+
+      const reordered = [...activeTemplate.sections];
+      const [removed] = reordered.splice(index, 1);
+      reordered.splice(targetIndex, 0, removed);
+
+      updateTemplate(activeTemplate.id, { sections: reordered });
+      setSelectedSectionId(removed.id);
+    },
+    [activeTemplate, updateTemplate]
+  );
+
+  const duplicateSection = useCallback(
+    (sectionId: string) => {
+      if (!activeTemplate) {
+        return;
+      }
+
+      const index = activeTemplate.sections.findIndex(
+        (section) => section.id === sectionId
+      );
+      if (index === -1) {
+        return;
+      }
+
+      const section = activeTemplate.sections[index];
+      const clone: TemplateSection = {
+        ...section,
+        id: createGuid(),
+        title: section.title ? `${section.title} (copia)` : section.title,
+      };
+
+      const nextSections = [...activeTemplate.sections];
+      nextSections.splice(index + 1, 0, clone);
+
+      updateTemplate(activeTemplate.id, { sections: nextSections });
+      setSelectedSectionId(clone.id);
+    },
+    [activeTemplate, updateTemplate]
+  );
 
   const handleDownloadPdf = () => {
     if (!activeTemplate) {
@@ -801,6 +1777,7 @@ const TemplatesPage: React.FC = () => {
   <head>
     <meta charSet="utf-8" />
     <title>${activeTemplate.name}</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
     <style>
       @page { size: ${activeTemplate.pageSize} ${activeTemplate.orientation}; margin: 20mm; }
       body { margin: 0; background: #f1f5f9; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
@@ -938,15 +1915,66 @@ const TemplatesPage: React.FC = () => {
 
           <Card>
             <CardHeader>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                Datos fuente
+<<<<<<< ours
+<<<<<<< ours
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    Datos fuente
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs"
+                    onClick={handleRefreshHours}
+                    disabled={
+                      isLoadingHours ||
+                      isLoadingWorkers ||
+                      !selectedWorkerId ||
+                      !externalJwt ||
+                      !apiUrl
+                    }
+                  >
+                    <RefreshCw
+                      size={14}
+                      className={isLoadingHours ? "animate-spin mr-1" : "mr-1"}
+                    />
+                    Actualizar
+                  </Button>
+=======
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  Datos fuente
+>>>>>>> theirs
+=======
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  Datos fuente
+>>>>>>> theirs
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={handleRefreshHours}
+                  disabled={
+                    isLoadingHours ||
+                    isLoadingWorkers ||
+                    !selectedWorkerId ||
+                    !externalJwt ||
+                    !apiUrl
+                  }
+                >
+                  <RefreshCw
+                    size={14}
+                    className={isLoadingHours ? "animate-spin mr-1" : "mr-1"}
+                  />
+                  Actualizar
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Trabajador
-                </label>
                 {isLoadingWorkers ? (
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <Loader2 className="animate-spin" size={16} /> Cargando
@@ -959,14 +1987,11 @@ const TemplatesPage: React.FC = () => {
                     No hay trabajadores disponibles en la organización.
                   </div>
                 ) : (
-                  <Select
-                    value={selectedWorkerId}
-                    onChange={setSelectedWorkerId}
-                    options={workers.map((worker) => ({
-                      value: worker.id,
-                      label: worker.name,
-                    }))}
-                    fullWidth
+                  <WorkerSearchSelect
+                    workers={workers}
+                    selectedWorkerId={selectedWorkerId}
+                    onWorkerSelect={setSelectedWorkerId}
+                    placeholder="Buscar y seleccionar trabajador..."
                   />
                 )}
               </div>
@@ -1177,44 +2202,186 @@ const TemplatesPage: React.FC = () => {
                       </Button>
                     </div>
 
-                    {activeTemplate.sections.map((section) => (
-                      <div
-                        key={section.id}
-                        className="border border-gray-200 dark:border-dark-600 rounded-xl p-4 space-y-3"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <Input
-                            label="Título de la sección"
-                            value={section.title ?? ""}
-                            onChange={(e) =>
-                              handleSectionChange(section.id, () => ({
-                                title: e.target.value,
-                              }))
-                            }
-                            fullWidth
-                          />
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-red-600 hover:text-red-700 mt-6"
-                            onClick={() => removeSection(section.id)}
-                          >
-                            <Trash2 size={16} />
-                          </Button>
-                        </div>
-                        <TextArea
-                          label="Contenido"
-                          value={section.body}
-                          onChange={(e) =>
-                            handleSectionChange(section.id, () => ({
-                              body: e.target.value,
-                            }))
-                          }
-                          rows={4}
-                          fullWidth
-                        />
+                    {activeTemplate.sections.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-gray-300 dark:border-dark-600 bg-white/60 dark:bg-dark-700/40 p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                        No hay secciones. Añade una nueva para comenzar a
+                        diseñar el contenido.
                       </div>
-                    ))}
+                    ) : (
+                      <div className="space-y-3">
+                        {activeTemplate.sections.map((section, index) => {
+                          const isActiveSection =
+                            selectedSectionId === section.id;
+                          const canMoveUp = index > 0;
+                          const canMoveDown =
+                            index < activeTemplate.sections.length - 1;
+
+                          const containerClasses = isActiveSection
+                            ? "border-blue-500 bg-blue-50/80 dark:bg-blue-500/10 shadow-md"
+                            : "border-gray-200 dark:border-dark-600 hover:border-blue-400 dark:hover:border-blue-400/60";
+
+                          const handleAction = (
+                            action: () => void,
+                            event: React.MouseEvent<HTMLButtonElement>
+                          ) => {
+                            event.stopPropagation();
+                            action();
+                          };
+
+                          return (
+                            <div
+                              key={section.id}
+                              className={`rounded-2xl border transition-all ${containerClasses}`}
+                              onClick={() => setSelectedSectionId(section.id)}
+                            >
+                              <div className="p-4 space-y-4">
+                                <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.28em] text-gray-500 dark:text-gray-400">
+                                  <span>Sección {index + 1}</span>
+                                  {isActiveSection ? (
+                                    <span className="text-blue-600 dark:text-blue-300 font-semibold tracking-normal">
+                                      Editando
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                  <Input
+                                    label="Título de la sección"
+                                    value={section.title ?? ""}
+                                    onChange={(e) =>
+                                      handleSectionChange(section.id, () => ({
+                                        title: e.target.value,
+                                      }))
+                                    }
+                                    onFocus={() =>
+                                      setSelectedSectionId(section.id)
+                                    }
+                                    fullWidth
+                                  />
+                                  <div className="flex flex-col gap-2 md:items-end md:justify-between md:min-w-[220px]">
+                                    <Select
+                                      label="Diseño"
+                                      value={section.layout ?? "single"}
+                                      onChange={(value) =>
+                                        handleSectionChange(section.id, () => ({
+                                          layout:
+                                            value as TemplateSection["layout"],
+                                        }))
+                                      }
+                                      options={[
+                                        { value: "single", label: "Bloque" },
+                                        {
+                                          value: "two-column",
+                                          label: "Dos columnas",
+                                        },
+                                      ]}
+                                      className="md:w-52"
+                                    />
+                                    <div className="flex items-center gap-1 md:justify-end">
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="px-2 py-2"
+                                        disabled={!canMoveUp}
+                                        aria-label="Mover sección hacia arriba"
+                                        onClick={(event) =>
+                                          handleAction(
+                                            () => moveSection(section.id, -1),
+                                            event
+                                          )
+                                        }
+                                      >
+                                        <ArrowUp size={16} />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="px-2 py-2"
+                                        disabled={!canMoveDown}
+                                        aria-label="Mover sección hacia abajo"
+                                        onClick={(event) =>
+                                          handleAction(
+                                            () => moveSection(section.id, 1),
+                                            event
+                                          )
+                                        }
+                                      >
+                                        <ArrowDown size={16} />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="px-2 py-2"
+                                        aria-label="Duplicar sección"
+                                        onClick={(event) =>
+                                          handleAction(
+                                            () => duplicateSection(section.id),
+                                            event
+                                          )
+                                        }
+                                      >
+                                        <Copy size={16} />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="px-2 py-2 text-red-600 hover:text-red-700"
+                                        aria-label="Eliminar sección"
+                                        onClick={(event) =>
+                                          handleAction(
+                                            () => removeSection(section.id),
+                                            event
+                                          )
+                                        }
+                                      >
+                                        <Trash2 size={16} />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <TextArea
+                                  label="Contenido"
+                                  value={section.body}
+                                  onChange={(e) =>
+                                    handleSectionChange(section.id, () => ({
+                                      body: e.target.value,
+                                    }))
+                                  }
+                                  onFocus={() =>
+                                    setSelectedSectionId(section.id)
+                                  }
+                                  rows={6}
+                                  fullWidth
+                                />
+                                <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                                  <span className="uppercase tracking-[0.14em] text-gray-400 dark:text-gray-500">
+                                    Tokens rápidos
+                                  </span>
+                                  {[
+                                    "{{worker.name}}",
+                                    "{{period.label}}",
+                                    "{{totals.totalHours}}",
+                                  ].map((token) => (
+                                    <button
+                                      key={token}
+                                      type="button"
+                                      className="rounded-full border border-dashed border-gray-300 px-2 py-1 font-mono text-[11px] text-blue-600 hover:border-blue-500 hover:bg-blue-50 dark:border-dark-600 dark:text-blue-300 dark:hover:bg-blue-500/10"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        copyToken(token);
+                                      }}
+                                    >
+                                      {token}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1281,9 +2448,7 @@ const TemplatesPage: React.FC = () => {
                         {group.items.map((item) => (
                           <button
                             key={item.token}
-                            onClick={() =>
-                              navigator.clipboard.writeText(`{{${item.token}}}`)
-                            }
+                            onClick={() => copyToken(`{{${item.token}}}`)}
                             className="text-left text-xs border border-dashed border-gray-300 dark:border-dark-600 rounded-lg px-3 py-2 hover:border-blue-500 hover:bg-blue-50/70 dark:hover:bg-blue-500/10"
                             title="Copiar token"
                           >
@@ -1317,11 +2482,81 @@ const TemplatesPage: React.FC = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 font-semibold tracking-wide text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                        {zoomPercentage}%
+                      </span>
+                      {previewMetrics ? (
+                        <span className="hidden sm:inline-flex items-center gap-1">
+                          <span>
+                            {activeTemplate.pageSize.toUpperCase()} ·{" "}
+                            {previewMetrics.width}×{previewMetrics.height}px
+                          </span>
+                        </span>
+                      ) : null}
+                      {previewMetrics ? (
+                        <span className="hidden lg:inline-flex">
+                          Vista: {previewMetrics.scaledWidth}×
+                          {previewMetrics.scaledHeight}px
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1 rounded-full border border-gray-200 bg-white px-1 py-1 shadow-sm dark:border-dark-600 dark:bg-dark-700">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-2 py-1"
+                          onClick={decreaseZoom}
+                          aria-label="Reducir zoom"
+                        >
+                          <ZoomOut size={14} />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="px-2 py-1"
+                          onClick={increaseZoom}
+                          aria-label="Aumentar zoom"
+                        >
+                          <ZoomIn size={14} />
+                        </Button>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="px-3 py-1"
+                        onClick={resetZoom}
+                      >
+                        <RefreshCw size={14} className="mr-2" /> Ajustar
+                      </Button>
+                      <div className="hidden md:flex items-center gap-1">
+                        {zoomPresets.map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => applyZoom(preset)}
+                            className={`rounded-full border px-2 py-1 text-xs font-semibold transition-all ${
+                              Math.abs(zoom - preset) < 0.01
+                                ? "border-blue-500 bg-blue-50 text-blue-600 dark:border-blue-400 dark:bg-blue-500/10 dark:text-blue-300"
+                                : "border-gray-200 text-gray-600 hover:border-blue-400 hover:text-blue-600 dark:border-dark-600 dark:text-gray-300"
+                            }`}
+                          >
+                            {Math.round(preset * 100)}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                   <div className="overflow-auto">
                     <TemplateDocument
                       template={activeTemplate}
                       context={renderContext}
                       preview
+                      zoom={zoom}
+                      selectedSectionId={selectedSectionId}
+                      onSelectSection={setSelectedSectionId}
                     />
                   </div>
                 </CardContent>
