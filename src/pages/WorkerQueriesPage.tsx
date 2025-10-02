@@ -942,6 +942,12 @@ export const WorkerQueriesPage: React.FC = () => {
                           Copiar email
                         </Button>
                       </div>
+                      {copyFeedback?.type === 'email' && (
+                        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-300">
+                          {copyFeedback.message}
+                          {copyFeedback.target ? ` (${copyFeedback.target})` : ''}
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex flex-col gap-1">
@@ -992,6 +998,12 @@ export const WorkerQueriesPage: React.FC = () => {
                           Copiar teléfono
                         </Button>
                       </div>
+                      {copyFeedback?.type === 'phone' && (
+                        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-300">
+                          {copyFeedback.message}
+                          {copyFeedback.target ? ` (${copyFeedback.target})` : ''}
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center space-x-2 text-sm">
