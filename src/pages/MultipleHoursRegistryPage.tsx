@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock, Save, ChevronDown, ChevronRight } from 'lucide-react';
+import { Clock, Save, ChevronDown, ChevronRight, Users } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
+import { Select } from '../components/ui/Select';
 import { HourEntry } from '../types/salary';
 import { formatDate } from '../lib/utils';
 
@@ -36,30 +37,6 @@ const hoursFormatter = new Intl.NumberFormat('es-ES', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
-
-const layoutOptions = [
-  {
-    value: 'groups',
-    label: 'Grupos de personal…',
-    description: 'Elegir subcategorías y guardar combinaciones favoritas.',
-    disabled: true,
-  },
-  {
-    value: 'weekly',
-    label: 'Vista semanal',
-    description: 'Planificar asignaciones semanales con arrastrar y soltar.',
-    disabled: true,
-  },
-  {
-    value: 'table',
-    label: 'Formato tabla con dos vistas',
-    description:
-      'Vista por empresas o por trabajadores sin perder los totales diarios.',
-    disabled: false,
-  },
-] as const;
-
-type LayoutOptionValue = typeof layoutOptions[number]['value'];
 
 const initialAssignments: Assignment[] = [
   {
@@ -240,8 +217,54 @@ const calculateTotals = (items: Assignment[]): Record<WeekDayKey, number> => {
 const formatHours = (value: number): string => `${hoursFormatter.format(value)} h`;
 
 export const MultipleHoursRegistryPage: React.FC = () => {
+  const workerGroupPresets = useMemo(
+    () => [
+      {
+        id: 'all-staff',
+        name: 'Operaciones · Todas las sedes',
+        description:
+          'Agrupación general que combina al personal operativo de cafetería, tetería y logística.',
+        workerCount: 24,
+        coverage: '3 sedes activas',
+        defaultShift: 'Cobertura semanal',
+        lastUpdate: '12/03/2024',
+      },
+      {
+        id: 'morning-shift',
+        name: 'Turno Mañana',
+        description:
+          'Equipo disponible de 06:00 a 14:00 enfocado en aperturas y servicios de desayuno.',
+        workerCount: 11,
+        coverage: '2 sedes principales',
+        defaultShift: 'Franja 06:00 — 14:00',
+        lastUpdate: '08/03/2024',
+      },
+      {
+        id: 'weekend-support',
+        name: 'Apoyo Fin de Semana',
+        description:
+          'Relevo de refuerzo para sábados y domingos con prioridad en eventos y catering.',
+        workerCount: 7,
+        coverage: 'Cobertura fin de semana',
+        defaultShift: 'Disponibilidad 09:00 — 18:00',
+        lastUpdate: '10/03/2024',
+      },
+    ],
+    [],
+  );
+
+  const [selectedGroupId, setSelectedGroupId] = useState<string>(
+    workerGroupPresets[0]?.id ?? '',
+  );
+  const selectedPreset = useMemo(
+    () =>
+      workerGroupPresets.find((group) => group.id === selectedGroupId) ??
+      workerGroupPresets[0] ??
+      null,
+    [selectedGroupId, workerGroupPresets],
+  );
+
   const [assignments, setAssignments] = useState<Assignment[]>(initialAssignments);
-  const [selectedLayout, setSelectedLayout] = useState<LayoutOptionValue>('table');
   const [viewMode, setViewMode] = useState<'company' | 'worker'>('company');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
@@ -636,49 +659,95 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       />
 
       <Card>
-        <CardContent className="space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Configura la vista
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Selecciona cómo deseas organizar a los trabajadores antes de registrar horas.
-            </p>
+        <CardHeader className="gap-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">
+                <Users size={20} />
+              </span>
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  Seleccionar grupo de trabajadores
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Elige la agrupación con la que trabajarás antes de registrar o revisar horas.
+                </p>
+              </div>
+            </div>
+            <div className="self-start rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              Diseño preliminar
+            </div>
           </div>
-          <div className="space-y-3">
-            {layoutOptions.map((option) => {
-              const isSelected = selectedLayout === option.value;
-
-              return (
-                <label
-                  key={option.value}
-                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${
-                    isSelected
-                      ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200 dark:border-blue-500/70 dark:bg-blue-900/20 dark:ring-blue-500/40'
-                      : 'border-gray-200 hover:border-blue-300 dark:border-gray-700 dark:hover:border-blue-500'
-                  } ${option.disabled ? 'cursor-not-allowed opacity-60 hover:border-gray-200 dark:hover:border-gray-700' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="layout"
-                    value={option.value}
-                    checked={isSelected}
-                    disabled={option.disabled}
-                    onChange={() => setSelectedLayout(option.value)}
-                    className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500"
-                  />
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">{option.label}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">{option.description}</p>
-                    {option.disabled && (
-                      <p className="mt-1 text-xs text-yellow-600 dark:text-yellow-400">
-                        Próximamente
-                      </p>
-                    )}
-                  </div>
-                </label>
-              );
-            })}
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Select
+              label="Grupo de trabajadores"
+              value={selectedGroupId}
+              onChange={setSelectedGroupId}
+              options={workerGroupPresets.map((group) => ({
+                value: group.id,
+                label: group.name,
+              }))}
+              placeholder="Selecciona un grupo"
+              fullWidth
+            />
+            <div className="rounded-xl border border-dashed border-gray-300 bg-white/80 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+              {selectedPreset ? (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                    {selectedPreset.name}
+                  </h3>
+                  <p className="leading-relaxed">{selectedPreset.description}</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">
+                    Última actualización: {selectedPreset.lastUpdate}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                    Define tu primer grupo
+                  </h3>
+                  <p>
+                    Cuando existan agrupaciones guardadas podrás seleccionarlas y ver un resumen aquí.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
+                Integrantes
+              </p>
+              <p className="text-xl font-semibold">
+                {selectedPreset ? selectedPreset.workerCount : '—'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-emerald-50 p-4 text-sm text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
+                Cobertura
+              </p>
+              <p className="text-base font-semibold">
+                {selectedPreset ? selectedPreset.coverage : 'Por definir'}
+              </p>
+            </div>
+            <div className="rounded-lg bg-purple-50 p-4 text-sm text-purple-700 dark:bg-purple-900/30 dark:text-purple-200">
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
+                Turno sugerido
+              </p>
+              <p className="text-base font-semibold">
+                {selectedPreset ? selectedPreset.defaultShift : 'Pendiente'}
+              </p>
+            </div>
+          </div>
+          <div className="rounded-xl border border-dashed border-gray-200 bg-white/90 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+            <p>
+              Próximamente verás aquí el listado de trabajadores del grupo seleccionado junto con accesos directos para revisar y registrar sus horas.
+            </p>
+            <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
+              Esta sección solo define la experiencia visual; enlazaremos los datos reales en el siguiente paso.
+            </p>
           </div>
         </CardContent>
       </Card>

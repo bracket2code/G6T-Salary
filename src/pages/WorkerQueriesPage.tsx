@@ -714,7 +714,10 @@ const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
                         )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                        <Users size={14} className="text-gray-400 dark:text-gray-500" />
+                        <Users
+                          size={14}
+                          className="text-gray-400 dark:text-gray-500"
+                        />
                         <span>{group.memberCount}</span>
                       </div>
                       {selectedGroupId === group.id && (
@@ -822,7 +825,9 @@ export const WorkerQueriesPage: React.FC = () => {
             ? "1 trabajador asignado"
             : `${group.memberIds.length} trabajadores asignados`,
       }))
-      .sort((a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" }));
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+      );
 
     const membersRecord: Record<string, string[]> = {};
     rawGroups.forEach((group) => {
@@ -834,7 +839,7 @@ export const WorkerQueriesPage: React.FC = () => {
 
     const allGroupOption: WorkerGroupOption = {
       id: allGroupId,
-      label: "Todos los trabajadores",
+      label: "Trabajadores",
       description: sortedGroups.length
         ? "Incluye todas las categorías"
         : "No hay categorías disponibles",
@@ -1015,16 +1020,6 @@ export const WorkerQueriesPage: React.FC = () => {
     }
   }, []);
 
-  const roleCounts = useMemo(() => {
-    return allWorkers.reduce(
-      (acc, worker) => {
-        acc[worker.role] = (acc[worker.role] ?? 0) + 1;
-        return acc;
-      },
-      { admin: 0, supervisor: 0, tecnico: 0 } as Record<Worker["role"], number>
-    );
-  }, [allWorkers]);
-
   const companyContractsList = useMemo(() => {
     if (!selectedWorker?.companyContracts) {
       return [] as Array<WorkerCompanyContract & { companyName: string }>;
@@ -1063,8 +1058,7 @@ export const WorkerQueriesPage: React.FC = () => {
                 </div>
                 {selectedGroupOption && (
                   <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
-                    {selectedGroupOption.label}: {selectedGroupOption.memberCount} trabajador
-                    {selectedGroupOption.memberCount === 1 ? "" : "es"}
+                    {selectedGroupOption.label}: {selectedGroupOption.memberCount}
                   </div>
                 )}
                 <Button
@@ -1105,7 +1099,8 @@ export const WorkerQueriesPage: React.FC = () => {
 
               {filteredWorkers.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
-                  No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza para obtener más registros.
+                  No hay trabajadores asignados a este grupo. Selecciona otro
+                  grupo o sincroniza para obtener más registros.
                 </div>
               ) : (
                 <WorkerSearchSelect
@@ -1465,73 +1460,6 @@ export const WorkerQueriesPage: React.FC = () => {
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-            <FileText
-              size={20}
-              className="mr-2 text-purple-600 dark:text-purple-400"
-            />
-            Estadísticas Generales
-          </h2>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="text-center p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-              <Users
-                size={24}
-                className="mx-auto text-blue-600 dark:text-blue-400 mb-2"
-              />
-              <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">
-                {allWorkers.length}
-              </p>
-              <p className="text-sm text-blue-700 dark:text-blue-300">
-                Total Trabajadores
-              </p>
-            </div>
-
-            <div className="text-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
-              <User
-                size={24}
-                className="mx-auto text-green-600 dark:text-green-400 mb-2"
-              />
-              <p className="text-2xl font-bold text-green-900 dark:text-green-100">
-                {roleCounts.admin ?? 0}
-              </p>
-              <p className="text-sm text-green-700 dark:text-green-300">
-                Administradores
-              </p>
-            </div>
-
-            <div className="text-center p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-              <User
-                size={24}
-                className="mx-auto text-yellow-600 dark:text-yellow-400 mb-2"
-              />
-              <p className="text-2xl font-bold text-yellow-900 dark:text-yellow-100">
-                {roleCounts.supervisor ?? 0}
-              </p>
-              <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                Supervisores
-              </p>
-            </div>
-
-            <div className="text-center p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-              <User
-                size={24}
-                className="mx-auto text-purple-600 dark:text-purple-400 mb-2"
-              />
-              <p className="text-2xl font-bold text-purple-900 dark:text-purple-100">
-                {roleCounts.tecnico ?? 0}
-              </p>
-              <p className="text-sm text-purple-700 dark:text-purple-300">
-                Técnicos
-              </p>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>

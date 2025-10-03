@@ -678,7 +678,7 @@ const TemplateDocument: React.FC<{
               <div>
                 <div style={{ fontWeight: 600 }}>{context.period.label}</div>
                 <div style={{ color: "#64748b" }}>
-                  {context.totals.totalHours.toFixed(2)} h · {" "}
+                  {context.totals.totalHours.toFixed(2)} h ·{" "}
                   {context.totals.totalTrackedDays} días
                 </div>
               </div>
@@ -701,7 +701,9 @@ const TemplateDocument: React.FC<{
 
   const companyTotalsSection =
     template.includeCompanyTotals && context.companyTotals.length > 0 ? (
-      <section style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <section
+        style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+      >
         <h3 style={sectionTitleStyle}>Horas por empresa</h3>
         <table
           style={{
@@ -758,12 +760,13 @@ const TemplateDocument: React.FC<{
           </tbody>
         </table>
       </section>
-    )
-    : null;
+    ) : null;
 
   const dailyBreakdownSection =
     template.includeDailyBreakdown && context.dailyEntries.length > 0 ? (
-      <section style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <section
+        style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+      >
         <h3 style={sectionTitleStyle}>Detalle diario</h3>
         <table
           style={{
@@ -844,7 +847,9 @@ const TemplateDocument: React.FC<{
                     ? entry.companies
                         .map(
                           (company) =>
-                            `${company.name ?? "Sin empresa"} (${company.hours.toFixed(2)} h)`
+                            `${
+                              company.name ?? "Sin empresa"
+                            } (${company.hours.toFixed(2)} h)`
                         )
                         .join(" · ")
                     : "—"}
@@ -862,8 +867,7 @@ const TemplateDocument: React.FC<{
           </tbody>
         </table>
       </section>
-    )
-    : null;
+    ) : null;
 
   type DetailedRow = {
     key: string;
@@ -945,7 +949,11 @@ const TemplateDocument: React.FC<{
       return chunks;
     }
 
-    for (let start = 0; start < detailedRows.length; start += rowsPerDetailPage) {
+    for (
+      let start = 0;
+      start < detailedRows.length;
+      start += rowsPerDetailPage
+    ) {
       const rows = detailedRows.slice(start, start + rowsPerDetailPage);
       chunks.push({
         rows,
@@ -978,8 +986,7 @@ const TemplateDocument: React.FC<{
       currentItems = [];
     };
 
-    const headerLabel =
-      template.header.title?.trim() || "Cabecera principal";
+    const headerLabel = template.header.title?.trim() || "Cabecera principal";
     currentContent.push(headerBlock);
     currentItems.push({ type: "header", label: headerLabel });
 
@@ -1043,9 +1050,7 @@ const TemplateDocument: React.FC<{
           >
             <div style={badgeStyle}>Registros diarios</div>
             <h2 style={{ ...sectionTitleStyle, fontSize: "20px" }}>
-              {pageIndex === 0
-                ? detailTitle
-                : `${detailTitle} (continuación)`}
+              {pageIndex === 0 ? detailTitle : `${detailTitle} (continuación)`}
             </h2>
             {pageIndex === 0 && detailDescription ? (
               <p style={textStyle}>{detailDescription}</p>
@@ -1056,9 +1061,7 @@ const TemplateDocument: React.FC<{
         detailItems.push({
           type: "detailHeader",
           label:
-            pageIndex === 0
-              ? detailTitle
-              : `${detailTitle} (continuación)`,
+            pageIndex === 0 ? detailTitle : `${detailTitle} (continuación)`,
           detailPageIndex: pageIndex + 1,
         });
 
@@ -1261,7 +1264,7 @@ const TemplateDocument: React.FC<{
         >
           {({ currentPage, totalPages }) => (
             <span>
-              {replaceTokens(template.footer?.text ?? "", context)} · Página {" "}
+              {replaceTokens(template.footer?.text ?? "", context)} · Página{" "}
               {currentPage} de {totalPages}
             </span>
           )}
@@ -2374,20 +2377,14 @@ const TemplatesPage: React.FC = () => {
                 );
               })}
             </CardContent>
-        </Card>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                Datos fuente
-              </div>
-              <div className="flex items-center gap-2">
-                {lastFetchTime ? (
-                  <div className="inline-flex items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                    Actualizado: {lastFetchTime.toLocaleString("es-ES")}
-                  </div>
-                ) : null}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  Datos fuente
+                </div>
                 <Button
                   size="sm"
                   variant="outline"
@@ -2408,8 +2405,7 @@ const TemplatesPage: React.FC = () => {
                   Actualizar
                 </Button>
               </div>
-            </div>
-          </CardHeader>
+            </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 {isLoadingWorkers ? (
@@ -2730,11 +2726,16 @@ const TemplatesPage: React.FC = () => {
                                     >
                                       <input
                                         type="checkbox"
-                                        checked={Boolean(section.pageBreakBefore)}
+                                        checked={Boolean(
+                                          section.pageBreakBefore
+                                        )}
                                         onChange={(e) =>
-                                          handleSectionChange(section.id, () => ({
-                                            pageBreakBefore: e.target.checked,
-                                          }))
+                                          handleSectionChange(
+                                            section.id,
+                                            () => ({
+                                              pageBreakBefore: e.target.checked,
+                                            })
+                                          )
                                         }
                                         disabled={index === 0}
                                         title={
@@ -2944,7 +2945,9 @@ const TemplatesPage: React.FC = () => {
                           onChange={(e) => {
                             const parsed = Number(e.target.value);
                             handleTemplateChange(() => ({
-                              detailedEntriesRowsPerPage: Number.isFinite(parsed)
+                              detailedEntriesRowsPerPage: Number.isFinite(
+                                parsed
+                              )
                                 ? Math.min(50, Math.max(5, parsed))
                                 : activeTemplate.detailedEntriesRowsPerPage,
                             }));
@@ -2952,7 +2955,9 @@ const TemplatesPage: React.FC = () => {
                         />
                         <TextArea
                           label="Descripción opcional"
-                          value={activeTemplate.detailedEntriesDescription ?? ""}
+                          value={
+                            activeTemplate.detailedEntriesDescription ?? ""
+                          }
                           onChange={(e) =>
                             handleTemplateChange(() => ({
                               detailedEntriesDescription: e.target.value,
@@ -3052,7 +3057,8 @@ const TemplatesPage: React.FC = () => {
                           <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.3em] text-gray-500 dark:text-gray-400">
                             <span>Página {pageIndex + 1}</span>
                             <span className="tracking-normal text-[10px] text-gray-400 dark:text-gray-500">
-                              {page.items.length} bloque{page.items.length === 1 ? "" : "s"}
+                              {page.items.length} bloque
+                              {page.items.length === 1 ? "" : "s"}
                             </span>
                           </div>
                           <ul className="mt-3 space-y-2 text-sm text-gray-700 dark:text-gray-200">
@@ -3090,14 +3096,18 @@ const TemplatesPage: React.FC = () => {
 
                               if (isSectionItem) {
                                 return (
-                                  <li key={`${item.type}-${item.sectionId}-${itemIndex}`}>
+                                  <li
+                                    key={`${item.type}-${item.sectionId}-${itemIndex}`}
+                                  >
                                     <button
                                       type="button"
                                       onClick={() =>
                                         setSelectedSectionId(item.sectionId)
                                       }
                                       className={`${baseClasses} ${
-                                        isSelected ? selectedClasses : inactiveClasses
+                                        isSelected
+                                          ? selectedClasses
+                                          : inactiveClasses
                                       }`}
                                     >
                                       {content}
