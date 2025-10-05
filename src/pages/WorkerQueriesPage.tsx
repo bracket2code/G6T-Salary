@@ -6,7 +6,6 @@ import React, {
   useRef,
 } from "react";
 import {
-  Search,
   Users,
   FileText,
   DollarSign,
@@ -17,9 +16,6 @@ import {
   User,
   RefreshCw,
   MessageCircle,
-  ChevronDown,
-  X,
-  Check,
 } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
@@ -29,6 +25,12 @@ import { Worker, WorkerCompanyContract } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
 import { fetchWorkersData } from "../lib/salaryData";
+import {
+  GroupSearchSelect,
+  WorkerGroupOption,
+  WorkerSearchSelect,
+} from "../components/worker/GroupSelectors";
+import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
 
 const sanitizeTelHref = (phone: string) => {
   const sanitized = phone.replace(/[^+\d]/g, "");
@@ -83,661 +85,6 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
   }
 };
 
-const createGroupId = (value: string) =>
-  value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "") || "sin-categoria";
-
-interface WorkerSearchSelectProps {
-  workers: Worker[];
-  selectedWorkerId: string;
-  onWorkerSelect: (workerId: string) => void;
-  placeholder?: string;
-  label?: string;
-}
-
-const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
-  workers,
-  selectedWorkerId,
-  onWorkerSelect,
-  placeholder = "Buscar trabajador...",
-  label = "Trabajador",
-}) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [inputValue, setInputValue] = useState("");
-  const [highlightedIndex, setHighlightedIndex] = useState(-1);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
-
-  const selectedWorker = useMemo(
-    () => workers.find((w) => w.id === selectedWorkerId),
-    [workers, selectedWorkerId]
-  );
-
-  const filteredWorkers = useMemo(
-    () =>
-      workers
-        .filter((worker) => {
-          const query = searchQuery.toLowerCase();
-          return (
-            worker.name.toLowerCase().includes(query) ||
-            worker.email.toLowerCase().includes(query) ||
-            (worker.phone && worker.phone.toLowerCase().includes(query)) ||
-            (worker.department &&
-              worker.department.toLowerCase().includes(query)) ||
-            (worker.position &&
-              worker.position.toLowerCase().includes(query)) ||
-            (worker.companyNames &&
-              worker.companyNames.some((company) =>
-                company.toLowerCase().includes(query)
-              ))
-          );
-        })
-        .sort((a, b) =>
-          a.name.localeCompare(b.name, "es", { sensitivity: "base" })
-        ),
-    [workers, searchQuery]
-  );
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-        if (selectedWorker) {
-          setInputValue(selectedWorker.name);
-        } else {
-          setInputValue("");
-        }
-        setSearchQuery("");
-        setHighlightedIndex(-1);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [selectedWorker]);
-
-  useEffect(() => {
-    if (selectedWorker) {
-      setInputValue(selectedWorker.name);
-    } else {
-      setInputValue("");
-    }
-  }, [selectedWorker]);
-
-  useEffect(() => {
-    itemRefs.current = itemRefs.current.slice(0, filteredWorkers.length);
-  }, [filteredWorkers.length]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    if (filteredWorkers.length === 0) {
-      setHighlightedIndex(-1);
-      return;
-    }
-
-    if (highlightedIndex === -1) {
-      setHighlightedIndex(0);
-    } else if (highlightedIndex >= filteredWorkers.length) {
-      setHighlightedIndex(filteredWorkers.length - 1);
-    }
-  }, [filteredWorkers, isOpen, highlightedIndex]);
-
-  useEffect(() => {
-    if (highlightedIndex >= 0) {
-      itemRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
-    }
-  }, [highlightedIndex]);
-
-  const handleWorkerSelect = (worker: Worker) => {
-    onWorkerSelect(worker.id);
-    setInputValue(worker.name);
-    setIsOpen(false);
-    setSearchQuery("");
-    setHighlightedIndex(-1);
-  };
-
-  const handleClear = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    onWorkerSelect("");
-    setInputValue("");
-    setSearchQuery("");
-    setIsOpen(false);
-    setHighlightedIndex(-1);
-  };
-
-  const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = event.target.value;
-    setInputValue(value);
-    setSearchQuery(value);
-    setIsOpen(true);
-    setHighlightedIndex(-1);
-
-    if (value === "") {
-      onWorkerSelect("");
-    }
-  };
-
-  const handleInputFocus = () => {
-    setIsOpen(true);
-    if (selectedWorker) {
-      setInputValue("");
-      setSearchQuery("");
-    }
-    if (filteredWorkers.length > 0) {
-      setHighlightedIndex(0);
-    }
-  };
-
-  const handleInputClick = () => {
-    setIsOpen(true);
-    if (filteredWorkers.length > 0 && highlightedIndex === -1) {
-      setHighlightedIndex(0);
-    }
-  };
-
-  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setIsOpen(false);
-      setHighlightedIndex(-1);
-      if (selectedWorker) {
-        setInputValue(selectedWorker.name);
-      }
-      return;
-    }
-
-    if (!isOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      setIsOpen(true);
-    }
-
-    if (!filteredWorkers.length) {
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setHighlightedIndex((prev) => {
-        const nextIndex = prev + 1;
-        if (nextIndex >= filteredWorkers.length || prev === -1) {
-          return 0;
-        }
-        return nextIndex;
-      });
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setHighlightedIndex((prev) => {
-        if (prev <= 0) {
-          return filteredWorkers.length - 1;
-        }
-        return prev - 1;
-      });
-    } else if (event.key === "Enter") {
-      if (highlightedIndex >= 0 && highlightedIndex < filteredWorkers.length) {
-        event.preventDefault();
-        handleWorkerSelect(filteredWorkers[highlightedIndex]);
-      }
-    }
-  };
-
-  return (
-    <div className="relative" ref={dropdownRef}>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        {label}
-      </label>
-
-      <div
-        className={`
-          min-h-[42px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600
-          rounded-md flex items-center
-          hover:border-gray-400 dark:hover:border-gray-500
-          ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
-        `}
-      >
-        <div className="flex-1 flex items-center px-3 py-2">
-          <Search size={18} className="text-gray-400 mr-2" />
-          <input
-            type="text"
-            value={inputValue}
-            onChange={handleInputChange}
-            onFocus={handleInputFocus}
-            onClick={handleInputClick}
-            onKeyDown={handleInputKeyDown}
-            placeholder={placeholder}
-            className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none"
-          />
-        </div>
-        <div className="flex items-center space-x-1">
-          {(selectedWorker || inputValue) && (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="p-1 mr-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-            >
-              <X size={14} className="text-gray-400" />
-            </button>
-          )}
-          <ChevronDown
-            size={16}
-            className={`text-gray-400 transition-transform duration-200 mr-2 ${
-              isOpen ? "rotate-180" : ""
-            }`}
-            onClick={() => setIsOpen(!isOpen)}
-          />
-        </div>
-      </div>
-
-      {isOpen && (
-        <div className="w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-hidden">
-          <div className="max-h-48 overflow-y-auto">
-            {filteredWorkers.length === 0 ? (
-              <div className="px-3 py-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-                {searchQuery
-                  ? `No se encontraron trabajadores con "${searchQuery}"`
-                  : "Escribe para buscar trabajadores"}
-              </div>
-            ) : (
-              <>
-                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
-                  {searchQuery
-                    ? `${filteredWorkers.length} de ${workers.length} trabajadores`
-                    : `${workers.length} trabajadores disponibles`}
-                </div>
-
-                {filteredWorkers.map((worker, index) => {
-                  const isHighlighted = highlightedIndex === index;
-                  const isSelected = selectedWorkerId === worker.id;
-                  const baseClasses = `px-3 py-3 cursor-pointer flex items-center justify-between border-b border-gray-100 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700`;
-                  const highlightClass = isSelected
-                    ? "bg-blue-50 dark:bg-blue-900/20"
-                    : isHighlighted
-                    ? "bg-gray-100 dark:bg-gray-700"
-                    : "";
-
-                  return (
-                    <div
-                      key={`${worker.id}-${index}`}
-                      ref={(el) => {
-                        itemRefs.current[index] = el;
-                      }}
-                      className={`${baseClasses} ${highlightClass}`}
-                      onClick={() => handleWorkerSelect(worker)}
-                      onMouseEnter={() => setHighlightedIndex(index)}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p
-                          className={`text-sm font-medium truncate ${
-                            isSelected
-                              ? "text-blue-700 dark:text-blue-300"
-                              : "text-gray-900 dark:text-white"
-                          }`}
-                        >
-                          {worker.name}
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                          {worker.companyNames && worker.companyNames.length > 0
-                            ? worker.companyNames.join(", ")
-                            : "Sin empresas asignadas"}
-                        </p>
-                        {(worker.department || worker.position) && (
-                          <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
-                            {[worker.department, worker.position]
-                              .filter(Boolean)
-                              .join(" • ")}
-                          </p>
-                        )}
-                      </div>
-                      {selectedWorkerId === worker.id && (
-                        <Check
-                          size={16}
-                          className="text-blue-600 dark:text-blue-400 ml-2"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-interface WorkerGroupOption {
-  id: string;
-  label: string;
-  description?: string;
-  memberCount: number;
-}
-
-interface GroupSearchSelectProps {
-  groups: WorkerGroupOption[];
-  selectedGroupId: string;
-  onGroupSelect: (groupId: string) => void;
-  placeholder?: string;
-  clearOptionId?: string;
-}
-
-const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
-  groups,
-  selectedGroupId,
-  onGroupSelect,
-  placeholder = "Buscar grupo...",
-  clearOptionId = "",
-}) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [inputValue, setInputValue] = useState("");
-  const [highlightedIndex, setHighlightedIndex] = useState(-1);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
-
-  const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId) ?? null,
-    [groups, selectedGroupId]
-  );
-
-  const filteredGroups = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    const result = groups.filter((group) => {
-      if (!normalizedQuery) {
-        return true;
-      }
-
-      const labelMatch = group.label.toLowerCase().includes(normalizedQuery);
-      const descriptionMatch = group.description
-        ?.toLowerCase()
-        .includes(normalizedQuery);
-      return labelMatch || descriptionMatch;
-    });
-
-    return result;
-  }, [groups, searchQuery]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-        if (selectedGroup) {
-          setInputValue(selectedGroup.label);
-        } else {
-          setInputValue("");
-        }
-        setSearchQuery("");
-        setHighlightedIndex(-1);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [selectedGroup]);
-
-  useEffect(() => {
-    if (selectedGroup) {
-      setInputValue(selectedGroup.label);
-    } else {
-      setInputValue("");
-    }
-  }, [selectedGroup]);
-
-  useEffect(() => {
-    itemRefs.current = itemRefs.current.slice(0, filteredGroups.length);
-  }, [filteredGroups.length]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    if (filteredGroups.length === 0) {
-      setHighlightedIndex(-1);
-      return;
-    }
-
-    if (highlightedIndex === -1) {
-      setHighlightedIndex(0);
-    } else if (highlightedIndex >= filteredGroups.length) {
-      setHighlightedIndex(filteredGroups.length - 1);
-    }
-  }, [filteredGroups, isOpen, highlightedIndex]);
-
-  useEffect(() => {
-    if (highlightedIndex >= 0) {
-      itemRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
-    }
-  }, [highlightedIndex]);
-
-  const handleGroupSelect = (group: WorkerGroupOption) => {
-    onGroupSelect(group.id);
-    setInputValue(group.label);
-    setIsOpen(false);
-    setSearchQuery("");
-    setHighlightedIndex(-1);
-  };
-
-  const handleClear = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    onGroupSelect(clearOptionId);
-    setInputValue("");
-    setSearchQuery("");
-    setIsOpen(false);
-    setHighlightedIndex(-1);
-  };
-
-  const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = event.target.value;
-    setInputValue(value);
-    setSearchQuery(value);
-    setIsOpen(true);
-    setHighlightedIndex(-1);
-
-    if (value === "") {
-      onGroupSelect(clearOptionId);
-    }
-  };
-
-  const handleInputFocus = () => {
-    setIsOpen(true);
-    if (selectedGroup) {
-      setInputValue("");
-      setSearchQuery("");
-    }
-    if (filteredGroups.length > 0) {
-      setHighlightedIndex(0);
-    }
-  };
-
-  const handleInputClick = () => {
-    setIsOpen(true);
-    if (filteredGroups.length > 0 && highlightedIndex === -1) {
-      setHighlightedIndex(0);
-    }
-  };
-
-  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setIsOpen(false);
-      setHighlightedIndex(-1);
-      if (selectedGroup) {
-        setInputValue(selectedGroup.label);
-      }
-      return;
-    }
-
-    if (!isOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      setIsOpen(true);
-    }
-
-    if (!filteredGroups.length) {
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setHighlightedIndex((prev) => {
-        const nextIndex = prev + 1;
-        if (nextIndex >= filteredGroups.length || prev === -1) {
-          return 0;
-        }
-        return nextIndex;
-      });
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setHighlightedIndex((prev) => {
-        if (prev <= 0) {
-          return filteredGroups.length - 1;
-        }
-        return prev - 1;
-      });
-    } else if (event.key === "Enter") {
-      if (highlightedIndex >= 0 && highlightedIndex < filteredGroups.length) {
-        event.preventDefault();
-        handleGroupSelect(filteredGroups[highlightedIndex]);
-      }
-    }
-  };
-
-  return (
-    <div className="relative" ref={dropdownRef}>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        Grupo
-      </label>
-
-      <div
-        className={`
-          min-h-[42px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600
-          rounded-md flex items-center
-          hover:border-gray-400 dark:hover:border-gray-500
-          ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
-        `}
-      >
-        <div className="flex-1 flex items-center px-3 py-2">
-          <Search size={18} className="text-gray-400 mr-2" />
-          <input
-            type="text"
-            value={inputValue}
-            onChange={handleInputChange}
-            onFocus={handleInputFocus}
-            onClick={handleInputClick}
-            onKeyDown={handleInputKeyDown}
-            placeholder={placeholder}
-            className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none"
-          />
-        </div>
-        <div className="flex items-center space-x-1">
-          {(selectedGroup || inputValue) && (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="p-1 mr-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-            >
-              <X size={14} className="text-gray-400" />
-            </button>
-          )}
-          <ChevronDown
-            size={16}
-            className={`text-gray-400 transition-transform duration-200 mr-2 ${
-              isOpen ? "rotate-180" : ""
-            }`}
-            onClick={() => setIsOpen(!isOpen)}
-          />
-        </div>
-      </div>
-
-      {isOpen && (
-        <div className="w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-hidden">
-          <div className="max-h-48 overflow-y-auto">
-            {filteredGroups.length === 0 ? (
-              <div className="px-3 py-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-                {searchQuery
-                  ? `No se encontraron grupos con "${searchQuery}"`
-                  : "No hay grupos disponibles"}
-              </div>
-            ) : (
-              <>
-                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
-                  {searchQuery
-                    ? `${filteredGroups.length} de ${groups.length} grupos`
-                    : `${groups.length} grupos disponibles`}
-                </div>
-
-                {filteredGroups.map((group, index) => {
-                  const isHighlighted = highlightedIndex === index;
-                  const isSelected = selectedGroupId === group.id;
-                  const baseClasses = `px-3 py-3 cursor-pointer flex items-center justify-between border-b border-gray-100 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700`;
-                  const highlightClass = isSelected
-                    ? "bg-blue-50 dark:bg-blue-900/20"
-                    : isHighlighted
-                    ? "bg-gray-100 dark:bg-gray-700"
-                    : "";
-
-                  return (
-                    <div
-                      key={`${group.id}-${index}`}
-                      ref={(el) => {
-                        itemRefs.current[index] = el;
-                      }}
-                      className={`${baseClasses} ${highlightClass}`}
-                      onClick={() => handleGroupSelect(group)}
-                      onMouseEnter={() => setHighlightedIndex(index)}
-                    >
-                      <div className="flex-1 min-w-0 pr-3">
-                        <p
-                          className={`text-sm font-medium truncate ${
-                            isSelected
-                              ? "text-blue-700 dark:text-blue-300"
-                              : "text-gray-900 dark:text-white"
-                          }`}
-                        >
-                          {group.label}
-                        </p>
-                        {group.description && (
-                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {group.description}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                        <Users
-                          size={14}
-                          className="text-gray-400 dark:text-gray-500"
-                        />
-                        <span>{group.memberCount}</span>
-                      </div>
-                      {selectedGroupId === group.id && (
-                        <Check
-                          size={16}
-                          className="text-blue-600 dark:text-blue-400 ml-2"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const formatCurrencyValue = (amount: number) => {
   return new Intl.NumberFormat("es-ES", {
     style: "currency",
@@ -762,7 +109,7 @@ export const WorkerQueriesPage: React.FC = () => {
   const { externalJwt } = useAuthStore();
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
-  const [selectedGroupId, setSelectedGroupId] = useState<string>("all");
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(["all"]);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -792,85 +139,73 @@ export const WorkerQueriesPage: React.FC = () => {
     return selectedWorkerPhone ? buildWhatsAppLink(selectedWorkerPhone) : null;
   }, [selectedWorkerPhone]);
 
-  const { groupOptions, groupMembersById } = useMemo(() => {
-    const groupsMap = new Map<
-      string,
-      { id: string; label: string; memberIds: string[] }
-    >();
-
-    allWorkers.forEach((worker) => {
-      const rawGroupName = (worker.department ?? "Sin categoría").trim();
-      const groupId = createGroupId(rawGroupName);
-
-      if (!groupsMap.has(groupId)) {
-        groupsMap.set(groupId, {
-          id: groupId,
-          label: rawGroupName || "Sin categoría",
-          memberIds: [],
-        });
-      }
-
-      groupsMap.get(groupId)?.memberIds.push(worker.id);
-    });
-
-    const rawGroups = Array.from(groupsMap.values());
-
-    const sortedGroups: WorkerGroupOption[] = rawGroups
-      .map((group) => ({
-        id: group.id,
-        label: group.label,
-        memberCount: group.memberIds.length,
-        description:
-          group.memberIds.length === 1
-            ? "1 trabajador asignado"
-            : `${group.memberIds.length} trabajadores asignados`,
-      }))
-      .sort((a, b) =>
-        a.label.localeCompare(b.label, "es", { sensitivity: "base" })
-      );
-
-    const membersRecord: Record<string, string[]> = {};
-    rawGroups.forEach((group) => {
-      membersRecord[group.id] = [...group.memberIds];
-    });
-
-    const allGroupId = "all";
-    membersRecord[allGroupId] = allWorkers.map((worker) => worker.id);
-
-    const allGroupOption: WorkerGroupOption = {
-      id: allGroupId,
+  const [groupOptions, setGroupOptions] = useState<WorkerGroupOption[]>([
+    {
+      id: "all",
       label: "Trabajadores",
-      description: sortedGroups.length
-        ? "Incluye todas las categorías"
-        : "No hay categorías disponibles",
-      memberCount: allWorkers.length,
-    };
+      description: "Incluye todas las categorías",
+      memberCount: 0,
+    },
+  ]);
+  const [groupMembersById, setGroupMembersById] = useState<Record<string, string[]>>({
+    all: [],
+  });
+
+  const selectedGroupSummary = useMemo(() => {
+    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
+      const allOption = groupOptions.find((group) => group.id === "all");
+      const memberCount = groupMembersById.all?.length ?? allWorkers.length;
+      return {
+        label: allOption?.label ?? "Trabajadores",
+        memberCount,
+      };
+    }
+
+    const selectedGroups = groupOptions.filter((group) =>
+      selectedGroupIds.includes(group.id)
+    );
+
+    const memberSet = new Set<string>();
+    selectedGroupIds.forEach((groupId) => {
+      (groupMembersById[groupId] ?? []).forEach((workerId) =>
+        memberSet.add(workerId)
+      );
+    });
 
     return {
-      groupOptions: [allGroupOption, ...sortedGroups],
-      groupMembersById: membersRecord,
+      label:
+        selectedGroups.length === 1
+          ? selectedGroups[0]?.label ?? "Grupo"
+          : `${selectedGroups.length} grupos seleccionados`,
+      memberCount: memberSet.size,
     };
-  }, [allWorkers]);
+  }, [allWorkers.length, groupMembersById, groupOptions, selectedGroupIds]);
 
-  const selectedGroupOption = useMemo(
-    () => groupOptions.find((group) => group.id === selectedGroupId) ?? null,
-    [groupOptions, selectedGroupId]
-  );
+  const allowedWorkerIdSet = useMemo(() => {
+    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
+      return new Set(allWorkers.map((worker) => worker.id));
+    }
+
+    const allowed = new Set<string>();
+    selectedGroupIds.forEach((groupId) => {
+      (groupMembersById[groupId] ?? []).forEach((workerId) =>
+        allowed.add(workerId)
+      );
+    });
+    return allowed;
+  }, [allWorkers, groupMembersById, selectedGroupIds]);
 
   const filteredWorkers = useMemo(() => {
-    const allowedIds = groupMembersById[selectedGroupId] ?? [];
-
-    if (selectedGroupId === "all") {
+    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
       return allWorkers;
     }
 
-    if (!allowedIds.length) {
+    if (!allowedWorkerIdSet.size) {
       return [];
     }
 
-    const allowedSet = new Set(allowedIds);
-    return allWorkers.filter((worker) => allowedSet.has(worker.id));
-  }, [allWorkers, groupMembersById, selectedGroupId]);
+    return allWorkers.filter((worker) => allowedWorkerIdSet.has(worker.id));
+  }, [allWorkers, allowedWorkerIdSet, selectedGroupIds]);
 
   useEffect(
     () => () => {
@@ -897,26 +232,31 @@ export const WorkerQueriesPage: React.FC = () => {
   );
 
   useEffect(() => {
-    if (!groupOptions.find((group) => group.id === selectedGroupId)) {
-      setSelectedGroupId(groupOptions[0]?.id ?? "all");
-    }
-  }, [groupOptions, selectedGroupId]);
+    setSelectedGroupIds((prev) => {
+      const valid = prev.filter((id) =>
+        groupOptions.some((group) => group.id === id)
+      );
+
+      if (!valid.length) {
+        return [groupOptions[0]?.id ?? "all"];
+      }
+
+      if (valid.includes("all") && valid.length > 1) {
+        return valid.filter((id) => id !== "all");
+      }
+
+      return valid;
+    });
+  }, [groupOptions]);
 
   useEffect(() => {
-    const allowedWorkerIds = groupMembersById[selectedGroupId] ?? [];
-    setSelectedWorkerIds((prev) => {
-      if (!prev.length) {
-        return prev;
-      }
+    if (!selectedWorkerIds.length) {
+      return;
+    }
 
-      const filtered = prev.filter((id) => allowedWorkerIds.includes(id));
-      if (filtered.length === prev.length) {
-        return prev;
-      }
-      return filtered;
-    });
+    setSelectedWorkerIds((prev) => prev.filter((id) => allowedWorkerIdSet.has(id)));
     setExpandedCompany(null);
-  }, [groupMembersById, selectedGroupId]);
+  }, [allowedWorkerIdSet, selectedWorkerIds.length]);
 
   const handleEmailCopy = useCallback(
     async (emailToCopy?: string | null) => {
@@ -965,8 +305,8 @@ export const WorkerQueriesPage: React.FC = () => {
     window.open(selectedWorkerWhatsappHref, "_blank", "noopener");
   }, [selectedWorkerWhatsappHref]);
 
-  const handleWorkerSelectionChange = useCallback((workerId: string) => {
-    setSelectedWorkerIds(workerId ? [workerId] : []);
+  const handleWorkerSelectionChange = useCallback((workerIds: string[]) => {
+    setSelectedWorkerIds(workerIds);
     setExpandedCompany(null);
   }, []);
 
@@ -986,7 +326,140 @@ export const WorkerQueriesPage: React.FC = () => {
         apiUrl,
         token: externalJwt,
       });
-      setAllWorkers(workers);
+      let workersWithGroups = workers;
+
+      try {
+        const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt);
+
+        const workerIdSet = new Set(workers.map((worker) => worker.id));
+        const groupLabelById: Record<string, string> = {};
+        const sanitizedMembers: Record<string, string[]> = {};
+
+        grouping.groups.forEach((group) => {
+          groupLabelById[group.id] = group.label;
+          const members = (grouping.membersByGroup[group.id] ?? []).filter(
+            (workerId) => workerIdSet.has(workerId)
+          );
+          sanitizedMembers[group.id] = Array.from(new Set(members));
+        });
+
+        sanitizedMembers.all = workers.map((worker) => worker.id);
+
+        const options: WorkerGroupOption[] = [
+          {
+            id: "all",
+            label: "Trabajadores",
+            description: grouping.groups.length
+              ? "Incluye todos los grupos"
+              : "No hay grupos disponibles",
+            memberCount: workers.length,
+          },
+          ...grouping.groups
+            .map((group) => {
+              const memberCount = sanitizedMembers[group.id]?.length ?? 0;
+              const description = group.description
+                ? group.description
+                : memberCount === 1
+                ? "1 trabajador asignado"
+                : `${memberCount} trabajadores asignados`;
+
+              return {
+                id: group.id,
+                label: group.label,
+                description,
+                memberCount,
+              };
+            })
+            .sort((a, b) =>
+              a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+            ),
+        ];
+
+        setGroupOptions(options);
+        setGroupMembersById(sanitizedMembers);
+
+        workersWithGroups = workers.map((worker) => {
+          const rawGroupIds = grouping.groupsByWorker[worker.id] ?? [];
+          if (!rawGroupIds.length) {
+            return worker;
+          }
+
+          const groupNames = rawGroupIds
+            .map((groupId) => groupLabelById[groupId])
+            .filter((name): name is string => Boolean(name));
+
+          if (!groupNames.length) {
+            return worker;
+          }
+
+          const uniqueNames = Array.from(new Set(groupNames));
+          return {
+            ...worker,
+            department: uniqueNames.join(", "),
+          };
+        });
+      } catch (groupError) {
+        console.error(
+          "No se pudieron obtener los grupos desde la API",
+          groupError
+        );
+
+        const fallbackGroupsMap = new Map<
+          string,
+          { id: string; label: string; memberIds: string[] }
+        >();
+
+        workers.forEach((worker) => {
+          const rawGroupName = (worker.department ?? "Sin categoría").trim();
+          const groupId = createGroupId(rawGroupName);
+
+          if (!fallbackGroupsMap.has(groupId)) {
+            fallbackGroupsMap.set(groupId, {
+              id: groupId,
+              label: rawGroupName || "Sin categoría",
+              memberIds: [],
+            });
+          }
+
+          fallbackGroupsMap.get(groupId)?.memberIds.push(worker.id);
+        });
+
+        const fallbackGroups = Array.from(fallbackGroupsMap.values()).sort(
+          (a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+        );
+
+        const fallbackMembers: Record<string, string[]> = {};
+        fallbackGroups.forEach((group) => {
+          fallbackMembers[group.id] = [...group.memberIds];
+        });
+        fallbackMembers.all = workers.map((worker) => worker.id);
+
+        const fallbackOptions: WorkerGroupOption[] = [
+          {
+            id: "all",
+            label: "Trabajadores",
+            description: fallbackGroups.length
+              ? "Incluye todas las categorías"
+              : "No hay categorías disponibles",
+            memberCount: workers.length,
+          },
+          ...fallbackGroups.map((group) => ({
+            id: group.id,
+            label: group.label,
+            description:
+              group.memberIds.length === 1
+                ? "1 trabajador asignado"
+                : `${group.memberIds.length} trabajadores asignados`,
+            memberCount: group.memberIds.length,
+          })),
+        ];
+
+        setGroupOptions(fallbackOptions);
+        setGroupMembersById(fallbackMembers);
+        workersWithGroups = workers;
+      }
+
+      setAllWorkers(workersWithGroups);
       setLastFetchTime(new Date());
     } catch (error) {
       console.error("Error fetching workers:", error);
@@ -1056,9 +529,9 @@ export const WorkerQueriesPage: React.FC = () => {
                     ? lastFetchTime.toLocaleString("es-ES")
                     : "Sin sincronizar"}
                 </div>
-                {selectedGroupOption && (
+                {selectedGroupSummary && (
                   <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
-                    {selectedGroupOption.label}: {selectedGroupOption.memberCount}
+                    {selectedGroupSummary.label}: {selectedGroupSummary.memberCount}
                   </div>
                 )}
                 <Button
@@ -1091,8 +564,8 @@ export const WorkerQueriesPage: React.FC = () => {
             <>
               <GroupSearchSelect
                 groups={groupOptions}
-                selectedGroupId={selectedGroupId}
-                onGroupSelect={setSelectedGroupId}
+                selectedGroupIds={selectedGroupIds}
+                onSelectionChange={setSelectedGroupIds}
                 placeholder="Buscar y seleccionar grupo..."
                 clearOptionId="all"
               />
@@ -1105,15 +578,15 @@ export const WorkerQueriesPage: React.FC = () => {
               ) : (
                 <WorkerSearchSelect
                   workers={filteredWorkers}
-                  selectedWorkerId={selectedWorkerId}
-                  onWorkerSelect={handleWorkerSelectionChange}
+                  selectedWorkerIds={selectedWorkerIds}
+                  onSelectionChange={handleWorkerSelectionChange}
                   placeholder={
-                    selectedGroupId === "all"
+                    selectedGroupIds.includes("all")
                       ? "Buscar y seleccionar trabajador..."
                       : "Buscar trabajador dentro del grupo..."
                   }
                   label={
-                    selectedGroupId === "all"
+                    selectedGroupIds.includes("all")
                       ? "Trabajador"
                       : "Trabajador del grupo"
                   }

@@ -1,11 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock, Save, ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { Clock, Save, ChevronDown, ChevronRight, RefreshCw, Users } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Select } from '../components/ui/Select';
-import { HourEntry } from '../types/salary';
+import { HourEntry, Worker } from '../types/salary';
 import { formatDate } from '../lib/utils';
+import { fetchWorkersData } from '../lib/salaryData';
+import { useAuthStore } from '../store/authStore';
+import {
+  GroupSearchSelect,
+  WorkerGroupOption,
+  WorkerSearchSelect,
+} from '../components/worker/GroupSelectors';
+import { createGroupId, fetchWorkerGroupsData } from '../lib/workerGroups';
 
 const weekDays = [
   { key: 'monday', label: 'Lunes', shortLabel: 'Lun' },
@@ -38,6 +46,16 @@ interface GroupView {
 const hoursFormatter = new Intl.NumberFormat('es-ES', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
+});
+
+const createEmptyHours = (): Record<WeekDayKey, string> => ({
+  monday: '',
+  tuesday: '',
+  wednesday: '',
+  thursday: '',
+  friday: '',
+  saturday: '',
+  sunday: '',
 });
 
 const initialAssignments: Assignment[] = [
@@ -203,6 +221,66 @@ const initialAssignments: Assignment[] = [
   },
 ];
 
+const initialAssignmentWorkerIds = Array.from(
+  new Set(initialAssignments.map((assignment) => assignment.workerId)),
+);
+
+const generateAssignmentsFromWorkers = (workers: Worker[]): Assignment[] => {
+  const assignments: Assignment[] = [];
+
+  workers.forEach((worker) => {
+    const companiesEntries = worker.companyContracts
+      ? Object.entries(worker.companyContracts)
+      : [];
+
+    if (companiesEntries.length > 0) {
+      companiesEntries.forEach(([companyName, contracts]) => {
+        const normalizedName = companyName?.trim() || 'Sin empresa';
+        const contract = Array.isArray(contracts) ? contracts[0] : undefined;
+        const candidateId =
+          contract?.companyId || createGroupId(normalizedName);
+
+        assignments.push({
+          id: `${candidateId}-${worker.id}`,
+          workerId: worker.id,
+          workerName: worker.name,
+          companyId: candidateId,
+          companyName: normalizedName,
+          hours: createEmptyHours(),
+        });
+      });
+      return;
+    }
+
+    if (worker.companyNames && worker.companyNames.length > 0) {
+      worker.companyNames.forEach((companyName) => {
+        const normalizedName = companyName.trim() || 'Sin empresa';
+        const candidateId = createGroupId(normalizedName);
+        assignments.push({
+          id: `${candidateId}-${worker.id}`,
+          workerId: worker.id,
+          workerName: worker.name,
+          companyId: candidateId,
+          companyName: normalizedName,
+          hours: createEmptyHours(),
+        });
+      });
+      return;
+    }
+
+    assignments.push({
+      id: `sin-empresa-${worker.id}`,
+      workerId: worker.id,
+      workerName: worker.name,
+      companyId: `sin-empresa-${worker.id}`,
+      companyName: 'Sin empresa',
+      hours: createEmptyHours(),
+    });
+  });
+
+  return assignments;
+};
+
 const parseHour = (value: string): number => {
   if (!value) {
     return 0;
@@ -241,57 +319,162 @@ const calculateTotals = (items: Assignment[]): Record<WeekDayKey, number> => {
 const formatHours = (value: number): string => `${hoursFormatter.format(value)} h`;
 
 export const MultipleHoursRegistryPage: React.FC = () => {
-  const workerGroupPresets = useMemo(
-    () => [
-      {
-        id: 'all-staff',
-        name: 'Operaciones · Todas las sedes',
-        description:
-          'Agrupación general que combina al personal operativo de cafetería, tetería y logística.',
-        workerCount: 24,
-        coverage: '3 sedes activas',
-        defaultShift: 'Cobertura semanal',
-        lastUpdate: '12/03/2024',
-      },
-      {
-        id: 'morning-shift',
-        name: 'Turno Mañana',
-        description:
-          'Equipo disponible de 06:00 a 14:00 enfocado en aperturas y servicios de desayuno.',
-        workerCount: 11,
-        coverage: '2 sedes principales',
-        defaultShift: 'Franja 06:00 — 14:00',
-        lastUpdate: '08/03/2024',
-      },
-      {
-        id: 'weekend-support',
-        name: 'Apoyo Fin de Semana',
-        description:
-          'Relevo de refuerzo para sábados y domingos con prioridad en eventos y catering.',
-        workerCount: 7,
-        coverage: 'Cobertura fin de semana',
-        defaultShift: 'Disponibilidad 09:00 — 18:00',
-        lastUpdate: '10/03/2024',
-      },
-    ],
-    [],
-  );
-
-  const [selectedGroupId, setSelectedGroupId] = useState<string>(
-    workerGroupPresets[0]?.id ?? '',
-  );
-  const selectedPreset = useMemo(
-    () =>
-      workerGroupPresets.find((group) => group.id === selectedGroupId) ??
-      workerGroupPresets[0] ??
-      null,
-    [selectedGroupId, workerGroupPresets],
-  );
+  const { externalJwt } = useAuthStore();
+  const apiUrl = import.meta.env.VITE_API_BASE_URL;
 
   const [assignments, setAssignments] = useState<Assignment[]>(initialAssignments);
+  const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
+  const [groupOptions, setGroupOptions] = useState<WorkerGroupOption[]>([
+    {
+      id: 'all',
+      label: 'Trabajadores',
+      description: 'Incluye todas las categorías',
+      memberCount: initialAssignmentWorkerIds.length,
+    },
+  ]);
+  const [groupMembersById, setGroupMembersById] = useState<Record<string, string[]>>({
+    all: initialAssignmentWorkerIds,
+  });
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(['all']);
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
+  const [isLoadingWorkers, setIsLoadingWorkers] = useState<boolean>(true);
+  const [isRefreshingWorkers, setIsRefreshingWorkers] = useState<boolean>(false);
+  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
+  const [workersError, setWorkersError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'company' | 'worker'>('company');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
+
+  const totalInitialWorkers = useMemo(
+    () => new Set(initialAssignments.map((assignment) => assignment.workerId)).size,
+    []
+  );
+
+  const selectedGroupSummary = useMemo(() => {
+    if (!selectedGroupIds.length || selectedGroupIds.includes('all')) {
+      const allOption = groupOptions.find((group) => group.id === 'all');
+      const memberCount =
+        groupMembersById.all?.length ?? allWorkers.length ?? totalInitialWorkers;
+      return {
+        label: allOption?.label ?? 'Trabajadores',
+        memberCount,
+      };
+    }
+
+    const selectedGroups = groupOptions.filter((group) =>
+      selectedGroupIds.includes(group.id)
+    );
+
+    const memberSet = new Set<string>();
+    selectedGroupIds.forEach((groupId) => {
+      (groupMembersById[groupId] ?? []).forEach((workerId) =>
+        memberSet.add(workerId)
+      );
+    });
+
+    return {
+      label:
+        selectedGroups.length === 1
+          ? selectedGroups[0]?.label ?? 'Grupo'
+          : `${selectedGroups.length} grupos seleccionados`,
+      memberCount: memberSet.size,
+    };
+  }, [allWorkers.length, groupMembersById, groupOptions, selectedGroupIds, totalInitialWorkers]);
+
+  const allowedWorkersFromGroups = useMemo<Set<string> | null>(() => {
+    if (!selectedGroupIds.length || selectedGroupIds.includes('all')) {
+      return null;
+    }
+
+    const allowed = new Set<string>();
+    selectedGroupIds.forEach((groupId) => {
+      (groupMembersById[groupId] ?? []).forEach((workerId) =>
+        allowed.add(workerId)
+      );
+    });
+    return allowed;
+  }, [groupMembersById, selectedGroupIds]);
+
+  const filteredWorkers = useMemo(() => {
+    if (allowedWorkersFromGroups === null) {
+      return allWorkers;
+    }
+
+    if (!allowedWorkersFromGroups.size) {
+      return [];
+    }
+
+    return allWorkers.filter((worker) => allowedWorkersFromGroups.has(worker.id));
+  }, [allWorkers, allowedWorkersFromGroups]);
+
+  const normalizedSelectedWorkers = useMemo(() => {
+    if (allowedWorkersFromGroups === null) {
+      return selectedWorkerIds;
+    }
+
+    if (!selectedWorkerIds.length) {
+      return selectedWorkerIds;
+    }
+
+    return selectedWorkerIds.filter((id) => allowedWorkersFromGroups.has(id));
+  }, [allowedWorkersFromGroups, selectedWorkerIds]);
+
+  const selectedWorkerId = normalizedSelectedWorkers[0] ?? '';
+
+  const workersForSelect = useMemo(() => {
+    if (allowedWorkersFromGroups === null) {
+      return allWorkers;
+    }
+
+    if (!allowedWorkersFromGroups.size) {
+      return [];
+    }
+
+    return allWorkers.filter((worker) => allowedWorkersFromGroups.has(worker.id));
+  }, [allWorkers, allowedWorkersFromGroups]);
+
+  const visibleAssignments = useMemo(() => {
+    if (normalizedSelectedWorkers.length) {
+      const selectedSet = new Set(normalizedSelectedWorkers);
+      return assignments.filter((assignment) => selectedSet.has(assignment.workerId));
+    }
+
+    if (allowedWorkersFromGroups === null) {
+      return assignments;
+    }
+
+    if (!allowedWorkersFromGroups.size) {
+      return [] as Assignment[];
+    }
+
+    return assignments.filter((assignment) =>
+      allowedWorkersFromGroups.has(assignment.workerId)
+    );
+  }, [allowedWorkersFromGroups, assignments, normalizedSelectedWorkers]);
+
+  useEffect(() => {
+    setSelectedGroupIds((prev) => {
+      const valid = prev.filter((id) =>
+        groupOptions.some((group) => group.id === id)
+      );
+
+      if (!valid.length) {
+        return [groupOptions[0]?.id ?? 'all'];
+      }
+
+      if (valid.includes('all') && valid.length > 1) {
+        return valid.filter((id) => id !== 'all');
+      }
+
+      return valid;
+    });
+  }, [groupOptions]);
+
+  useEffect(() => {
+    if (normalizedSelectedWorkers.length !== selectedWorkerIds.length) {
+      setSelectedWorkerIds(normalizedSelectedWorkers);
+    }
+  }, [normalizedSelectedWorkers, selectedWorkerIds.length]);
 
   const weekDateMap = useMemo(() => {
     const now = new Date();
@@ -323,7 +506,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const companyGroups = useMemo<GroupView[]>(() => {
     const groups = new Map<string, GroupView>();
 
-    assignments.forEach((assignment) => {
+    visibleAssignments.forEach((assignment) => {
       if (!groups.has(assignment.companyId)) {
         groups.set(assignment.companyId, {
           id: assignment.companyId,
@@ -352,12 +535,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
-  }, [assignments]);
+  }, [visibleAssignments]);
 
   const workerGroups = useMemo<GroupView[]>(() => {
     const groups = new Map<string, GroupView>();
 
-    assignments.forEach((assignment) => {
+    visibleAssignments.forEach((assignment) => {
       if (!groups.has(assignment.workerId)) {
         groups.set(assignment.workerId, {
           id: assignment.workerId,
@@ -386,7 +569,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
-  }, [assignments]);
+  }, [visibleAssignments]);
 
   const currentGroups = viewMode === 'company' ? companyGroups : workerGroups;
 
@@ -425,6 +608,136 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [],
   );
 
+  const handleWorkerSelectionChange = useCallback((workerIds: string[]) => {
+    setSelectedWorkerIds(workerIds);
+    setExpandedCompany(null);
+  }, []);
+
+  const fetchWorkers = useCallback(async () => {
+    if (!apiUrl || !externalJwt) {
+      setWorkersError('Falta configuración de API o token');
+      setAllWorkers([]);
+      setAssignments(initialAssignments);
+      setGroupOptions([
+        {
+          id: 'all',
+          label: 'Trabajadores',
+          description: 'Incluye todas las categorías',
+          memberCount: initialAssignmentWorkerIds.length,
+        },
+      ]);
+      setGroupMembersById({ all: initialAssignmentWorkerIds });
+      setLastFetchTime(null);
+      setIsLoadingWorkers(false);
+      return;
+    }
+
+    setIsLoadingWorkers(true);
+    setWorkersError(null);
+
+    try {
+      const { workers } = await fetchWorkersData({ apiUrl, token: externalJwt });
+      setAllWorkers(workers);
+
+      const generatedAssignments = generateAssignmentsFromWorkers(workers);
+      if (generatedAssignments.length > 0) {
+        setAssignments(generatedAssignments);
+      } else {
+        setAssignments(initialAssignments);
+      }
+
+      try {
+        const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt);
+        const workerIdSet = new Set(workers.map((worker) => worker.id));
+
+        const sanitizedMembers: Record<string, string[]> = {};
+        grouping.groups.forEach((group) => {
+          const members = (grouping.membersByGroup[group.id] ?? []).filter((workerId) =>
+            workerIdSet.has(workerId),
+          );
+          sanitizedMembers[group.id] = Array.from(new Set(members));
+        });
+        sanitizedMembers.all = workers.map((worker) => worker.id);
+
+        const options: WorkerGroupOption[] = [
+          {
+            id: 'all',
+            label: 'Trabajadores',
+            description: grouping.groups.length
+              ? 'Incluye todos los grupos'
+              : 'No hay grupos disponibles',
+            memberCount: workers.length,
+          },
+          ...grouping.groups
+            .map((group) => {
+              const memberCount = sanitizedMembers[group.id]?.length ?? 0;
+              const description = group.description
+                ? group.description
+                : memberCount === 1
+                ? '1 trabajador asignado'
+                : `${memberCount} trabajadores asignados`;
+
+              return {
+                id: group.id,
+                label: group.label,
+                description,
+                memberCount,
+              };
+            })
+            .sort((a, b) =>
+              a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }),
+            ),
+        ];
+
+        setGroupOptions(options);
+        setGroupMembersById(sanitizedMembers);
+      } catch (groupError) {
+        console.error('No se pudieron obtener los grupos para registro múltiple', groupError);
+        const fallbackIds = workers.map((worker) => worker.id);
+        setGroupOptions([
+          {
+            id: 'all',
+            label: 'Trabajadores',
+            description: workers.length
+              ? 'Incluye todas las categorías'
+              : 'No hay grupos disponibles',
+            memberCount: workers.length,
+          },
+        ]);
+        setGroupMembersById({ all: fallbackIds });
+      }
+
+      setLastFetchTime(new Date());
+    } catch (error) {
+      console.error('Error fetching workers para registro múltiple', error);
+      setWorkersError('No se pudieron cargar los trabajadores');
+      setAllWorkers([]);
+      setAssignments(initialAssignments);
+      setGroupOptions([
+        {
+          id: 'all',
+          label: 'Trabajadores',
+          description: 'Incluye todas las categorías',
+          memberCount: initialAssignmentWorkerIds.length,
+        },
+      ]);
+      setGroupMembersById({ all: initialAssignmentWorkerIds });
+      setLastFetchTime(null);
+    } finally {
+      setIsLoadingWorkers(false);
+    }
+  }, [apiUrl, externalJwt]);
+
+  const refreshWorkers = useCallback(async () => {
+    setIsRefreshingWorkers(true);
+    await fetchWorkers();
+    setIsRefreshingWorkers(false);
+  }, [fetchWorkers]);
+
+  useEffect(() => {
+    void fetchWorkers();
+  }, [fetchWorkers]);
+
   const toggleGroupExpansion = useCallback((groupId: string) => {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
@@ -440,7 +753,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const handleSaveAll = useCallback(() => {
     const entriesToSave: HourEntry[] = [];
 
-    assignments.forEach((assignment) => {
+    visibleAssignments.forEach((assignment) => {
       weekDays.forEach((day) => {
         const rawValue = assignment.hours[day.key].trim();
         if (!rawValue) {
@@ -475,7 +788,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
     setRecentEntries((prev) => [...entriesToSave, ...prev].slice(0, 12));
     alert('Horas registradas exitosamente');
-  }, [assignments, weekDateMap]);
+  }, [visibleAssignments, weekDateMap]);
 
   const fetchRecentEntries = useCallback(() => {
     const mockRecentEntries: HourEntry[] = [
@@ -511,7 +824,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     fetchRecentEntries();
   }, [fetchRecentEntries]);
 
-  const weeklyTotals = useMemo(() => calculateTotals(assignments), [assignments]);
+  const weeklyTotals = useMemo(
+    () => calculateTotals(visibleAssignments),
+    [visibleAssignments],
+  );
   const weeklyTotalHours = useMemo(
     () => weekDays.reduce((total, day) => total + weeklyTotals[day.key], 0),
     [weeklyTotals],
@@ -685,96 +1001,89 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       />
 
       <Card>
-        <CardHeader className="gap-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex items-start gap-3">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">
-                <Users size={20} />
-              </span>
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  Seleccionar grupo de trabajadores
-                </h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Elige la agrupación con la que trabajarás antes de registrar o revisar horas.
-                </p>
+        <CardHeader>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
+                <Users size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
+                Selección de grupo
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                  Actualizado:{' '}
+                  {lastFetchTime ? lastFetchTime.toLocaleString('es-ES') : 'Sin sincronizar'}
+                </div>
+                {selectedGroupSummary && (
+                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
+                    {selectedGroupSummary.label}: {selectedGroupSummary.memberCount}
+                  </div>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={refreshWorkers}
+                  disabled={isRefreshingWorkers || isLoadingWorkers}
+                  leftIcon={
+                    <RefreshCw
+                      size={16}
+                      className={isRefreshingWorkers ? 'animate-spin' : ''}
+                    />
+                  }
+                >
+                  Actualizar
+                </Button>
               </div>
-            </div>
-            <div className="self-start rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-500 dark:border-gray-700 dark:text-gray-400">
-              Diseño preliminar
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Select
-              label="Grupo de trabajadores"
-              value={selectedGroupId}
-              onChange={setSelectedGroupId}
-              options={workerGroupPresets.map((group) => ({
-                value: group.id,
-                label: group.name,
-              }))}
-              placeholder="Selecciona un grupo"
-              fullWidth
-            />
-            <div className="rounded-xl border border-dashed border-gray-300 bg-white/80 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
-              {selectedPreset ? (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-                    {selectedPreset.name}
-                  </h3>
-                  <p className="leading-relaxed">{selectedPreset.description}</p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500">
-                    Última actualización: {selectedPreset.lastUpdate}
-                  </p>
+        <CardContent className="space-y-6">
+          {isLoadingWorkers ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500" />
+              <span className="ml-2 text-gray-600 dark:text-gray-400">
+                Sincronizando trabajadores...
+              </span>
+            </div>
+          ) : (
+            <>
+              <GroupSearchSelect
+                groups={groupOptions}
+                selectedGroupIds={selectedGroupIds}
+                onSelectionChange={setSelectedGroupIds}
+                placeholder="Buscar y seleccionar grupo..."
+                clearOptionId="all"
+              />
+
+              {workersForSelect.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+                  {workersError ||
+                    (selectedGroupIds.includes('all')
+                      ? 'No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API.'
+                      : 'No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.')}
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-                    Define tu primer grupo
-                  </h3>
-                  <p>
-                    Cuando existan agrupaciones guardadas podrás seleccionarlas y ver un resumen aquí.
-                  </p>
-                </div>
+                <WorkerSearchSelect
+                  workers={workersForSelect}
+                  selectedWorkerIds={selectedWorkerIds}
+                  onSelectionChange={handleWorkerSelectionChange}
+                  placeholder={
+                    selectedGroupIds.includes('all')
+                      ? 'Buscar y seleccionar trabajador...'
+                      : 'Buscar trabajador dentro del grupo...'
+                  }
+                  label={
+                    selectedGroupIds.includes('all')
+                      ? 'Trabajador'
+                      : 'Trabajador del grupo'
+                  }
+                />
               )}
-            </div>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
-              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
-                Integrantes
-              </p>
-              <p className="text-xl font-semibold">
-                {selectedPreset ? selectedPreset.workerCount : '—'}
-              </p>
-            </div>
-            <div className="rounded-lg bg-emerald-50 p-4 text-sm text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
-              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
-                Cobertura
-              </p>
-              <p className="text-base font-semibold">
-                {selectedPreset ? selectedPreset.coverage : 'Por definir'}
-              </p>
-            </div>
-            <div className="rounded-lg bg-purple-50 p-4 text-sm text-purple-700 dark:bg-purple-900/30 dark:text-purple-200">
-              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
-                Turno sugerido
-              </p>
-              <p className="text-base font-semibold">
-                {selectedPreset ? selectedPreset.defaultShift : 'Pendiente'}
-              </p>
-            </div>
-          </div>
-          <div className="rounded-xl border border-dashed border-gray-200 bg-white/90 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
-            <p>
-              Próximamente verás aquí el listado de trabajadores del grupo seleccionado junto con accesos directos para revisar y registrar sus horas.
-            </p>
-            <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-              Esta sección solo define la experiencia visual; enlazaremos los datos reales en el siguiente paso.
-            </p>
-          </div>
+
+              {workersError && workersForSelect.length !== 0 && (
+                <p className="text-sm text-red-600 dark:text-red-400">{workersError}</p>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
 
