@@ -1,31 +1,45 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock, Save, ChevronDown, ChevronRight, RefreshCw, Users } from 'lucide-react';
-import { PageHeader } from '../components/layout/PageHeader';
-import { Card, CardContent, CardHeader } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
-import { HourEntry, Worker } from '../types/salary';
-import { formatDate } from '../lib/utils';
-import { fetchWorkersData } from '../lib/salaryData';
-import { useAuthStore } from '../store/authStore';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  Clock,
+  Save,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+  Users,
+} from "lucide-react";
+import { PageHeader } from "../components/layout/PageHeader";
+import { Card, CardContent, CardHeader } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { HourEntry, Worker } from "../types/salary";
+import { formatDate } from "../lib/utils";
+import { fetchWorkersData } from "../lib/salaryData";
+import { useAuthStore } from "../store/authStore";
 import {
   GroupSearchSelect,
   WorkerGroupOption,
   WorkerSearchSelect,
-} from '../components/worker/GroupSelectors';
-import { createGroupId, fetchWorkerGroupsData } from '../lib/workerGroups';
+} from "../components/worker/GroupSelectors";
+import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
 
 const weekDays = [
-  { key: 'monday', label: 'Lunes', shortLabel: 'Lun' },
-  { key: 'tuesday', label: 'Martes', shortLabel: 'Mar' },
-  { key: 'wednesday', label: 'Miércoles', shortLabel: 'Mié' },
-  { key: 'thursday', label: 'Jueves', shortLabel: 'Jue' },
-  { key: 'friday', label: 'Viernes', shortLabel: 'Vie' },
-  { key: 'saturday', label: 'Sábado', shortLabel: 'Sáb' },
-  { key: 'sunday', label: 'Domingo', shortLabel: 'Dom' },
+  { key: "monday", label: "Lunes", shortLabel: "Lun" },
+  { key: "tuesday", label: "Martes", shortLabel: "Mar" },
+  { key: "wednesday", label: "Miércoles", shortLabel: "Mié" },
+  { key: "thursday", label: "Jueves", shortLabel: "Jue" },
+  { key: "friday", label: "Viernes", shortLabel: "Vie" },
+  { key: "saturday", label: "Sábado", shortLabel: "Sáb" },
+  { key: "sunday", label: "Domingo", shortLabel: "Dom" },
 ] as const;
 
-type WeekDayKey = typeof weekDays[number]['key'];
+type WeekDayKey = (typeof weekDays)[number]["key"];
 
 interface Assignment {
   id: string;
@@ -43,186 +57,188 @@ interface GroupView {
   totals: Record<WeekDayKey, number>;
 }
 
-const hoursFormatter = new Intl.NumberFormat('es-ES', {
+const hoursFormatter = new Intl.NumberFormat("es-ES", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
 
+const DOUBLE_CLICK_TIMEOUT = 400;
+
 const createEmptyHours = (): Record<WeekDayKey, string> => ({
-  monday: '',
-  tuesday: '',
-  wednesday: '',
-  thursday: '',
-  friday: '',
-  saturday: '',
-  sunday: '',
+  monday: "",
+  tuesday: "",
+  wednesday: "",
+  thursday: "",
+  friday: "",
+  saturday: "",
+  sunday: "",
 });
 
 const initialAssignments: Assignment[] = [
   {
-    id: 'c1-w1',
-    workerId: 'w1',
-    workerName: 'Luis Martínez',
-    companyId: 'c1',
-    companyName: 'Mombassa',
+    id: "c1-w1",
+    workerId: "w1",
+    workerName: "Luis Martínez",
+    companyId: "c1",
+    companyName: "Mombassa",
     hours: {
-      monday: '5',
-      tuesday: '3',
-      wednesday: '2',
-      thursday: '7',
-      friday: '1,5',
-      saturday: '4',
-      sunday: '3',
+      monday: "5",
+      tuesday: "3",
+      wednesday: "2",
+      thursday: "7",
+      friday: "1,5",
+      saturday: "4",
+      sunday: "3",
     },
   },
   {
-    id: 'c1-w2',
-    workerId: 'w2',
-    workerName: 'Pablo Ortega',
-    companyId: 'c1',
-    companyName: 'Mombassa',
+    id: "c1-w2",
+    workerId: "w2",
+    workerName: "Pablo Ortega",
+    companyId: "c1",
+    companyName: "Mombassa",
     hours: {
-      monday: '1',
-      tuesday: '1,5',
-      wednesday: '3',
-      thursday: '1',
-      friday: '2,5',
-      saturday: '2',
-      sunday: '2',
+      monday: "1",
+      tuesday: "1,5",
+      wednesday: "3",
+      thursday: "1",
+      friday: "2,5",
+      saturday: "2",
+      sunday: "2",
     },
   },
   {
-    id: 'c1-w3',
-    workerId: 'w3',
-    workerName: 'Juan Álvarez',
-    companyId: 'c1',
-    companyName: 'Mombassa',
+    id: "c1-w3",
+    workerId: "w3",
+    workerName: "Juan Álvarez",
+    companyId: "c1",
+    companyName: "Mombassa",
     hours: {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     },
   },
   {
-    id: 'c1-w4',
-    workerId: 'w4',
-    workerName: 'Jose Miguel',
-    companyId: 'c1',
-    companyName: 'Mombassa',
+    id: "c1-w4",
+    workerId: "w4",
+    workerName: "Jose Miguel",
+    companyId: "c1",
+    companyName: "Mombassa",
     hours: {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     },
   },
   {
-    id: 'c1-w5',
-    workerId: 'w5',
-    workerName: 'Álvaro Jiménez',
-    companyId: 'c1',
-    companyName: 'Mombassa',
+    id: "c1-w5",
+    workerId: "w5",
+    workerName: "Álvaro Jiménez",
+    companyId: "c1",
+    companyName: "Mombassa",
     hours: {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     },
   },
   {
-    id: 'c1-w6',
-    workerId: 'w6',
-    workerName: 'Marcos Díaz',
-    companyId: 'c1',
-    companyName: 'Mombassa',
+    id: "c1-w6",
+    workerId: "w6",
+    workerName: "Marcos Díaz",
+    companyId: "c1",
+    companyName: "Mombassa",
     hours: {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     },
   },
   {
-    id: 'c1-w7',
-    workerId: 'w7',
-    workerName: 'Jorge Torres',
-    companyId: 'c1',
-    companyName: 'Mombassa',
+    id: "c1-w7",
+    workerId: "w7",
+    workerName: "Jorge Torres",
+    companyId: "c1",
+    companyName: "Mombassa",
     hours: {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     },
   },
   {
-    id: 'c2-w1',
-    workerId: 'w1',
-    workerName: 'Luis Martínez',
-    companyId: 'c2',
-    companyName: 'Tetería',
+    id: "c2-w1",
+    workerId: "w1",
+    workerName: "Luis Martínez",
+    companyId: "c2",
+    companyName: "Tetería",
     hours: {
-      monday: '1',
-      tuesday: '6',
-      wednesday: '2',
-      thursday: '3',
-      friday: '4',
-      saturday: '1,5',
-      sunday: '1',
+      monday: "1",
+      tuesday: "6",
+      wednesday: "2",
+      thursday: "3",
+      friday: "4",
+      saturday: "1,5",
+      sunday: "1",
     },
   },
   {
-    id: 'c2-w3',
-    workerId: 'w3',
-    workerName: 'Juan Álvarez',
-    companyId: 'c2',
-    companyName: 'Tetería',
+    id: "c2-w3",
+    workerId: "w3",
+    workerName: "Juan Álvarez",
+    companyId: "c2",
+    companyName: "Tetería",
     hours: {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     },
   },
   {
-    id: 'c3-w2',
-    workerId: 'w2',
-    workerName: 'Pablo Ortega',
-    companyId: 'c3',
-    companyName: 'Cafetería Central',
+    id: "c3-w2",
+    workerId: "w2",
+    workerName: "Pablo Ortega",
+    companyId: "c3",
+    companyName: "Cafetería Central",
     hours: {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     },
   },
 ];
 
 const initialAssignmentWorkerIds = Array.from(
-  new Set(initialAssignments.map((assignment) => assignment.workerId)),
+  new Set(initialAssignments.map((assignment) => assignment.workerId))
 );
 
 const generateAssignmentsFromWorkers = (
@@ -260,12 +276,16 @@ const generateAssignmentsFromWorkers = (
         const rawRelationId = relation.relationId
           ? String(relation.relationId).trim()
           : undefined;
-        const trimmedName = relation.companyName?.trim() ?? '';
+        const trimmedName = relation.companyName?.trim() ?? "";
         const resolvedName =
           trimmedName || resolveCompanyName(rawRelationId, rawCompanyId);
 
         const displayName =
-          resolvedName || trimmedName || rawCompanyId || rawRelationId || 'Sin empresa';
+          resolvedName ||
+          trimmedName ||
+          rawCompanyId ||
+          rawRelationId ||
+          "Sin empresa";
         const companyKey =
           rawCompanyId || rawRelationId || createGroupId(displayName);
         const assignmentId = `${companyKey}-${worker.id}-${index}`;
@@ -288,13 +308,13 @@ const generateAssignmentsFromWorkers = (
 
     if (companiesEntries.length > 0) {
       companiesEntries.forEach(([companyName, contracts]) => {
-        const trimmedName = companyName?.trim() ?? '';
+        const trimmedName = companyName?.trim() ?? "";
         const contract = Array.isArray(contracts) ? contracts[0] : undefined;
         const contractCompanyId = contract?.companyId;
         const resolvedName =
           resolveCompanyName(contractCompanyId) || trimmedName || undefined;
         const displayName =
-          resolvedName || trimmedName || contractCompanyId || 'Sin empresa';
+          resolvedName || trimmedName || contractCompanyId || "Sin empresa";
         const candidateId = contractCompanyId || createGroupId(displayName);
 
         assignments.push({
@@ -314,9 +334,12 @@ const generateAssignmentsFromWorkers = (
         const trimmedName = companyName.trim();
         const fallbackId = worker.companies?.trim();
         const resolvedName =
-          resolveCompanyName(fallbackId) || trimmedName || fallbackId || undefined;
+          resolveCompanyName(fallbackId) ||
+          trimmedName ||
+          fallbackId ||
+          undefined;
         const displayName =
-          resolvedName || trimmedName || fallbackId || 'Sin empresa';
+          resolvedName || trimmedName || fallbackId || "Sin empresa";
         const candidateId = fallbackId || createGroupId(displayName);
         assignments.push({
           id: `${candidateId}-${worker.id}`,
@@ -332,7 +355,7 @@ const generateAssignmentsFromWorkers = (
 
     const fallbackId = worker.companies?.trim();
     const resolvedFallback = resolveCompanyName(fallbackId);
-    const displayName = resolvedFallback || fallbackId || 'Sin empresa';
+    const displayName = resolvedFallback || fallbackId || "Sin empresa";
     const candidateId = fallbackId || `sin-empresa-${worker.id}`;
 
     assignments.push({
@@ -353,7 +376,7 @@ const parseHour = (value: string): number => {
     return 0;
   }
 
-  const normalized = value.replace(',', '.');
+  const normalized = value.replace(",", ".");
   const parsed = parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 };
@@ -369,7 +392,10 @@ const createEmptyTotals = (): Record<WeekDayKey, number> => ({
 });
 
 const calculateRowTotal = (assignment: Assignment): number =>
-  weekDays.reduce((total, day) => total + parseHour(assignment.hours[day.key]), 0);
+  weekDays.reduce(
+    (total, day) => total + parseHour(assignment.hours[day.key]),
+    0
+  );
 
 const calculateTotals = (items: Assignment[]): Record<WeekDayKey, number> => {
   const totals = createEmptyTotals();
@@ -383,39 +409,83 @@ const calculateTotals = (items: Assignment[]): Record<WeekDayKey, number> => {
   return totals;
 };
 
-const formatHours = (value: number): string => `${hoursFormatter.format(value)} h`;
+const formatHours = (value: number): string =>
+  `${hoursFormatter.format(value)} h`;
+
+const getStartOfWeek = (date: Date): Date => {
+  const start = new Date(date);
+  const day = start.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + mondayOffset);
+  return start;
+};
+
+const addWeeks = (date: Date, weeks: number): Date => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + weeks * 7);
+  return getStartOfWeek(next);
+};
+
+const weekRangeFormatter = new Intl.DateTimeFormat("es-ES", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+const formatWeekRange = (start: Date): string => {
+  const startDate = new Date(start);
+  const endDate = new Date(start);
+  endDate.setDate(endDate.getDate() + 6);
+
+  const startLabel = weekRangeFormatter.format(startDate);
+  const endLabel = weekRangeFormatter.format(endDate);
+
+  return `${startLabel} - ${endLabel}`;
+};
 
 export const MultipleHoursRegistryPage: React.FC = () => {
   const { externalJwt } = useAuthStore();
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
 
-  const [assignments, setAssignments] = useState<Assignment[]>(initialAssignments);
+  const [assignments, setAssignments] =
+    useState<Assignment[]>(initialAssignments);
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
   const [groupOptions, setGroupOptions] = useState<WorkerGroupOption[]>([
     {
-      id: 'all',
-      label: 'Trabajadores',
-      description: 'Incluye todas las categorías',
+      id: "all",
+      label: "Trabajadores",
+      description: "Incluye todas las categorías",
       memberCount: initialAssignmentWorkerIds.length,
     },
   ]);
-  const [groupMembersById, setGroupMembersById] = useState<Record<string, string[]>>({
+  const [groupMembersById, setGroupMembersById] = useState<
+    Record<string, string[]>
+  >({
     all: initialAssignmentWorkerIds,
   });
-  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(['all']);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(["all"]);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
   const [showInactiveWorkers, setShowInactiveWorkers] = useState(false);
   const [showUnassignedWorkers, setShowUnassignedWorkers] = useState(false);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState<boolean>(true);
-  const [isRefreshingWorkers, setIsRefreshingWorkers] = useState<boolean>(false);
+  const [isRefreshingWorkers, setIsRefreshingWorkers] =
+    useState<boolean>(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [workersError, setWorkersError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'company' | 'worker'>('company');
+  const [viewMode, setViewMode] = useState<"company" | "worker">("company");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [companyGroupsCollapsed, setCompanyGroupsCollapsed] = useState(false);
+  const [workerGroupsCollapsed, setWorkerGroupsCollapsed] = useState(false);
+  const companyLastClickRef = useRef<number | null>(null);
+  const workerLastClickRef = useRef<number | null>(null);
   const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
+    getStartOfWeek(new Date())
+  );
 
   const allowedWorkersFromGroups = useMemo<Set<string> | null>(() => {
-    if (!selectedGroupIds.length || selectedGroupIds.includes('all')) {
+    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
       return null;
     }
 
@@ -437,13 +507,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return [];
     }
 
-    return allWorkers.filter((worker) => allowedWorkersFromGroups.has(worker.id));
+    return allWorkers.filter((worker) =>
+      allowedWorkersFromGroups.has(worker.id)
+    );
   }, [allWorkers, allowedWorkersFromGroups]);
 
   const filteredWorkers = useMemo(() => {
     return workersMatchingGroups.filter((worker) => {
       const situationValue =
-        typeof worker.situation === 'number'
+        typeof worker.situation === "number"
           ? worker.situation
           : worker.isActive === false
           ? 1
@@ -454,7 +526,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       }
 
       const hasAssignedCompany =
-        Array.isArray(worker.companyRelations) && worker.companyRelations.length > 0;
+        Array.isArray(worker.companyRelations) &&
+        worker.companyRelations.length > 0;
       if (!showUnassignedWorkers && !hasAssignedCompany) {
         return false;
       }
@@ -464,10 +537,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   }, [showInactiveWorkers, showUnassignedWorkers, workersMatchingGroups]);
 
   const selectedGroupSummary = useMemo(() => {
-    if (!selectedGroupIds.length || selectedGroupIds.includes('all')) {
-      const allOption = groupOptions.find((group) => group.id === 'all');
+    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
+      const allOption = groupOptions.find((group) => group.id === "all");
       return {
-        label: allOption?.label ?? 'Trabajadores',
+        label: allOption?.label ?? "Trabajadores",
         memberCount: filteredWorkers.length,
       };
     }
@@ -479,7 +552,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return {
       label:
         selectedGroups.length === 1
-          ? selectedGroups[0]?.label ?? 'Grupo'
+          ? selectedGroups[0]?.label ?? "Grupo"
           : `${selectedGroups.length} grupos seleccionados`,
       memberCount: filteredWorkers.length,
     };
@@ -498,14 +571,16 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return selectedWorkerIds.filter((id) => filteredWorkerIdSet.has(id));
   }, [filteredWorkerIdSet, selectedWorkerIds]);
 
-  const selectedWorkerId = normalizedSelectedWorkers[0] ?? '';
+  const selectedWorkerId = normalizedSelectedWorkers[0] ?? "";
 
   const workersForSelect = filteredWorkers;
 
   const visibleAssignments = useMemo(() => {
     if (normalizedSelectedWorkers.length) {
       const selectedSet = new Set(normalizedSelectedWorkers);
-      return assignments.filter((assignment) => selectedSet.has(assignment.workerId));
+      return assignments.filter((assignment) =>
+        selectedSet.has(assignment.workerId)
+      );
     }
 
     if (!filteredWorkerIdSet.size) {
@@ -524,11 +599,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       );
 
       if (!valid.length) {
-        return [groupOptions[0]?.id ?? 'all'];
+        return [groupOptions[0]?.id ?? "all"];
       }
 
-      if (valid.includes('all') && valid.length > 1) {
-        return valid.filter((id) => id !== 'all');
+      if (valid.includes("all") && valid.length > 1) {
+        return valid.filter((id) => id !== "all");
       }
 
       return valid;
@@ -542,30 +617,33 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   }, [normalizedSelectedWorkers, selectedWorkerIds.length]);
 
   const weekDateMap = useMemo(() => {
-    const now = new Date();
-    const today = now.getDay();
-    const mondayOffset = today === 0 ? -6 : 1 - today;
-    const monday = new Date(now);
-    monday.setHours(0, 0, 0, 0);
-    monday.setDate(monday.getDate() + mondayOffset);
-
+    const monday = new Date(currentWeekStart);
     const dates: Record<WeekDayKey, string> = {
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-      saturday: '',
-      sunday: '',
+      monday: "",
+      tuesday: "",
+      wednesday: "",
+      thursday: "",
+      friday: "",
+      saturday: "",
+      sunday: "",
     };
 
     weekDays.forEach((day, index) => {
       const current = new Date(monday);
       current.setDate(monday.getDate() + index);
-      dates[day.key] = current.toISOString().split('T')[0];
+      dates[day.key] = current.toISOString().split("T")[0];
     });
 
     return dates;
+  }, [currentWeekStart]);
+
+  const weekRangeLabel = useMemo(
+    () => formatWeekRange(currentWeekStart),
+    [currentWeekStart]
+  );
+
+  const handleWeekChange = useCallback((step: number) => {
+    setCurrentWeekStart((previous) => addWeeks(previous, step));
   }, []);
 
   const companyGroups = useMemo<GroupView[]>(() => {
@@ -590,7 +668,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return Array.from(groups.values())
       .map((group) => {
         const sortedAssignments = [...group.assignments].sort((a, b) =>
-          a.workerName.localeCompare(b.workerName, 'es', { sensitivity: 'base' }),
+          a.workerName.localeCompare(b.workerName, "es", {
+            sensitivity: "base",
+          })
         );
 
         return {
@@ -599,7 +679,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           totals: calculateTotals(sortedAssignments),
         };
       })
-      .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+      );
   }, [visibleAssignments]);
 
   const workerGroups = useMemo<GroupView[]>(() => {
@@ -624,7 +706,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return Array.from(groups.values())
       .map((group) => {
         const sortedAssignments = [...group.assignments].sort((a, b) =>
-          a.companyName.localeCompare(b.companyName, 'es', { sensitivity: 'base' }),
+          a.companyName.localeCompare(b.companyName, "es", {
+            sensitivity: "base",
+          })
         );
 
         return {
@@ -633,26 +717,41 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           totals: calculateTotals(sortedAssignments),
         };
       })
-      .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+      );
   }, [visibleAssignments]);
 
-  const currentGroups = viewMode === 'company' ? companyGroups : workerGroups;
+  const currentGroups = viewMode === "company" ? companyGroups : workerGroups;
+
+  const collapseAllCurrentGroups = useCallback(() => {
+    setExpandedGroups(new Set());
+  }, []);
+
+  const expandAllCurrentGroups = useCallback(() => {
+    setExpandedGroups(new Set(currentGroups.map((group) => group.id)));
+  }, [currentGroups]);
 
   useEffect(() => {
+    const isCollapsed =
+      viewMode === "company" ? companyGroupsCollapsed : workerGroupsCollapsed;
+    if (isCollapsed) {
+      return;
+    }
+
+    const targetIds = currentGroups.map((group) => group.id);
+
     setExpandedGroups((prev) => {
-      let changed = false;
-      const next = new Set(prev);
+      if (
+        prev.size === targetIds.length &&
+        targetIds.every((id) => prev.has(id))
+      ) {
+        return prev;
+      }
 
-      currentGroups.forEach((group) => {
-        if (!next.has(group.id)) {
-          next.add(group.id);
-          changed = true;
-        }
-      });
-
-      return changed ? next : prev;
+      return new Set(targetIds);
     });
-  }, [currentGroups]);
+  }, [companyGroupsCollapsed, currentGroups, viewMode, workerGroupsCollapsed]);
 
   const handleHourChange = useCallback(
     (assignmentId: string, dayKey: WeekDayKey, value: string) => {
@@ -666,11 +765,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   [dayKey]: value,
                 },
               }
-            : assignment,
-        ),
+            : assignment
+        )
       );
     },
-    [],
+    []
   );
 
   const handleWorkerSelectionChange = useCallback((workerIds: string[]) => {
@@ -680,14 +779,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
   const fetchWorkers = useCallback(async () => {
     if (!apiUrl || !externalJwt) {
-      setWorkersError('Falta configuración de API o token');
+      setWorkersError("Falta configuración de API o token");
       setAllWorkers([]);
       setAssignments(initialAssignments);
       setGroupOptions([
         {
-          id: 'all',
-          label: 'Trabajadores',
-          description: 'Incluye todas las categorías',
+          id: "all",
+          label: "Trabajadores",
+          description: "Incluye todas las categorías",
           memberCount: initialAssignmentWorkerIds.length,
         },
       ]);
@@ -710,7 +809,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
       const generatedAssignments = generateAssignmentsFromWorkers(
         workers,
-        companyLookup,
+        companyLookup
       );
       if (generatedAssignments.length > 0) {
         setAssignments(generatedAssignments);
@@ -726,8 +825,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const sanitizedMembers: Record<string, string[]> = {};
         grouping.groups.forEach((group) => {
-          const members = (grouping.membersByGroup[group.id] ?? []).filter((workerId) =>
-            workerIdSet.has(workerId),
+          const members = (grouping.membersByGroup[group.id] ?? []).filter(
+            (workerId) => workerIdSet.has(workerId)
           );
           sanitizedMembers[group.id] = Array.from(new Set(members));
         });
@@ -735,11 +834,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const options: WorkerGroupOption[] = [
           {
-            id: 'all',
-            label: 'Trabajadores',
+            id: "all",
+            label: "",
             description: grouping.groups.length
-              ? 'Incluye todos los grupos'
-              : 'No hay grupos disponibles',
+              ? "Incluye todos los grupos"
+              : "No hay grupos disponibles",
             memberCount: workers.length,
           },
           ...grouping.groups
@@ -748,7 +847,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               const description = group.description
                 ? group.description
                 : memberCount === 1
-                ? '1 trabajador asignado'
+                ? "1 trabajador asignado"
                 : `${memberCount} trabajadores asignados`;
 
               return {
@@ -759,22 +858,25 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               };
             })
             .sort((a, b) =>
-              a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }),
+              a.label.localeCompare(b.label, "es", { sensitivity: "base" })
             ),
         ];
 
         setGroupOptions(options);
         setGroupMembersById(sanitizedMembers);
       } catch (groupError) {
-        console.error('No se pudieron obtener los grupos para registro múltiple', groupError);
+        console.error(
+          "No se pudieron obtener los grupos para registro múltiple",
+          groupError
+        );
         const fallbackIds = workers.map((worker) => worker.id);
         setGroupOptions([
           {
-            id: 'all',
-            label: 'Trabajadores',
+            id: "all",
+            label: "Trabajadores",
             description: workers.length
-              ? 'Incluye todas las categorías'
-              : 'No hay grupos disponibles',
+              ? "Incluye todas las categorías"
+              : "No hay grupos disponibles",
             memberCount: workers.length,
           },
         ]);
@@ -783,15 +885,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
       setLastFetchTime(new Date());
     } catch (error) {
-      console.error('Error fetching workers para registro múltiple', error);
-      setWorkersError('No se pudieron cargar los trabajadores');
+      console.error("Error fetching workers para registro múltiple", error);
+      setWorkersError("No se pudieron cargar los trabajadores");
       setAllWorkers([]);
       setAssignments(initialAssignments);
       setGroupOptions([
         {
-          id: 'all',
-          label: 'Trabajadores',
-          description: 'Incluye todas las categorías',
+          id: "all",
+          label: "Trabajadores",
+          description: "Incluye todas las categorías",
           memberCount: initialAssignmentWorkerIds.length,
         },
       ]);
@@ -823,6 +925,80 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return next;
     });
   }, []);
+
+  const handleCompanyButtonClick = useCallback(() => {
+    const now = Date.now();
+
+    setViewMode("company");
+
+    if (viewMode !== "company") {
+      setCompanyGroupsCollapsed(false);
+      setWorkerGroupsCollapsed(false);
+      companyLastClickRef.current = null;
+      workerLastClickRef.current = null;
+      return;
+    }
+
+    if (companyGroupsCollapsed) {
+      setCompanyGroupsCollapsed(false);
+      expandAllCurrentGroups();
+      companyLastClickRef.current = null;
+      return;
+    }
+
+    const lastClick = companyLastClickRef.current;
+    if (lastClick && now - lastClick <= DOUBLE_CLICK_TIMEOUT) {
+      collapseAllCurrentGroups();
+      setCompanyGroupsCollapsed(true);
+      companyLastClickRef.current = null;
+      return;
+    }
+
+    companyLastClickRef.current = now;
+  }, [
+    collapseAllCurrentGroups,
+    companyGroupsCollapsed,
+    expandAllCurrentGroups,
+    viewMode,
+    workerGroupsCollapsed,
+  ]);
+
+  const handleWorkerButtonClick = useCallback(() => {
+    const now = Date.now();
+
+    setViewMode("worker");
+
+    if (viewMode !== "worker") {
+      setWorkerGroupsCollapsed(false);
+      setCompanyGroupsCollapsed(false);
+      workerLastClickRef.current = null;
+      companyLastClickRef.current = null;
+      return;
+    }
+
+    if (workerGroupsCollapsed) {
+      setWorkerGroupsCollapsed(false);
+      expandAllCurrentGroups();
+      workerLastClickRef.current = null;
+      return;
+    }
+
+    const lastClick = workerLastClickRef.current;
+    if (lastClick && now - lastClick <= DOUBLE_CLICK_TIMEOUT) {
+      collapseAllCurrentGroups();
+      setWorkerGroupsCollapsed(true);
+      workerLastClickRef.current = null;
+      return;
+    }
+
+    workerLastClickRef.current = now;
+  }, [
+    companyGroupsCollapsed,
+    collapseAllCurrentGroups,
+    expandAllCurrentGroups,
+    viewMode,
+    workerGroupsCollapsed,
+  ]);
 
   const handleSaveAll = useCallback(() => {
     const entriesToSave: HourEntry[] = [];
@@ -856,36 +1032,36 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     });
 
     if (entriesToSave.length === 0) {
-      alert('No hay horas registradas para guardar');
+      alert("No hay horas registradas para guardar");
       return;
     }
 
     setRecentEntries((prev) => [...entriesToSave, ...prev].slice(0, 12));
-    alert('Horas registradas exitosamente');
+    alert("Horas registradas exitosamente");
   }, [visibleAssignments, weekDateMap]);
 
   const fetchRecentEntries = useCallback(() => {
     const mockRecentEntries: HourEntry[] = [
       {
-        id: 'recent-1',
-        workerId: 'w1',
-        workerName: 'Luis Martínez',
+        id: "recent-1",
+        workerId: "w1",
+        workerName: "Luis Martínez",
         date: weekDateMap.monday,
         regularHours: 7.5,
         overtimeHours: 1,
-        description: 'Mombassa · Reparación maquinaria',
+        description: "Mombassa · Reparación maquinaria",
         approved: true,
-        approvedBy: 'gerencia@mombassa.com',
+        approvedBy: "gerencia@mombassa.com",
         createdAt: new Date(Date.now() - 86400000).toISOString(),
       },
       {
-        id: 'recent-2',
-        workerId: 'w2',
-        workerName: 'Pablo Ortega',
+        id: "recent-2",
+        workerId: "w2",
+        workerName: "Pablo Ortega",
         date: weekDateMap.tuesday,
         regularHours: 6,
         overtimeHours: 0,
-        description: 'Cafetería Central · Inventario',
+        description: "Cafetería Central · Inventario",
         approved: false,
         createdAt: new Date(Date.now() - 172800000).toISOString(),
       },
@@ -900,11 +1076,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
   const weeklyTotals = useMemo(
     () => calculateTotals(visibleAssignments),
-    [visibleAssignments],
+    [visibleAssignments]
   );
   const weeklyTotalHours = useMemo(
     () => weekDays.reduce((total, day) => total + weeklyTotals[day.key], 0),
-    [weeklyTotals],
+    [weeklyTotals]
   );
 
   const renderGroupCard = useCallback(
@@ -912,7 +1088,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       const isExpanded = expandedGroups.has(group.id);
       const totalByGroup = weekDays.reduce(
         (total, day) => total + group.totals[day.key],
-        0,
+        0
       );
 
       return (
@@ -926,28 +1102,35 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 type="button"
                 onClick={() => toggleGroupExpansion(group.id)}
                 className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-gray-500 transition hover:border-blue-300 hover:text-blue-600 dark:border-gray-700 dark:text-gray-400 dark:hover:border-blue-500 dark:hover:text-blue-300"
-                aria-label={isExpanded ? 'Contraer grupo' : 'Expandir grupo'}
+                aria-label={isExpanded ? "Contraer grupo" : "Expandir grupo"}
               >
-                {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                {isExpanded ? (
+                  <ChevronDown size={18} />
+                ) : (
+                  <ChevronRight size={18} />
+                )}
               </button>
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                   {group.name}
                 </h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {viewMode === 'company'
+                  {viewMode === "company"
                     ? `${group.assignments.length} trabajador${
-                        group.assignments.length === 1 ? '' : 'es'
+                        group.assignments.length === 1 ? "" : "es"
                       }`
                     : `${group.assignments.length} empresa${
-                        group.assignments.length === 1 ? '' : 's'
+                        group.assignments.length === 1 ? "" : "s"
                       }`}
                 </p>
               </div>
             </div>
             <div className="grid grid-cols-8 gap-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">
               {weekDays.map((day) => (
-                <div key={`${group.id}-${day.key}`} className="flex flex-col items-end">
+                <div
+                  key={`${group.id}-${day.key}`}
+                  className="flex flex-col items-end"
+                >
                   <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
                     {day.shortLabel}
                   </span>
@@ -974,7 +1157,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   <thead className="bg-gray-50 dark:bg-gray-800/70">
                     <tr>
                       <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-300">
-                        {viewMode === 'company' ? 'Trabajador' : 'Empresa'}
+                        {viewMode === "company" ? "Trabajador" : "Empresa"}
                       </th>
                       {weekDays.map((day) => (
                         <th
@@ -998,17 +1181,20 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                           key={assignment.id}
                           className={
                             index % 2 === 0
-                              ? 'bg-white dark:bg-gray-900'
-                              : 'bg-gray-50 dark:bg-gray-900/70'
+                              ? "bg-white dark:bg-gray-900"
+                              : "bg-gray-50 dark:bg-gray-900/70"
                           }
                         >
                           <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">
-                            {viewMode === 'company'
+                            {viewMode === "company"
                               ? assignment.workerName
                               : assignment.companyName}
                           </td>
                           {weekDays.map((day) => (
-                            <td key={`${assignment.id}-${day.key}`} className="px-2 py-2">
+                            <td
+                              key={`${assignment.id}-${day.key}`}
+                              className="px-2 py-2"
+                            >
                               <div className="flex items-center justify-center gap-0.5">
                                 <Input
                                   size="sm"
@@ -1019,7 +1205,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                     handleHourChange(
                                       assignment.id,
                                       day.key,
-                                      event.target.value,
+                                      event.target.value
                                     )
                                   }
                                   className="w-10 text-center"
@@ -1039,7 +1225,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     })}
                     <tr className="bg-gray-100 dark:bg-gray-800/80">
                       <td className="px-3 py-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
-                        Total {viewMode === 'company' ? 'empresa' : 'trabajador'}
+                        Total{" "}
+                        {viewMode === "company" ? "empresa" : "trabajador"}
                       </td>
                       {weekDays.map((day) => (
                         <td
@@ -1061,7 +1248,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         </Card>
       );
     },
-    [expandedGroups, handleHourChange, toggleGroupExpansion, viewMode],
+    [expandedGroups, handleHourChange, toggleGroupExpansion, viewMode]
   );
 
   return (
@@ -1079,17 +1266,23 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           <div className="flex flex-col gap-1.5">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
-                <Users size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
+                <Users
+                  size={20}
+                  className="mr-2 text-blue-600 dark:text-blue-400"
+                />
                 Selección de grupo
               </h2>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                  Actualizado:{' '}
-                  {lastFetchTime ? lastFetchTime.toLocaleString('es-ES') : 'Sin sincronizar'}
+                  Actualizado:{" "}
+                  {lastFetchTime
+                    ? lastFetchTime.toLocaleString("es-ES")
+                    : "Sin sincronizar"}
                 </div>
                 {selectedGroupSummary && (
                   <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
-                    {selectedGroupSummary.label}: {selectedGroupSummary.memberCount}
+                    {selectedGroupSummary.label}
+                    {"Trabajadores"}: {selectedGroupSummary.memberCount}
                   </div>
                 )}
                 <Button
@@ -1100,7 +1293,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   leftIcon={
                     <RefreshCw
                       size={16}
-                      className={isRefreshingWorkers ? 'animate-spin' : ''}
+                      className={isRefreshingWorkers ? "animate-spin" : ""}
                     />
                   }
                 >
@@ -1157,9 +1350,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               {workersForSelect.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
                   {workersError ||
-                    (selectedGroupIds.includes('all')
-                      ? 'No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API.'
-                      : 'No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.')}
+                    (selectedGroupIds.includes("all")
+                      ? "No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API."
+                      : "No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.")}
                 </div>
               ) : (
                 <WorkerSearchSelect
@@ -1167,20 +1360,22 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   selectedWorkerIds={selectedWorkerIds}
                   onSelectionChange={handleWorkerSelectionChange}
                   placeholder={
-                    selectedGroupIds.includes('all')
-                      ? 'Buscar y seleccionar trabajador...'
-                      : 'Buscar trabajador dentro del grupo...'
+                    selectedGroupIds.includes("all")
+                      ? "Buscar y seleccionar trabajador..."
+                      : "Buscar trabajador dentro del grupo..."
                   }
                   label={
-                    selectedGroupIds.includes('all')
-                      ? 'Trabajador'
-                      : 'Trabajador del grupo'
+                    selectedGroupIds.includes("all")
+                      ? "Trabajador"
+                      : "Trabajador del grupo"
                   }
                 />
               )}
 
               {workersError && workersForSelect.length !== 0 && (
-                <p className="text-sm text-red-600 dark:text-red-400">{workersError}</p>
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  {workersError}
+                </p>
               )}
             </>
           )}
@@ -1191,27 +1386,51 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         <CardHeader className="gap-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                Registro semanal en tabla
+              <h2 className="text-xl truncate font-semibold text-gray-900 dark:text-white">
+                Registro semanal
               </h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Alterna entre empresas y trabajadores para ver las horas desde las dos perspectivas.
-              </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 lg:ml-auto lg:justify-end">
-              <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4 lg:w-full">
+              <div className="flex w-full flex-wrap items-center justify-center gap-2 lg:flex-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => handleWeekChange(-1)}
+                  leftIcon={<ChevronLeft size={16} />}
+                  aria-label="Semana anterior"
+                >
+                  Anterior
+                </Button>
+                <div className="w-55 rounded-lg border border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-200 whitespace-nowrap">
+                  {weekRangeLabel}
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => handleWeekChange(1)}
+                  rightIcon={<ChevronRight size={16} />}
+                  aria-label="Semana siguiente"
+                >
+                  Siguiente
+                </Button>
+              </div>
+              <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800 lg:ml-auto">
                 {[
-                  { value: 'company', label: 'Por empresa' },
-                  { value: 'worker', label: 'Por trabajador' },
+                  { value: "company", label: "Por empresa" },
+                  { value: "worker", label: "Por trabajador" },
                 ].map((option) => (
                   <button
                     key={option.value}
                     type="button"
-                    onClick={() => setViewMode(option.value as 'company' | 'worker')}
+                    onClick={
+                      option.value === "company"
+                        ? handleCompanyButtonClick
+                        : handleWorkerButtonClick
+                    }
                     className={`px-4 py-2 text-sm font-medium rounded-full transition ${
                       viewMode === option.value
-                        ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300'
-                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'
+                        ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
+                        : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
                     }`}
                   >
                     {option.label}
@@ -1268,7 +1487,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       <Card>
         <CardHeader>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-            <Clock size={20} className="mr-2 text-purple-600 dark:text-purple-400" />
+            <Clock
+              size={20}
+              className="mr-2 text-purple-600 dark:text-purple-400"
+            />
             Entradas recientes
           </h2>
         </CardHeader>
@@ -1280,7 +1502,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 No hay registros de horas recientes
               </p>
               <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
-                Las entradas aparecerán aquí después de guardar el registro múltiple
+                Las entradas aparecerán aquí después de guardar el registro
+                múltiple
               </p>
             </div>
           ) : (
@@ -1295,18 +1518,19 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                       {entry.workerName}
                     </p>
                     <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {formatDate(entry.date)} · {entry.regularHours}h · {entry.description}
+                      {formatDate(entry.date)} · {entry.regularHours}h ·{" "}
+                      {entry.description}
                     </p>
                   </div>
                   <div className="text-right">
                     <span
                       className={`px-2 py-1 rounded-full text-xs font-medium ${
                         entry.approved
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                          : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+                          ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+                          : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
                       }`}
                     >
-                      {entry.approved ? 'Aprobado' : 'Pendiente'}
+                      {entry.approved ? "Aprobado" : "Pendiente"}
                     </span>
                   </div>
                 </div>
