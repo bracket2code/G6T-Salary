@@ -13,6 +13,8 @@ const weekDays = [
   { key: 'wednesday', label: 'Miércoles', shortLabel: 'Mié' },
   { key: 'thursday', label: 'Jueves', shortLabel: 'Jue' },
   { key: 'friday', label: 'Viernes', shortLabel: 'Vie' },
+  { key: 'saturday', label: 'Sábado', shortLabel: 'Sáb' },
+  { key: 'sunday', label: 'Domingo', shortLabel: 'Dom' },
 ] as const;
 
 type WeekDayKey = typeof weekDays[number]['key'];
@@ -51,6 +53,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '2',
       thursday: '7',
       friday: '1,5',
+      saturday: '4',
+      sunday: '3',
     },
   },
   {
@@ -65,6 +69,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '3',
       thursday: '1',
       friday: '2,5',
+      saturday: '2',
+      sunday: '2',
     },
   },
   {
@@ -79,6 +85,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     },
   },
   {
@@ -93,6 +101,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     },
   },
   {
@@ -107,6 +117,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     },
   },
   {
@@ -121,6 +133,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     },
   },
   {
@@ -135,6 +149,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     },
   },
   {
@@ -149,6 +165,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '2',
       thursday: '3',
       friday: '4',
+      saturday: '1,5',
+      sunday: '1',
     },
   },
   {
@@ -163,6 +181,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     },
   },
   {
@@ -177,6 +197,8 @@ const initialAssignments: Assignment[] = [
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     },
   },
 ];
@@ -197,6 +219,8 @@ const createEmptyTotals = (): Record<WeekDayKey, number> => ({
   wednesday: 0,
   thursday: 0,
   friday: 0,
+  saturday: 0,
+  sunday: 0,
 });
 
 const calculateRowTotal = (assignment: Assignment): number =>
@@ -283,6 +307,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       wednesday: '',
       thursday: '',
       friday: '',
+      saturday: '',
+      sunday: '',
     };
 
     weekDays.forEach((day, index) => {
@@ -529,7 +555,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-5 gap-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">
+            <div className="grid grid-cols-7 gap-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">
               {weekDays.map((day) => (
                 <div key={`${group.id}-${day.key}`} className="flex flex-col items-end">
                   <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
@@ -563,7 +589,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                       {weekDays.map((day) => (
                         <th
                           key={`${group.id}-${day.key}-header`}
-                          className="px-3 py-2 text-center font-medium text-gray-600 dark:text-gray-300"
+                          className="px-2 py-2 text-center font-medium text-gray-600 dark:text-gray-300"
                         >
                           {day.label}
                         </th>
@@ -592,8 +618,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               : assignment.companyName}
                           </td>
                           {weekDays.map((day) => (
-                            <td key={`${assignment.id}-${day.key}`} className="px-3 py-2">
-                              <div className="flex items-center justify-center gap-1">
+                            <td key={`${assignment.id}-${day.key}`} className="px-2 py-2">
+                              <div className="flex items-center justify-center gap-0.5">
                                 <Input
                                   size="sm"
                                   type="text"
@@ -606,7 +632,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                       event.target.value,
                                     )
                                   }
-                                  className="w-20 text-center"
+                                  className="w-10 text-center"
                                   placeholder="0"
                                 />
                                 <span className="text-xs text-gray-400 dark:text-gray-500">
@@ -628,7 +654,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                       {weekDays.map((day) => (
                         <td
                           key={`${group.id}-${day.key}-total`}
-                          className="px-3 py-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-200"
+                          className="px-2 py-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-200"
                         >
                           {formatHours(group.totals[day.key])}
                         </td>
@@ -812,7 +838,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               Sumatoria de todas las horas registradas en la tabla.
             </p>
           </div>
-          <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-5 lg:w-auto">
+          <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-4 md:grid-cols-7 lg:w-auto">
             {weekDays.map((day) => (
               <div
                 key={`summary-${day.key}`}
