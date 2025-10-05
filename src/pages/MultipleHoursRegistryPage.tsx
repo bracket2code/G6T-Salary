@@ -1083,6 +1083,36 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [weeklyTotals]
   );
 
+  const workerWeeklyTotals = useMemo(() => {
+    const totalsMap = new Map<
+      string,
+      {
+        workerId: string;
+        workerName: string;
+        total: number;
+      }
+    >();
+
+    visibleAssignments.forEach((assignment) => {
+      const existing = totalsMap.get(assignment.workerId);
+      const baseTotal = existing?.total ?? 0;
+      const incrementalTotal = weekDays.reduce(
+        (acc, day) => acc + parseHour(assignment.hours[day.key]),
+        0
+      );
+
+      totalsMap.set(assignment.workerId, {
+        workerId: assignment.workerId,
+        workerName: assignment.workerName,
+        total: baseTotal + incrementalTotal,
+      });
+    });
+
+    return Array.from(totalsMap.values()).sort((a, b) =>
+      a.workerName.localeCompare(b.workerName, "es", { sensitivity: "base" })
+    );
+  }, [visibleAssignments]);
+
   const renderGroupCard = useCallback(
     (group: GroupView) => {
       const isExpanded = expandedGroups.has(group.id);
@@ -1282,7 +1312,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 {selectedGroupSummary && (
                   <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
                     {selectedGroupSummary.label}
-                    {"Trabajadores"}: {selectedGroupSummary.memberCount}
+                    {""}: {selectedGroupSummary.memberCount}
                   </div>
                 )}
                 <Button
@@ -1452,6 +1482,33 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {workerWeeklyTotals.length > 0 && (
+        <Card>
+          <CardHeader>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Horas por trabajador (semana seleccionada)
+            </h2>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {workerWeeklyTotals.map((worker) => (
+                <div
+                  key={`worker-total-${worker.workerId}`}
+                  className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+                >
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                    {worker.workerName}
+                  </span>
+                  <span className="text-base font-semibold text-blue-600 dark:text-blue-300">
+                    {formatHours(worker.total)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
