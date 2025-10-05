@@ -225,27 +225,84 @@ const initialAssignmentWorkerIds = Array.from(
   new Set(initialAssignments.map((assignment) => assignment.workerId)),
 );
 
-const generateAssignmentsFromWorkers = (workers: Worker[]): Assignment[] => {
+const generateAssignmentsFromWorkers = (
+  workers: Worker[],
+  companyLookup: Record<string, string>
+): Assignment[] => {
   const assignments: Assignment[] = [];
 
   workers.forEach((worker) => {
+    const resolveCompanyName = (
+      ...keys: Array<string | undefined | null>
+    ): string | undefined => {
+      for (const key of keys) {
+        if (!key) {
+          continue;
+        }
+        const trimmed = String(key).trim();
+        if (!trimmed) {
+          continue;
+        }
+        const mapped = companyLookup[trimmed];
+        if (mapped && mapped.trim().length > 0) {
+          return mapped.trim();
+        }
+      }
+      return undefined;
+    };
+
+    const relations = worker.companyRelations ?? [];
+    if (relations.length > 0) {
+      relations.forEach((relation, index) => {
+        const rawCompanyId = relation.companyId
+          ? String(relation.companyId).trim()
+          : undefined;
+        const rawRelationId = relation.relationId
+          ? String(relation.relationId).trim()
+          : undefined;
+        const trimmedName = relation.companyName?.trim() ?? '';
+        const resolvedName =
+          trimmedName || resolveCompanyName(rawRelationId, rawCompanyId);
+
+        const displayName =
+          resolvedName || trimmedName || rawCompanyId || rawRelationId || 'Sin empresa';
+        const companyKey =
+          rawCompanyId || rawRelationId || createGroupId(displayName);
+        const assignmentId = `${companyKey}-${worker.id}-${index}`;
+
+        assignments.push({
+          id: assignmentId,
+          workerId: worker.id,
+          workerName: worker.name,
+          companyId: companyKey,
+          companyName: displayName,
+          hours: createEmptyHours(),
+        });
+      });
+      return;
+    }
+
     const companiesEntries = worker.companyContracts
       ? Object.entries(worker.companyContracts)
       : [];
 
     if (companiesEntries.length > 0) {
       companiesEntries.forEach(([companyName, contracts]) => {
-        const normalizedName = companyName?.trim() || 'Sin empresa';
+        const trimmedName = companyName?.trim() ?? '';
         const contract = Array.isArray(contracts) ? contracts[0] : undefined;
-        const candidateId =
-          contract?.companyId || createGroupId(normalizedName);
+        const contractCompanyId = contract?.companyId;
+        const resolvedName =
+          resolveCompanyName(contractCompanyId) || trimmedName || undefined;
+        const displayName =
+          resolvedName || trimmedName || contractCompanyId || 'Sin empresa';
+        const candidateId = contractCompanyId || createGroupId(displayName);
 
         assignments.push({
           id: `${candidateId}-${worker.id}`,
           workerId: worker.id,
           workerName: worker.name,
           companyId: candidateId,
-          companyName: normalizedName,
+          companyName: displayName,
           hours: createEmptyHours(),
         });
       });
@@ -254,26 +311,36 @@ const generateAssignmentsFromWorkers = (workers: Worker[]): Assignment[] => {
 
     if (worker.companyNames && worker.companyNames.length > 0) {
       worker.companyNames.forEach((companyName) => {
-        const normalizedName = companyName.trim() || 'Sin empresa';
-        const candidateId = createGroupId(normalizedName);
+        const trimmedName = companyName.trim();
+        const fallbackId = worker.companies?.trim();
+        const resolvedName =
+          resolveCompanyName(fallbackId) || trimmedName || fallbackId || undefined;
+        const displayName =
+          resolvedName || trimmedName || fallbackId || 'Sin empresa';
+        const candidateId = fallbackId || createGroupId(displayName);
         assignments.push({
           id: `${candidateId}-${worker.id}`,
           workerId: worker.id,
           workerName: worker.name,
           companyId: candidateId,
-          companyName: normalizedName,
+          companyName: displayName,
           hours: createEmptyHours(),
         });
       });
       return;
     }
 
+    const fallbackId = worker.companies?.trim();
+    const resolvedFallback = resolveCompanyName(fallbackId);
+    const displayName = resolvedFallback || fallbackId || 'Sin empresa';
+    const candidateId = fallbackId || `sin-empresa-${worker.id}`;
+
     assignments.push({
-      id: `sin-empresa-${worker.id}`,
+      id: `${candidateId}-${worker.id}`,
       workerId: worker.id,
       workerName: worker.name,
-      companyId: `sin-empresa-${worker.id}`,
-      companyName: 'Sin empresa',
+      companyId: candidateId,
+      companyName: displayName,
       hours: createEmptyHours(),
     });
   });
@@ -337,6 +404,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   });
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(['all']);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
+  const [showInactiveWorkers, setShowInactiveWorkers] = useState(false);
+  const [showUnassignedWorkers, setShowUnassignedWorkers] = useState(false);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState<boolean>(true);
   const [isRefreshingWorkers, setIsRefreshingWorkers] = useState<boolean>(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
@@ -344,42 +413,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'company' | 'worker'>('company');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
-
-  const totalInitialWorkers = useMemo(
-    () => new Set(initialAssignments.map((assignment) => assignment.workerId)).size,
-    []
-  );
-
-  const selectedGroupSummary = useMemo(() => {
-    if (!selectedGroupIds.length || selectedGroupIds.includes('all')) {
-      const allOption = groupOptions.find((group) => group.id === 'all');
-      const memberCount =
-        groupMembersById.all?.length ?? allWorkers.length ?? totalInitialWorkers;
-      return {
-        label: allOption?.label ?? 'Trabajadores',
-        memberCount,
-      };
-    }
-
-    const selectedGroups = groupOptions.filter((group) =>
-      selectedGroupIds.includes(group.id)
-    );
-
-    const memberSet = new Set<string>();
-    selectedGroupIds.forEach((groupId) => {
-      (groupMembersById[groupId] ?? []).forEach((workerId) =>
-        memberSet.add(workerId)
-      );
-    });
-
-    return {
-      label:
-        selectedGroups.length === 1
-          ? selectedGroups[0]?.label ?? 'Grupo'
-          : `${selectedGroups.length} grupos seleccionados`,
-      memberCount: memberSet.size,
-    };
-  }, [allWorkers.length, groupMembersById, groupOptions, selectedGroupIds, totalInitialWorkers]);
 
   const allowedWorkersFromGroups = useMemo<Set<string> | null>(() => {
     if (!selectedGroupIds.length || selectedGroupIds.includes('all')) {
@@ -395,7 +428,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return allowed;
   }, [groupMembersById, selectedGroupIds]);
 
-  const filteredWorkers = useMemo(() => {
+  const workersMatchingGroups = useMemo(() => {
     if (allowedWorkersFromGroups === null) {
       return allWorkers;
     }
@@ -407,31 +440,67 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return allWorkers.filter((worker) => allowedWorkersFromGroups.has(worker.id));
   }, [allWorkers, allowedWorkersFromGroups]);
 
-  const normalizedSelectedWorkers = useMemo(() => {
-    if (allowedWorkersFromGroups === null) {
-      return selectedWorkerIds;
+  const filteredWorkers = useMemo(() => {
+    return workersMatchingGroups.filter((worker) => {
+      const situationValue =
+        typeof worker.situation === 'number'
+          ? worker.situation
+          : worker.isActive === false
+          ? 1
+          : 0;
+      const isInactive = situationValue === 1 || worker.isActive === false;
+      if (!showInactiveWorkers && isInactive) {
+        return false;
+      }
+
+      const hasAssignedCompany =
+        Array.isArray(worker.companyRelations) && worker.companyRelations.length > 0;
+      if (!showUnassignedWorkers && !hasAssignedCompany) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [showInactiveWorkers, showUnassignedWorkers, workersMatchingGroups]);
+
+  const selectedGroupSummary = useMemo(() => {
+    if (!selectedGroupIds.length || selectedGroupIds.includes('all')) {
+      const allOption = groupOptions.find((group) => group.id === 'all');
+      return {
+        label: allOption?.label ?? 'Trabajadores',
+        memberCount: filteredWorkers.length,
+      };
     }
 
+    const selectedGroups = groupOptions.filter((group) =>
+      selectedGroupIds.includes(group.id)
+    );
+
+    return {
+      label:
+        selectedGroups.length === 1
+          ? selectedGroups[0]?.label ?? 'Grupo'
+          : `${selectedGroups.length} grupos seleccionados`,
+      memberCount: filteredWorkers.length,
+    };
+  }, [filteredWorkers.length, groupOptions, selectedGroupIds]);
+
+  const filteredWorkerIdSet = useMemo(
+    () => new Set(filteredWorkers.map((worker) => worker.id)),
+    [filteredWorkers]
+  );
+
+  const normalizedSelectedWorkers = useMemo(() => {
     if (!selectedWorkerIds.length) {
       return selectedWorkerIds;
     }
 
-    return selectedWorkerIds.filter((id) => allowedWorkersFromGroups.has(id));
-  }, [allowedWorkersFromGroups, selectedWorkerIds]);
+    return selectedWorkerIds.filter((id) => filteredWorkerIdSet.has(id));
+  }, [filteredWorkerIdSet, selectedWorkerIds]);
 
   const selectedWorkerId = normalizedSelectedWorkers[0] ?? '';
 
-  const workersForSelect = useMemo(() => {
-    if (allowedWorkersFromGroups === null) {
-      return allWorkers;
-    }
-
-    if (!allowedWorkersFromGroups.size) {
-      return [];
-    }
-
-    return allWorkers.filter((worker) => allowedWorkersFromGroups.has(worker.id));
-  }, [allWorkers, allowedWorkersFromGroups]);
+  const workersForSelect = filteredWorkers;
 
   const visibleAssignments = useMemo(() => {
     if (normalizedSelectedWorkers.length) {
@@ -439,18 +508,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return assignments.filter((assignment) => selectedSet.has(assignment.workerId));
     }
 
-    if (allowedWorkersFromGroups === null) {
-      return assignments;
-    }
-
-    if (!allowedWorkersFromGroups.size) {
+    if (!filteredWorkerIdSet.size) {
       return [] as Assignment[];
     }
 
     return assignments.filter((assignment) =>
-      allowedWorkersFromGroups.has(assignment.workerId)
+      filteredWorkerIdSet.has(assignment.workerId)
     );
-  }, [allowedWorkersFromGroups, assignments, normalizedSelectedWorkers]);
+  }, [assignments, filteredWorkerIdSet, normalizedSelectedWorkers]);
 
   useEffect(() => {
     setSelectedGroupIds((prev) => {
@@ -636,10 +701,17 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     setWorkersError(null);
 
     try {
-      const { workers } = await fetchWorkersData({ apiUrl, token: externalJwt });
+      const { workers, companyLookup } = await fetchWorkersData({
+        apiUrl,
+        token: externalJwt,
+        includeInactive: true,
+      });
       setAllWorkers(workers);
 
-      const generatedAssignments = generateAssignmentsFromWorkers(workers);
+      const generatedAssignments = generateAssignmentsFromWorkers(
+        workers,
+        companyLookup,
+      );
       if (generatedAssignments.length > 0) {
         setAssignments(generatedAssignments);
       } else {
@@ -871,7 +943,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-7 gap-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">
+            <div className="grid grid-cols-8 gap-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">
               {weekDays.map((day) => (
                 <div key={`${group.id}-${day.key}`} className="flex flex-col items-end">
                   <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
@@ -1053,6 +1125,32 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 placeholder="Buscar y seleccionar grupo..."
                 clearOptionId="all"
               />
+
+              <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600 dark:text-gray-300">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showInactiveWorkers}
+                    onChange={(event) =>
+                      setShowInactiveWorkers(event.target.checked)
+                    }
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                  />
+                  Mostrar todos (incluye bajas)
+                </label>
+
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showUnassignedWorkers}
+                    onChange={(event) =>
+                      setShowUnassignedWorkers(event.target.checked)
+                    }
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                  />
+                  Incluir sin empresa asignada
+                </label>
+              </div>
 
               {workersForSelect.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">

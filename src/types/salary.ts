@@ -21,11 +21,19 @@ export interface WorkerCompanyStats {
   assignmentCount: number;
 }
 
+export interface WorkerCompanyRelation {
+  relationId?: string;
+  companyId?: string;
+  companyName?: string;
+}
+
 export interface Worker {
   id: string;
   name: string;
   email: string;
   secondaryEmail?: string | null;
+  situation?: number;
+  isActive?: boolean;
   role: 'admin' | 'supervisor' | 'tecnico';
   phone: string | null;
   createdAt: string;
@@ -42,6 +50,7 @@ export interface Worker {
   companyNames?: string[];
   companyContracts?: Record<string, WorkerCompanyContract[]>;
   companyStats?: Record<string, WorkerCompanyStats>;
+  companyRelations?: WorkerCompanyRelation[];
 }
 
 export interface SalaryCalculation {

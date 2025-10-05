@@ -111,6 +111,7 @@ export const WorkerQueriesPage: React.FC = () => {
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(["all"]);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
+  const [showInactiveWorkers, setShowInactiveWorkers] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
@@ -151,35 +152,6 @@ export const WorkerQueriesPage: React.FC = () => {
     all: [],
   });
 
-  const selectedGroupSummary = useMemo(() => {
-    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
-      const allOption = groupOptions.find((group) => group.id === "all");
-      const memberCount = groupMembersById.all?.length ?? allWorkers.length;
-      return {
-        label: allOption?.label ?? "Trabajadores",
-        memberCount,
-      };
-    }
-
-    const selectedGroups = groupOptions.filter((group) =>
-      selectedGroupIds.includes(group.id)
-    );
-
-    const memberSet = new Set<string>();
-    selectedGroupIds.forEach((groupId) => {
-      (groupMembersById[groupId] ?? []).forEach((workerId) =>
-        memberSet.add(workerId)
-      );
-    });
-
-    return {
-      label:
-        selectedGroups.length === 1
-          ? selectedGroups[0]?.label ?? "Grupo"
-          : `${selectedGroups.length} grupos seleccionados`,
-      memberCount: memberSet.size,
-    };
-  }, [allWorkers.length, groupMembersById, groupOptions, selectedGroupIds]);
 
   const allowedWorkerIdSet = useMemo(() => {
     if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
@@ -195,17 +167,53 @@ export const WorkerQueriesPage: React.FC = () => {
     return allowed;
   }, [allWorkers, groupMembersById, selectedGroupIds]);
 
-  const filteredWorkers = useMemo(() => {
+  const workersMatchingGroups = useMemo(() => {
     if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
       return allWorkers;
     }
 
     if (!allowedWorkerIdSet.size) {
-      return [];
+      return [] as Worker[];
     }
 
     return allWorkers.filter((worker) => allowedWorkerIdSet.has(worker.id));
   }, [allWorkers, allowedWorkerIdSet, selectedGroupIds]);
+
+  const filteredWorkers = useMemo(() => {
+    if (showInactiveWorkers) {
+      return workersMatchingGroups;
+    }
+    return workersMatchingGroups.filter(
+      (worker) => (worker.situation ?? 0) !== 1 && worker.isActive !== false
+    );
+  }, [showInactiveWorkers, workersMatchingGroups]);
+
+  const selectedGroupSummary = useMemo(() => {
+    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
+      const allOption = groupOptions.find((group) => group.id === "all");
+      return {
+        label: allOption?.label ?? "Trabajadores",
+        memberCount: filteredWorkers.length,
+      };
+    }
+
+    const selectedGroups = groupOptions.filter((group) =>
+      selectedGroupIds.includes(group.id)
+    );
+
+    return {
+      label:
+        selectedGroups.length === 1
+          ? selectedGroups[0]?.label ?? "Grupo"
+          : `${selectedGroups.length} grupos seleccionados`,
+      memberCount: filteredWorkers.length,
+    };
+  }, [filteredWorkers.length, groupOptions, selectedGroupIds]);
+
+  const filteredWorkerIdSet = useMemo(
+    () => new Set(filteredWorkers.map((worker) => worker.id)),
+    [filteredWorkers]
+  );
 
   useEffect(
     () => () => {
@@ -254,9 +262,9 @@ export const WorkerQueriesPage: React.FC = () => {
       return;
     }
 
-    setSelectedWorkerIds((prev) => prev.filter((id) => allowedWorkerIdSet.has(id)));
+    setSelectedWorkerIds((prev) => prev.filter((id) => filteredWorkerIdSet.has(id)));
     setExpandedCompany(null);
-  }, [allowedWorkerIdSet, selectedWorkerIds.length]);
+  }, [filteredWorkerIdSet, selectedWorkerIds.length]);
 
   const handleEmailCopy = useCallback(
     async (emailToCopy?: string | null) => {
@@ -325,6 +333,7 @@ export const WorkerQueriesPage: React.FC = () => {
       const { workers } = await fetchWorkersData({
         apiUrl,
         token: externalJwt,
+        includeInactive: true,
       });
       let workersWithGroups = workers;
 
@@ -570,6 +579,16 @@ export const WorkerQueriesPage: React.FC = () => {
                 clearOptionId="all"
               />
 
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={showInactiveWorkers}
+                  onChange={(event) => setShowInactiveWorkers(event.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                />
+                Mostrar todos (incluye bajas)
+              </label>
+
               {filteredWorkers.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
                   No hay trabajadores asignados a este grupo. Selecciona otro
@@ -590,6 +609,7 @@ export const WorkerQueriesPage: React.FC = () => {
                       ? "Trabajador"
                       : "Trabajador del grupo"
                   }
+                  multiSelect={false}
                 />
               )}
               {workersError && (

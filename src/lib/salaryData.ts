@@ -104,7 +104,8 @@ export interface WorkerDataResult {
 export const fetchWorkersData = async ({
   apiUrl,
   token,
-}: ApiRequestOptions): Promise<WorkerDataResult> => {
+  includeInactive = false,
+}: ApiRequestOptions & { includeInactive?: boolean }): Promise<WorkerDataResult> => {
   const headers = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -125,12 +126,26 @@ export const fetchWorkersData = async ({
     if (companiesResponse.ok) {
       const companiesData = await companiesResponse.json();
       companiesData.forEach((company: any) => {
-        const companyId = pickString(company?.id, company?.parameterId);
         const companyName =
           pickString(company?.name, company?.description, company?.label) ??
           undefined;
-        if (companyId && companyName) {
-          companyLookup[companyId] = companyName;
+        const candidateKeys: Array<string | undefined> = [
+          pickString(company?.id),
+          pickString(company?.parameterId),
+          pickString(company?.parameter_id),
+          pickString(company?.guid),
+          pickString(company?.value),
+        ];
+        if (companyName) {
+          candidateKeys.forEach((key) => {
+            if (!key) {
+              return;
+            }
+            const trimmed = key.trim();
+            if (trimmed.length > 0) {
+              companyLookup[trimmed] = companyName;
+            }
+          });
         }
       });
     } else {
@@ -324,13 +339,14 @@ export const fetchWorkersData = async ({
     console.error("Error fetching contract lookup", error);
   }
 
-  const workersResponse = await fetch(
-    `${apiUrl}/parameter/list?types[0]=5&types[1]=4&situation=0`,
-    {
-      method: "GET",
-      headers,
-    }
-  );
+  const workersEndpoint = includeInactive
+    ? `${apiUrl}/parameter/list?types[0]=5&types[1]=4`
+    : `${apiUrl}/parameter/list?types[0]=5&types[1]=4&situation=0`;
+
+  const workersResponse = await fetch(workersEndpoint, {
+    method: "GET",
+    headers,
+  });
 
   if (!workersResponse.ok) {
     throw new Error(
@@ -354,6 +370,15 @@ export const fetchWorkersData = async ({
       normalizeIdentifier(apiWorker?.workerId) ??
       normalizeIdentifier(apiWorker?.worker_id) ??
       Math.random().toString(36).slice(2);
+
+    const situationValue = parseRelationType(
+      apiWorker?.situation,
+      apiWorker?.status,
+      apiWorker?.employmentSituation,
+      apiWorker?.workerSituation,
+      apiWorker?.state
+    );
+    const isActive = situationValue === undefined ? true : situationValue !== 1;
 
     const workerRelationKey =
       pickString(
@@ -411,6 +436,8 @@ export const fetchWorkersData = async ({
         ) ?? "Trabajador sin nombre",
       email: displayEmail ?? "Email no disponible",
       secondaryEmail: secondaryEmailFinal,
+      situation: situationValue,
+      isActive,
       role:
         (pickString(apiWorker?.role, apiWorker?.workerRole) as Worker["role"]) ??
         "tecnico",
@@ -474,12 +501,17 @@ export const fetchWorkersData = async ({
       companyStats: {},
     };
 
-    const companyNamesSet = new Set<string>();
-    const companyContractsMap: Record<string, WorkerCompanyContract[]> = {};
-    const companyStatsMap: Record<string, WorkerCompanyStats> = {};
+  const companyNamesSet = new Set<string>();
+  const companyContractsMap: Record<string, WorkerCompanyContract[]> = {};
+  const companyStatsMap: Record<string, WorkerCompanyStats> = {};
+  const companyRelationsList: Array<{
+    relationId?: string;
+    companyId?: string;
+    companyName?: string;
+  }> = [];
 
-    if (Array.isArray(apiWorker?.parameterRelations)) {
-      apiWorker.parameterRelations.forEach((relation: any) => {
+  if (Array.isArray(apiWorker?.parameterRelations)) {
+    apiWorker.parameterRelations.forEach((relation: any) => {
         const relationIdentifier = pickString(
           relation?.parameterRelationId,
           relation?.relationId,
@@ -635,6 +667,34 @@ export const fetchWorkersData = async ({
             companyStatsMap[statsKey].companyId = relationCompanyId;
           }
         }
+
+        const relationPointer = normalizeIdentifier(
+          relation?.parameterRelationId ?? relation?.parameterRelationID
+        );
+        if (relationType === 0) {
+          const resolvedRelationName =
+            companyName ??
+            (relationPointer && companyLookup[relationPointer]) ??
+            (relationCompanyId && companyLookup[relationCompanyId]) ??
+            undefined;
+
+          if (relationPointer && resolvedRelationName) {
+            companyLookup[relationPointer] = resolvedRelationName;
+          }
+          if (relationCompanyId && resolvedRelationName) {
+            companyLookup[relationCompanyId] = resolvedRelationName;
+          }
+
+          companyRelationsList.push({
+            relationId:
+              relationPointer ??
+              normalizeIdentifier(relationIdentifier) ??
+              normalizeIdentifier(relation?.id) ??
+              undefined,
+            companyId: relationCompanyId ?? undefined,
+            companyName: resolvedRelationName ?? undefined,
+          });
+        }
       });
     }
 
@@ -648,6 +708,8 @@ export const fetchWorkersData = async ({
           : undefined,
       companyContracts: companyContractsMap,
       companyStats: companyStatsMap,
+      companyRelations:
+        companyRelationsList.length > 0 ? companyRelationsList : undefined,
     };
   });
 
