@@ -129,7 +129,8 @@ export const createGroupId = (value: string) =>
 
 export const fetchWorkerGroupsData = async (
   apiUrl: string,
-  token: string
+  token: string,
+  options: { preloadedWorkers?: unknown[] } = {}
 ): Promise<WorkerGroupApiResult> => {
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -165,36 +166,40 @@ export const fetchWorkerGroupsData = async (
     );
   }
 
-  const workerGroupsResponse = await fetch(
-    `${apiUrl}/Parameter/List?Types[0]=4&Types[1]=5`,
-    {
-      method: "GET",
-      headers,
-    }
-  );
-
-  if (!workerGroupsResponse.ok) {
-    throw new Error(
-      `Error al obtener trabajadores para grupos: ${workerGroupsResponse.status} - ${workerGroupsResponse.statusText}`
-    );
-  }
-
   let workerItems: unknown[] = [];
 
-  try {
-    const workersBody = await workerGroupsResponse.json();
-    workerItems = parseApiListPayload(workersBody);
-  } catch (error) {
-    if (
-      workerGroupsResponse.status !== 204 &&
-      workerGroupsResponse.status !== 205
-    ) {
-      console.error(
-        "No se pudieron parsear los trabajadores para grupos",
-        error
+  if (options.preloadedWorkers && Array.isArray(options.preloadedWorkers)) {
+    workerItems = options.preloadedWorkers;
+  } else {
+    const workerGroupsResponse = await fetch(
+      `${apiUrl}/Parameter/List?Types[0]=4&Types[1]=5`,
+      {
+        method: "GET",
+        headers,
+      }
+    );
+
+    if (!workerGroupsResponse.ok) {
+      throw new Error(
+        `Error al obtener trabajadores para grupos: ${workerGroupsResponse.status} - ${workerGroupsResponse.statusText}`
       );
     }
-    workerItems = [];
+
+    try {
+      const workersBody = await workerGroupsResponse.json();
+      workerItems = parseApiListPayload(workersBody);
+    } catch (error) {
+      if (
+        workerGroupsResponse.status !== 204 &&
+        workerGroupsResponse.status !== 205
+      ) {
+        console.error(
+          "No se pudieron parsear los trabajadores para grupos",
+          error
+        );
+      }
+      workerItems = [];
+    }
   }
 
   const groups: WorkerGroupApiResult["groups"] = [];

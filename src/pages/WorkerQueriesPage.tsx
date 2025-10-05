@@ -330,7 +330,7 @@ export const WorkerQueriesPage: React.FC = () => {
     setIsLoading(true);
     setWorkersError(null);
     try {
-      const { workers } = await fetchWorkersData({
+      const { workers, rawWorkers } = await fetchWorkersData({
         apiUrl,
         token: externalJwt,
         includeInactive: true,
@@ -338,7 +338,9 @@ export const WorkerQueriesPage: React.FC = () => {
       let workersWithGroups = workers;
 
       try {
-        const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt);
+        const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt, {
+          preloadedWorkers: rawWorkers,
+        });
 
         const workerIdSet = new Set(workers.map((worker) => worker.id));
         const groupLabelById: Record<string, string> = {};

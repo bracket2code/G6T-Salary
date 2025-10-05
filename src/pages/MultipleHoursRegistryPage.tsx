@@ -701,7 +701,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     setWorkersError(null);
 
     try {
-      const { workers, companyLookup } = await fetchWorkersData({
+      const { workers, companyLookup, rawWorkers } = await fetchWorkersData({
         apiUrl,
         token: externalJwt,
         includeInactive: true,
@@ -719,7 +719,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       }
 
       try {
-        const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt);
+        const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt, {
+          preloadedWorkers: rawWorkers,
+        });
         const workerIdSet = new Set(workers.map((worker) => worker.id));
 
         const sanitizedMembers: Record<string, string[]> = {};

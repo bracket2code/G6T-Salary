@@ -99,6 +99,7 @@ const generateLocalId = (prefix: string) => {
 export interface WorkerDataResult {
   workers: Worker[];
   companyLookup: Record<string, string>;
+  rawWorkers: unknown[];
 }
 
 export const fetchWorkersData = async ({
@@ -716,6 +717,7 @@ export const fetchWorkersData = async ({
   return {
     workers: transformedWorkers,
     companyLookup,
+    rawWorkers: workersArray,
   };
 };
 
