@@ -20,7 +20,9 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { HourEntry, Worker } from "../types/salary";
 import { formatDate } from "../lib/utils";
-import { fetchWorkersData } from "../lib/salaryData";
+import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
+import type { WorkerHoursSummaryResult } from "../lib/salaryData";
+import { formatLocalDateKey } from "../lib/timezone";
 import { useAuthStore } from "../store/authStore";
 import {
   GroupSearchSelect,
@@ -55,6 +57,22 @@ interface GroupView {
   name: string;
   assignments: Assignment[];
   totals: Record<WeekDayKey, number>;
+}
+
+interface WorkerWeeklyDayData {
+  totalHours: number;
+  companyHours: Record<
+    string,
+    {
+      companyId?: string;
+      name?: string;
+      hours: number;
+    }
+  >;
+}
+
+interface WorkerWeeklyData {
+  days: Record<string, WorkerWeeklyDayData>;
 }
 
 const hoursFormatter = new Intl.NumberFormat("es-ES", {
@@ -391,22 +409,163 @@ const createEmptyTotals = (): Record<WeekDayKey, number> => ({
   sunday: 0,
 });
 
-const calculateRowTotal = (assignment: Assignment): number =>
+interface AssignmentTotalsContext {
+  workerWeekData: Record<string, WorkerWeeklyData>;
+  weekDateMap: Record<WeekDayKey, string>;
+}
+
+const getManualHourValue = (
+  assignment: Assignment,
+  dayKey: WeekDayKey
+): number | null => {
+  const rawValue = assignment.hours[dayKey];
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+
+  const trimmed = rawValue.trim();
+  if (trimmed === "") {
+    return null;
+  }
+
+  return parseHour(trimmed);
+};
+
+const getTrackedHourValue = (
+  assignment: Assignment,
+  dayKey: WeekDayKey,
+  context: AssignmentTotalsContext
+): number | null => {
+  const dateKey = context.weekDateMap[dayKey];
+  if (!dateKey) {
+    return null;
+  }
+
+  const dayData = context.workerWeekData[assignment.workerId]?.days?.[dateKey];
+  if (!dayData) {
+    return null;
+  }
+
+  const tracked = resolveTrackedHoursForAssignment(dayData, assignment);
+  if (typeof tracked === "number" && Number.isFinite(tracked)) {
+    return tracked;
+  }
+
+  return null;
+};
+
+const resolveAssignmentHourValue = (
+  assignment: Assignment,
+  dayKey: WeekDayKey,
+  context: AssignmentTotalsContext
+): number => {
+  const manual = getManualHourValue(assignment, dayKey);
+  if (manual !== null) {
+    return manual;
+  }
+
+  const tracked = getTrackedHourValue(assignment, dayKey, context);
+  return tracked ?? 0;
+};
+
+const calculateRowTotal = (
+  assignment: Assignment,
+  context: AssignmentTotalsContext
+): number =>
   weekDays.reduce(
-    (total, day) => total + parseHour(assignment.hours[day.key]),
+    (total, day) =>
+      total + resolveAssignmentHourValue(assignment, day.key, context),
     0
   );
 
-const calculateTotals = (items: Assignment[]): Record<WeekDayKey, number> => {
+const calculateTotals = (
+  items: Assignment[],
+  context: AssignmentTotalsContext
+): Record<WeekDayKey, number> => {
   const totals = createEmptyTotals();
 
   items.forEach((item) => {
     weekDays.forEach((day) => {
-      totals[day.key] += parseHour(item.hours[day.key]);
+      totals[day.key] += resolveAssignmentHourValue(item, day.key, context);
     });
   });
 
   return totals;
+};
+
+const normalizeKeyPart = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const buildWorkerWeeklyData = (
+  summary: WorkerHoursSummaryResult
+): WorkerWeeklyData => {
+  const days: WorkerWeeklyData["days"] = {};
+
+  Object.entries(summary.hoursByDate).forEach(([dayKey, detail]) => {
+    if (!detail) {
+      return;
+    }
+
+    const companyHours: WorkerWeeklyDayData["companyHours"] = {};
+    detail.companies.forEach((company) => {
+      const record = {
+        companyId: normalizeKeyPart(company.companyId) ?? undefined,
+        name: normalizeKeyPart(company.name) ?? undefined,
+        hours: company.hours,
+      };
+
+      const normalizedId = normalizeKeyPart(company.companyId);
+      const normalizedName = normalizeKeyPart(company.name)?.toLowerCase();
+
+      if (normalizedId) {
+        companyHours[`id:${normalizedId}`] = record;
+      }
+      if (normalizedName) {
+        companyHours[`name:${normalizedName}`] = record;
+      }
+    });
+
+    days[dayKey] = {
+      totalHours: detail.totalHours,
+      companyHours,
+    };
+  });
+
+  return { days };
+};
+
+const resolveTrackedHoursForAssignment = (
+  dayData: WorkerWeeklyDayData | undefined,
+  assignment: Assignment
+): number | undefined => {
+  if (!dayData) {
+    return undefined;
+  }
+
+  const candidateKeys = new Set<string>();
+  const normalizedId = normalizeKeyPart(assignment.companyId);
+  if (normalizedId) {
+    candidateKeys.add(`id:${normalizedId}`);
+  }
+
+  const normalizedName = normalizeKeyPart(assignment.companyName)?.toLowerCase();
+  if (normalizedName) {
+    candidateKeys.add(`name:${normalizedName}`);
+  }
+
+  for (const key of candidateKeys) {
+    const record = dayData.companyHours[key];
+    if (record) {
+      return record.hours;
+    }
+  }
+
+  return undefined;
 };
 
 const formatHours = (value: number): string =>
@@ -451,6 +610,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [assignments, setAssignments] =
     useState<Assignment[]>(initialAssignments);
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
+  const [companyLookupMap, setCompanyLookupMap] = useState<Record<string, string>>({});
   const [groupOptions, setGroupOptions] = useState<WorkerGroupOption[]>([
     {
       id: "all",
@@ -477,6 +637,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [companyGroupsCollapsed, setCompanyGroupsCollapsed] = useState(false);
   const [workerGroupsCollapsed, setWorkerGroupsCollapsed] = useState(false);
+  const [workerWeekData, setWorkerWeekData] =
+    useState<Record<string, WorkerWeeklyData>>({});
+  const [isLoadingWeekData, setIsLoadingWeekData] = useState(false);
+  const [weekDataError, setWeekDataError] = useState<string | null>(null);
   const companyLastClickRef = useRef<number | null>(null);
   const workerLastClickRef = useRef<number | null>(null);
   const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
@@ -536,6 +700,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     });
   }, [showInactiveWorkers, showUnassignedWorkers, workersMatchingGroups]);
 
+  const workerNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    allWorkers.forEach((worker) => {
+      map[worker.id] = worker.name;
+    });
+    return map;
+  }, [allWorkers]);
+
   const selectedGroupSummary = useMemo(() => {
     if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
       const allOption = groupOptions.find((group) => group.id === "all");
@@ -592,6 +764,21 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     );
   }, [assignments, filteredWorkerIdSet, normalizedSelectedWorkers]);
 
+  const visibleWorkerIds = useMemo(
+    () =>
+      Array.from(
+        new Set(visibleAssignments.map((assignment) => assignment.workerId))
+      ),
+    [visibleAssignments]
+  );
+
+  const visibleWorkerIdsKey = useMemo(() => {
+    if (!visibleWorkerIds.length) {
+      return "";
+    }
+    return visibleWorkerIds.slice().sort().join("|");
+  }, [visibleWorkerIds]);
+
   useEffect(() => {
     setSelectedGroupIds((prev) => {
       const valid = prev.filter((id) =>
@@ -631,7 +818,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     weekDays.forEach((day, index) => {
       const current = new Date(monday);
       current.setDate(monday.getDate() + index);
-      dates[day.key] = current.toISOString().split("T")[0];
+      dates[day.key] = formatLocalDateKey(current);
     });
 
     return dates;
@@ -641,6 +828,116 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     () => formatWeekRange(currentWeekStart),
     [currentWeekStart]
   );
+
+  const totalsContext = useMemo(
+    () => ({ workerWeekData, weekDateMap }),
+    [workerWeekData, weekDateMap]
+  );
+
+  useEffect(() => {
+    if (!apiUrl || !externalJwt) {
+      setWorkerWeekData({});
+      setWeekDataError(null);
+      setIsLoadingWeekData(false);
+      return;
+    }
+
+    if (!visibleWorkerIds.length) {
+      setWorkerWeekData({});
+      setWeekDataError(null);
+      setIsLoadingWeekData(false);
+      return;
+    }
+
+    const start = new Date(currentWeekStart);
+    const fromDate = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate(),
+      0,
+      0,
+      0,
+      0
+    );
+    const toDate = new Date(fromDate);
+    toDate.setDate(toDate.getDate() + 6);
+    toDate.setHours(23, 59, 59, 999);
+
+    let isCancelled = false;
+
+    const loadWeekData = async () => {
+      setIsLoadingWeekData(true);
+      setWeekDataError(null);
+
+      const results = await Promise.allSettled(
+        visibleWorkerIds.map(async (workerId) => {
+          try {
+            const summary = await fetchWorkerHoursSummary({
+              apiUrl,
+              token: externalJwt,
+              workerId,
+              from: fromDate,
+              to: toDate,
+              companyLookup: companyLookupMap,
+              includeNotes: false,
+            });
+
+            return {
+              workerId,
+              summary,
+            };
+          } catch (error) {
+            throw { workerId, error };
+          }
+        })
+      );
+
+      if (isCancelled) {
+        return;
+      }
+
+      const nextData: Record<string, WorkerWeeklyData> = {};
+      const errorMessages: string[] = [];
+
+      results.forEach((result) => {
+        if (result.status === "fulfilled") {
+          const { workerId, summary } = result.value;
+          nextData[workerId] = buildWorkerWeeklyData(summary);
+        } else {
+          const { workerId, error } = result.reason ?? {};
+          console.error(
+            `Error obteniendo el control horario del trabajador ${workerId}`,
+            error
+          );
+          const workerName =
+            workerId && workerNameById[workerId]
+              ? workerNameById[workerId]
+              : workerId ?? "un trabajador";
+          errorMessages.push(
+            `No se pudieron cargar los registros horarios de ${workerName}.`
+          );
+        }
+      });
+
+      setWorkerWeekData(nextData);
+      setWeekDataError(errorMessages.length ? errorMessages.join(" ") : null);
+      setIsLoadingWeekData(false);
+    };
+
+    void loadWeekData();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    apiUrl,
+    companyLookupMap,
+    currentWeekStart,
+    externalJwt,
+    visibleWorkerIds,
+    visibleWorkerIdsKey,
+    workerNameById,
+  ]);
 
   const handleWeekChange = useCallback((step: number) => {
     setCurrentWeekStart((previous) => addWeeks(previous, step));
@@ -676,13 +973,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         return {
           ...group,
           assignments: sortedAssignments,
-          totals: calculateTotals(sortedAssignments),
+          totals: calculateTotals(sortedAssignments, totalsContext),
         };
       })
       .sort((a, b) =>
         a.name.localeCompare(b.name, "es", { sensitivity: "base" })
       );
-  }, [visibleAssignments]);
+  }, [totalsContext, visibleAssignments]);
 
   const workerGroups = useMemo<GroupView[]>(() => {
     const groups = new Map<string, GroupView>();
@@ -714,13 +1011,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         return {
           ...group,
           assignments: sortedAssignments,
-          totals: calculateTotals(sortedAssignments),
+          totals: calculateTotals(sortedAssignments, totalsContext),
         };
       })
       .sort((a, b) =>
         a.name.localeCompare(b.name, "es", { sensitivity: "base" })
       );
-  }, [visibleAssignments]);
+  }, [totalsContext, visibleAssignments]);
 
   const currentGroups = viewMode === "company" ? companyGroups : workerGroups;
 
@@ -806,6 +1103,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         includeInactive: true,
       });
       setAllWorkers(workers);
+      setCompanyLookupMap(companyLookup);
 
       const generatedAssignments = generateAssignmentsFromWorkers(
         workers,
@@ -899,6 +1197,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       ]);
       setGroupMembersById({ all: initialAssignmentWorkerIds });
       setLastFetchTime(null);
+      setCompanyLookupMap({});
     } finally {
       setIsLoadingWorkers(false);
     }
@@ -1075,8 +1374,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   }, [fetchRecentEntries]);
 
   const weeklyTotals = useMemo(
-    () => calculateTotals(visibleAssignments),
-    [visibleAssignments]
+    () => calculateTotals(visibleAssignments, totalsContext),
+    [totalsContext, visibleAssignments]
   );
   const weeklyTotalHours = useMemo(
     () => weekDays.reduce((total, day) => total + weeklyTotals[day.key], 0),
@@ -1084,34 +1383,43 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   );
 
   const workerWeeklyTotals = useMemo(() => {
-    const totalsMap = new Map<
-      string,
-      {
+    if (!visibleWorkerIds.length) {
+      return [] as Array<{
         workerId: string;
         workerName: string;
         total: number;
-      }
-    >();
+      }>;
+    }
 
-    visibleAssignments.forEach((assignment) => {
-      const existing = totalsMap.get(assignment.workerId);
-      const baseTotal = existing?.total ?? 0;
-      const incrementalTotal = weekDays.reduce(
-        (acc, day) => acc + parseHour(assignment.hours[day.key]),
-        0
+    return visibleWorkerIds
+      .map((workerId) => {
+        const dayRecords = workerWeekData[workerId]?.days ?? {};
+        const total = Object.values(dayRecords).reduce(
+          (sum, day) => sum + (day?.totalHours ?? 0),
+          0
+        );
+
+        const workerName =
+          workerNameById[workerId] ??
+          visibleAssignments.find((assignment) => assignment.workerId === workerId)
+            ?.workerName ??
+          workerId;
+
+        return {
+          workerId,
+          workerName,
+          total,
+        };
+      })
+      .sort((a, b) =>
+        a.workerName.localeCompare(b.workerName, "es", { sensitivity: "base" })
       );
-
-      totalsMap.set(assignment.workerId, {
-        workerId: assignment.workerId,
-        workerName: assignment.workerName,
-        total: baseTotal + incrementalTotal,
-      });
-    });
-
-    return Array.from(totalsMap.values()).sort((a, b) =>
-      a.workerName.localeCompare(b.workerName, "es", { sensitivity: "base" })
-    );
-  }, [visibleAssignments]);
+  }, [
+    visibleAssignments,
+    visibleWorkerIds,
+    workerNameById,
+    workerWeekData,
+  ]);
 
   const renderGroupCard = useCallback(
     (group: GroupView) => {
@@ -1120,7 +1428,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         (total, day) => total + group.totals[day.key],
         0
       );
-
       return (
         <Card
           key={group.id}
@@ -1204,7 +1511,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                     {group.assignments.map((assignment, index) => {
-                      const rowTotal = calculateRowTotal(assignment);
+                      const rowTotal = calculateRowTotal(assignment, totalsContext);
 
                       return (
                         <tr
@@ -1221,38 +1528,62 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               : assignment.companyName}
                           </td>
                           {weekDays.map((day) => (
-                            <td
-                              key={`${assignment.id}-${day.key}`}
-                              className="px-2 py-2"
-                            >
-                              <div className="flex items-center justify-center gap-0.5">
-                                <Input
-                                  size="sm"
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={assignment.hours[day.key]}
-                                  onChange={(event) =>
-                                    handleHourChange(
-                                      assignment.id,
-                                      day.key,
-                                      event.target.value
-                                    )
-                                  }
-                                  className="w-10 text-center"
-                                  placeholder="0"
-                                />
-                                <span className="text-xs text-gray-400 dark:text-gray-500">
-                                  h
-                                </span>
-                              </div>
-                            </td>
-                          ))}
-                          <td className="px-3 py-2 text-center font-semibold text-gray-700 dark:text-gray-200">
-                            {formatHours(rowTotal)}
+                          <td
+                            key={`${assignment.id}-${day.key}`}
+                            className="px-2 py-2"
+                          >
+                              {(() => {
+                                const trackedHours = getTrackedHourValue(
+                                  assignment,
+                                  day.key,
+                                  totalsContext
+                                );
+                                const trackedHoursValue =
+                                  typeof trackedHours === "number"
+                                    ? hoursFormatter.format(trackedHours)
+                                    : "";
+
+                                const currentValue = assignment.hours[day.key];
+                                const hasManualValue =
+                                  typeof currentValue === "string" &&
+                                  currentValue.trim() !== "";
+                                const inputValue = hasManualValue
+                                  ? currentValue
+                                  : trackedHoursValue;
+
+                                return (
+                                  <div className="flex flex-col items-center gap-1 text-center">
+                                    <div className="flex items-center justify-center gap-0.5">
+                                      <Input
+                                        size="sm"
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={inputValue}
+                                        onChange={(event) =>
+                                          handleHourChange(
+                                            assignment.id,
+                                            day.key,
+                                            event.target.value
+                                          )
+                                        }
+                                        className="w-12 text-center"
+                                        placeholder="0"
+                                      />
+                                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                                        h
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                           </td>
-                        </tr>
-                      );
-                    })}
+                        ))}
+                        <td className="px-3 py-2 text-center font-semibold text-gray-700 dark:text-gray-200">
+                          {formatHours(rowTotal)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                     <tr className="bg-gray-100 dark:bg-gray-800/80">
                       <td className="px-3 py-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
                         Total{" "}
@@ -1278,7 +1609,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         </Card>
       );
     },
-    [expandedGroups, handleHourChange, toggleGroupExpansion, viewMode]
+    [
+      expandedGroups,
+      handleHourChange,
+      toggleGroupExpansion,
+      viewMode,
+      totalsContext,
+    ]
   );
 
   return (
@@ -1471,6 +1808,19 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {isLoadingWeekData && (
+            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+              <RefreshCw size={16} className="h-4 w-4 animate-spin" />
+              <span>Cargando registros horarios...</span>
+            </div>
+          )}
+
+          {weekDataError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
+              {weekDataError}
+            </div>
+          )}
+
           {currentGroups.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-500 dark:border-gray-700 dark:text-gray-400">
               No hay trabajadores asignados a esta vista.
@@ -1487,7 +1837,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         <Card>
           <CardHeader>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Horas por trabajador (semana seleccionada)
+              Horas por trabajador ({weekRangeLabel})
             </h2>
           </CardHeader>
           <CardContent>

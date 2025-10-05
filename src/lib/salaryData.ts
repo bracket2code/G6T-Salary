@@ -8,16 +8,12 @@ import {
   WorkerCompanyContract,
   WorkerCompanyStats,
 } from "../types/salary";
+import { formatLocalDateKey, toLocalFromUtc, toUtcFromLocal } from "./timezone";
 
 interface ApiRequestOptions {
   apiUrl: string;
   token: string;
 }
-
-const formatDateKey = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
 
 const pickString = (
   ...values: Array<string | number | null | undefined>
@@ -735,22 +731,62 @@ export interface WorkerHoursSummaryResult {
 export const fetchWorkerHoursSummary = async (
   options: ApiRequestOptions & {
     workerId: string;
-    month: Date;
+    month?: Date;
+    from?: Date;
+    to?: Date;
     companyLookup?: Record<string, string>;
+    includeNotes?: boolean;
   }
 ): Promise<WorkerHoursSummaryResult> => {
-  const { apiUrl, token, workerId, month, companyLookup = {} } = options;
+  const {
+    apiUrl,
+    token,
+    workerId,
+    month,
+    from,
+    to,
+    companyLookup = {},
+    includeNotes = true,
+  } = options;
 
-  const fromDate = new Date(
-    Date.UTC(month.getFullYear(), month.getMonth(), 1, 0, 0, 0, 0)
-  );
-  const toDate = new Date(
-    Date.UTC(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999)
-  );
+  let fromDate: Date;
+  let toDate: Date;
+
+  if (from && to) {
+    fromDate = new Date(from);
+    toDate = new Date(to);
+  } else if (month) {
+    fromDate = new Date(
+      month.getFullYear(),
+      month.getMonth(),
+      1,
+      0,
+      0,
+      0,
+      0
+    );
+    toDate = new Date(
+      month.getFullYear(),
+      month.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999
+    );
+  } else {
+    throw new Error("Se requiere especificar 'month' o el rango 'from'/'to' para consultar horas");
+  }
+
+  if (fromDate > toDate) {
+    const temp = fromDate;
+    fromDate = toDate;
+    toDate = temp;
+  }
 
   const baseRequestPayload = {
-    from: fromDate.toISOString(),
-    to: toDate.toISOString(),
+    from: toUtcFromLocal(fromDate).toISOString(),
+    to: toUtcFromLocal(toDate).toISOString(),
     parametersId: [workerId],
     companiesId: [],
   };
@@ -935,10 +971,12 @@ export const fetchWorkerHoursSummary = async (
 
   const hourEntries = await fetchScheduleEntries([1]);
   let noteEntries: any[] = [];
-  try {
-    noteEntries = await fetchScheduleEntries([7]);
-  } catch (error) {
-    console.error("Error fetching worker notes:", error);
+  if (includeNotes) {
+    try {
+      noteEntries = await fetchScheduleEntries([7]);
+    } catch (error) {
+      console.error("Error fetching worker notes:", error);
+    }
   }
 
   const normalizeEntryDate = (entry: any) => {
@@ -970,8 +1008,7 @@ export const fetchWorkerHoursSummary = async (
       return null;
     }
 
-    date.setHours(date.getHours() + 2);
-    return date;
+    return toLocalFromUtc(date);
   };
 
   const processEntryHours = (entry: any) => {
@@ -1035,7 +1072,7 @@ export const fetchWorkerHoursSummary = async (
       return;
     }
 
-    const dayKey = formatDateKey(date);
+    const dayKey = formatLocalDateKey(date);
     const aggregate = ensureAggregate(dailyAggregates, dayKey);
 
     const hours = processEntryHours(entry);
@@ -1161,7 +1198,7 @@ export const fetchWorkerHoursSummary = async (
       return;
     }
 
-    const dayKey = formatDateKey(date);
+    const dayKey = formatLocalDateKey(date);
     const aggregate = ensureAggregate(dailyAggregates, dayKey);
 
     const noteCollector = new Set<string>();

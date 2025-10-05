@@ -1815,10 +1815,9 @@ export const HoursRegistryPage: React.FC = () => {
             <>
               <WorkerSearchSelect
                 workers={allWorkers}
-                selectedWorkerIds={selectedWorkerId ? [selectedWorkerId] : []}
-                onSelectionChange={(ids) => handleWorkerSelectionChange(ids[0] ?? '')}
+                selectedWorkerId={selectedWorkerId}
+                onWorkerSelect={handleWorkerSelectionChange}
                 placeholder="Buscar y seleccionar trabajador..."
-                multiSelect={false}
               />
               {workersError && (
                 <p className="mt-3 text-sm text-red-600 dark:text-red-400">

@@ -1,4 +1,4 @@
-import { format, parseISO } from 'date-fns';
+import { addMinutes, format, parseISO, subMinutes } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export function formatDateLongGMT2(dateString: string | null | undefined): string {
@@ -35,4 +35,16 @@ export function formatTimeGMT2(dateString: string | null | undefined): string {
     console.error('Error formatting time:', error);
     return '-';
   }
+}
+
+export function toUtcFromLocal(date: Date): Date {
+  return addMinutes(date, date.getTimezoneOffset());
+}
+
+export function toLocalFromUtc(date: Date): Date {
+  return subMinutes(date, date.getTimezoneOffset());
+}
+
+export function formatLocalDateKey(date: Date): string {
+  return format(date, 'yyyy-MM-dd');
 }
