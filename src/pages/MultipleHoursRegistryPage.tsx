@@ -13,11 +13,21 @@ import {
   ChevronRight,
   RefreshCw,
   Users,
+  CalendarClock,
+  Plus,
+  Trash2,
+  NotebookPen,
+  X,
 } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { MultiSelect } from "../components/ui/MultiSelect";
+import type {
+  DayScheduleEntry,
+  DayNoteEntry,
+} from "../components/WorkerHoursCalendar";
 import { HourEntry, Worker } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
@@ -52,6 +62,219 @@ interface Assignment {
   hours: Record<WeekDayKey, string>;
 }
 
+const UNASSIGNED_COMPANY_ID = "sin-empresa";
+const UNASSIGNED_COMPANY_LABEL = "Sin empresa asignada";
+
+const UNASSIGNED_COMPANY_NAME_VARIANTS = new Set([
+  "sin empresa",
+  "sin empresa asignada",
+  "sin empresa asignado",
+  "sin empresa (sin asignar)",
+  "sin asignar empresa",
+  "sin asignación de empresa",
+  "sin asignacion de empresa",
+]);
+
+const trimToNull = (value?: string | null): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const isUnassignedCompanyIdValue = (value: string): boolean => {
+  const normalized = value.toLowerCase();
+  return (
+    normalized === UNASSIGNED_COMPANY_ID ||
+    normalized.startsWith(`${UNASSIGNED_COMPANY_ID}-`) ||
+    normalized === "0" ||
+    normalized === "null" ||
+    normalized === "undefined"
+  );
+};
+
+const isUnassignedCompanyNameValue = (value: string): boolean =>
+  UNASSIGNED_COMPANY_NAME_VARIANTS.has(value.toLowerCase());
+
+const isUnassignedCompany = (
+  companyId?: string | null,
+  companyName?: string | null
+): boolean => {
+  const normalizedId = trimToNull(companyId);
+  const normalizedName = trimToNull(companyName);
+
+  const idLooksUnassigned =
+    normalizedId === null || isUnassignedCompanyIdValue(normalizedId);
+  const nameLooksUnassigned =
+    normalizedName === null || isUnassignedCompanyNameValue(normalizedName);
+
+  return idLooksUnassigned && nameLooksUnassigned;
+};
+
+const buildCompanyIdentity = (
+  companyId?: string | null,
+  companyName?: string | null
+): { id: string; name: string } => {
+  if (isUnassignedCompany(companyId, companyName)) {
+    return { id: UNASSIGNED_COMPANY_ID, name: UNASSIGNED_COMPANY_LABEL };
+  }
+
+  const normalizedId = trimToNull(companyId);
+  const normalizedName = trimToNull(companyName);
+
+  if (normalizedId && normalizedName) {
+    return { id: normalizedId, name: normalizedName };
+  }
+
+  if (normalizedId) {
+    return { id: normalizedId, name: normalizedName ?? normalizedId };
+  }
+
+  if (normalizedName) {
+    return { id: createGroupId(normalizedName), name: normalizedName };
+  }
+
+  return { id: UNASSIGNED_COMPANY_ID, name: UNASSIGNED_COMPANY_LABEL };
+};
+
+const withNormalizedCompany = <
+  T extends { companyId: string; companyName: string }
+>(
+  item: T
+): T => {
+  const identity = buildCompanyIdentity(item.companyId, item.companyName);
+  return {
+    ...item,
+    companyId: identity.id,
+    companyName: identity.name,
+  };
+};
+
+const normalizeCompanyLookupMap = (
+  lookup: Record<string, string>
+): Record<string, string> => {
+  const normalized: Record<string, string> = {};
+
+  Object.entries(lookup).forEach(([rawId, rawName]) => {
+    const identity = buildCompanyIdentity(rawId, rawName);
+    normalized[identity.id] = identity.name;
+  });
+
+  if (!normalized[UNASSIGNED_COMPANY_ID]) {
+    normalized[UNASSIGNED_COMPANY_ID] = UNASSIGNED_COMPANY_LABEL;
+  }
+
+  return normalized;
+};
+
+const createDefaultCompanyLookupMap = () => normalizeCompanyLookupMap({});
+
+interface DayNotesModalProps {
+  isOpen: boolean;
+  workerName: string;
+  companyName: string;
+  dayLabel: string;
+  dateLabel?: string;
+  notes: DayNoteEntry[];
+  onClose: () => void;
+}
+
+const DayNotesModal: React.FC<DayNotesModalProps> = ({
+  isOpen,
+  workerName,
+  companyName,
+  dayLabel,
+  dateLabel,
+  notes,
+  onClose,
+}) => {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[104] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-blue-600 dark:text-blue-300">
+              <NotebookPen size={16} />
+              Notas del día
+            </div>
+            <h3 className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+              {workerName}
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              {companyName}
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-500">
+              {dayLabel}
+              {dateLabel ? ` · ${dateLabel}` : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            aria-label="Cerrar notas"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
+          {notes.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              No hay notas disponibles para este día.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {notes.map((note) => (
+                <div
+                  key={note.id}
+                  className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 shadow-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                >
+                  {note.text}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end border-t border-gray-200 px-5 py-3 dark:border-gray-800">
+          <Button variant="outline" onClick={onClose}>
+            Cerrar
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface HourSegment {
+  id: string;
+  start: string;
+  end: string;
+  total?: string;
+  description?: string;
+}
+
+interface SegmentsModalTarget {
+  assignmentId: string;
+  workerName: string;
+  companyName: string;
+  dayKey: WeekDayKey;
+  dayLabel: string;
+  existingEntries: DayScheduleEntry[];
+}
+
+interface NotesModalTarget {
+  workerName: string;
+  companyName: string;
+  dayLabel: string;
+  dateLabel?: string;
+  notes: DayNoteEntry[];
+}
+
 interface GroupView {
   id: string;
   name: string;
@@ -69,6 +292,7 @@ interface WorkerWeeklyDayData {
       hours: number;
     }
   >;
+  entries?: DayScheduleEntry[];
 }
 
 interface WorkerWeeklyData {
@@ -79,6 +303,71 @@ const hoursFormatter = new Intl.NumberFormat("es-ES", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
+
+const parseTimeToMinutes = (value: string): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.trim().match(/^([0-1]?\d|2[0-3]):([0-5]\d)$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+
+  if (hours < 0 || hours > 23) {
+    return null;
+  }
+
+  if (minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+};
+
+const calculateSegmentsTotalMinutes = (segments: HourSegment[]): number =>
+  segments.reduce((total, segment) => {
+    const start = parseTimeToMinutes(segment.start);
+    const end = parseTimeToMinutes(segment.end);
+
+    if (start === null || end === null || end <= start) {
+      return total;
+    }
+
+    return total + (end - start);
+  }, 0);
+
+const formatMinutesToHoursLabel = (totalMinutes: number): string => {
+  if (totalMinutes <= 0) {
+    return "0";
+  }
+
+  const hours = totalMinutes / 60;
+  return hoursFormatter.format(hours);
+};
+
+const toInputNumberString = (value: unknown): string | undefined => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return hoursFormatter.format(value);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  return undefined;
+};
 
 const DOUBLE_CLICK_TIMEOUT = 400;
 
@@ -303,7 +592,7 @@ const generateAssignmentsFromWorkers = (
           trimmedName ||
           rawCompanyId ||
           rawRelationId ||
-          "Sin empresa";
+          UNASSIGNED_COMPANY_LABEL;
         const companyKey =
           rawCompanyId || rawRelationId || createGroupId(displayName);
         const assignmentId = `${companyKey}-${worker.id}-${index}`;
@@ -332,7 +621,10 @@ const generateAssignmentsFromWorkers = (
         const resolvedName =
           resolveCompanyName(contractCompanyId) || trimmedName || undefined;
         const displayName =
-          resolvedName || trimmedName || contractCompanyId || "Sin empresa";
+          resolvedName ||
+          trimmedName ||
+          contractCompanyId ||
+          UNASSIGNED_COMPANY_LABEL;
         const candidateId = contractCompanyId || createGroupId(displayName);
 
         assignments.push({
@@ -357,7 +649,7 @@ const generateAssignmentsFromWorkers = (
           fallbackId ||
           undefined;
         const displayName =
-          resolvedName || trimmedName || fallbackId || "Sin empresa";
+          resolvedName || trimmedName || fallbackId || UNASSIGNED_COMPANY_LABEL;
         const candidateId = fallbackId || createGroupId(displayName);
         assignments.push({
           id: `${candidateId}-${worker.id}`,
@@ -373,7 +665,8 @@ const generateAssignmentsFromWorkers = (
 
     const fallbackId = worker.companies?.trim();
     const resolvedFallback = resolveCompanyName(fallbackId);
-    const displayName = resolvedFallback || fallbackId || "Sin empresa";
+    const displayName =
+      resolvedFallback || fallbackId || UNASSIGNED_COMPANY_LABEL;
     const candidateId = fallbackId || `sin-empresa-${worker.id}`;
 
     assignments.push({
@@ -386,7 +679,7 @@ const generateAssignmentsFromWorkers = (
     });
   });
 
-  return assignments;
+  return assignments.map(withNormalizedCompany);
 };
 
 const parseHour = (value: string): number => {
@@ -498,7 +791,13 @@ const normalizeKeyPart = (value?: string | null) => {
     return null;
   }
   const trimmed = String(value).trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.toLowerCase() === UNASSIGNED_COMPANY_ID) {
+    return UNASSIGNED_COMPANY_ID;
+  }
+  return trimmed;
 };
 
 const buildWorkerWeeklyData = (
@@ -513,14 +812,15 @@ const buildWorkerWeeklyData = (
 
     const companyHours: WorkerWeeklyDayData["companyHours"] = {};
     detail.companies.forEach((company) => {
+      const identity = buildCompanyIdentity(company.companyId, company.name);
       const record = {
-        companyId: normalizeKeyPart(company.companyId) ?? undefined,
-        name: normalizeKeyPart(company.name) ?? undefined,
+        companyId: identity.id,
+        name: identity.name,
         hours: company.hours,
       };
 
-      const normalizedId = normalizeKeyPart(company.companyId);
-      const normalizedName = normalizeKeyPart(company.name)?.toLowerCase();
+      const normalizedId = normalizeKeyPart(identity.id);
+      const normalizedName = normalizeKeyPart(identity.name)?.toLowerCase();
 
       if (normalizedId) {
         companyHours[`id:${normalizedId}`] = record;
@@ -530,9 +830,22 @@ const buildWorkerWeeklyData = (
       }
     });
 
+    const entries = (detail.entries ?? []).map((entry) => {
+      const identity = buildCompanyIdentity(entry.companyId, entry.companyName);
+      return {
+        ...entry,
+        companyId: identity.id,
+        companyName: identity.name,
+        workShifts: entry.workShifts
+          ? entry.workShifts.map((shift) => ({ ...shift }))
+          : undefined,
+      };
+    });
+
     days[dayKey] = {
       totalHours: detail.totalHours,
       companyHours,
+      entries,
     };
   });
 
@@ -553,7 +866,9 @@ const resolveTrackedHoursForAssignment = (
     candidateKeys.add(`id:${normalizedId}`);
   }
 
-  const normalizedName = normalizeKeyPart(assignment.companyName)?.toLowerCase();
+  const normalizedName = normalizeKeyPart(
+    assignment.companyName
+  )?.toLowerCase();
   if (normalizedName) {
     candidateKeys.add(`name:${normalizedName}`);
   }
@@ -566,6 +881,93 @@ const resolveTrackedHoursForAssignment = (
   }
 
   return undefined;
+};
+
+const resolveEntriesForAssignment = (
+  dayData: WorkerWeeklyDayData | undefined,
+  assignment: Assignment
+): DayScheduleEntry[] => {
+  if (!dayData || !dayData.entries || dayData.entries.length === 0) {
+    return [];
+  }
+
+  const candidateKeys = new Set<string>();
+  const normalizedId = normalizeKeyPart(assignment.companyId);
+  if (normalizedId) {
+    candidateKeys.add(`id:${normalizedId}`);
+  }
+
+  const normalizedName = normalizeKeyPart(
+    assignment.companyName
+  )?.toLowerCase();
+  if (normalizedName) {
+    candidateKeys.add(`name:${normalizedName}`);
+  }
+
+  const matches = dayData.entries.filter((entry) => {
+    const entryId = normalizeKeyPart(entry.companyId);
+    if (entryId && candidateKeys.has(`id:${entryId}`)) {
+      return true;
+    }
+
+    const entryName = normalizeKeyPart(entry.companyName)?.toLowerCase();
+    if (entryName && candidateKeys.has(`name:${entryName}`)) {
+      return true;
+    }
+
+    if (!candidateKeys.size) {
+      return true;
+    }
+
+    return false;
+  });
+
+  return matches.map((entry) => ({
+    ...entry,
+    workShifts: entry.workShifts
+      ? entry.workShifts.map((shift) => ({ ...shift }))
+      : undefined,
+  }));
+};
+
+const noteAppliesToAssignment = (
+  note: DayNoteEntry,
+  assignment: Assignment
+) => {
+  const normalizedAssignmentId = normalizeKeyPart(assignment.companyId);
+  const normalizedAssignmentName = normalizeKeyPart(
+    assignment.companyName
+  )?.toLowerCase();
+
+  const noteCompanyId = normalizeKeyPart(note.companyId);
+  const noteCompanyName = normalizeKeyPart(note.companyName);
+
+  if (
+    !noteCompanyId ||
+    isUnassignedCompanyIdValue(noteCompanyId) ||
+    noteCompanyId === UNASSIGNED_COMPANY_ID
+  ) {
+    return true;
+  }
+
+  if (normalizedAssignmentId && noteCompanyId === normalizedAssignmentId) {
+    return true;
+  }
+
+  const noteCompanyNameLower = noteCompanyName?.toLowerCase();
+  if (
+    noteCompanyNameLower &&
+    (isUnassignedCompanyNameValue(noteCompanyNameLower) ||
+      !noteCompanyNameLower.trim())
+  ) {
+    return true;
+  }
+
+  if (noteCompanyNameLower && normalizedAssignmentName) {
+    return noteCompanyNameLower === normalizedAssignmentName;
+  }
+
+  return false;
 };
 
 const formatHours = (value: number): string =>
@@ -603,14 +1005,427 @@ const formatWeekRange = (start: Date): string => {
   return `${startLabel} - ${endLabel}`;
 };
 
+interface HourSegmentsModalProps {
+  isOpen: boolean;
+  workerName: string;
+  companyName: string;
+  dayLabel: string;
+  initialSegments: HourSegment[];
+  existingEntries: DayScheduleEntry[];
+  onClose: () => void;
+  onSave: (segments: HourSegment[]) => void;
+}
+
+const createEmptySegment = (): HourSegment => ({
+  id: `segment-${Math.random().toString(36).slice(2, 9)}`,
+  start: "",
+  end: "",
+  total: "",
+  description: "",
+});
+
+const extractObservationText = (raw: unknown): string | undefined => {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  const source = raw as Record<string, unknown>;
+  const observations = source.observations ?? source.observation;
+
+  if (typeof observations === "string") {
+    const trimmed = observations.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  if (Array.isArray(observations)) {
+    const joined = observations
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+      .join(" · ");
+    return joined.length > 0 ? joined : undefined;
+  }
+
+  return undefined;
+};
+
+const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
+  isOpen,
+  workerName,
+  companyName,
+  dayLabel,
+  initialSegments,
+  existingEntries,
+  onClose,
+  onSave,
+}) => {
+  const [segments, setSegments] = useState<HourSegment[]>([]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (initialSegments.length > 0) {
+      setSegments(
+        initialSegments.map((segment) => ({
+          ...segment,
+          total:
+            toInputNumberString(
+              segment.total ??
+                (segment as { total?: unknown }).total ??
+                (segment as { note?: string }).note ??
+                undefined
+            ) ?? "",
+          description: segment.description ?? "",
+        }))
+      );
+      return;
+    }
+
+    if (existingEntries.length > 0) {
+      const derivedSegments = existingEntries.flatMap((entry) => {
+        const entryRaw = (entry as { raw?: unknown }).raw as
+          | Record<string, unknown>
+          | undefined;
+        const observationText = extractObservationText(entryRaw) ?? "";
+        const entryTotal =
+          toInputNumberString(
+            entryRaw?.value ?? entryRaw?.hours ?? entry.hours
+          ) ?? "";
+
+        if (Array.isArray(entry.workShifts) && entry.workShifts.length > 0) {
+          return entry.workShifts
+            .map((shift, index) => {
+              const start = shift.startTime ?? "";
+              const end = shift.endTime ?? "";
+              if (!start && !end) {
+                return null;
+              }
+
+              const shiftTotal =
+                toInputNumberString(
+                  (shift as Record<string, unknown> | undefined)?.value ??
+                    shift.hours ??
+                    (shift as Record<string, unknown> | undefined)?.workedHours
+                ) ?? entryTotal;
+
+              return {
+                id:
+                  shift.id ??
+                  `existing-shift-${entry.id}-${index}-${Math.random()
+                    .toString(36)
+                    .slice(2, 6)}`,
+                start,
+                end,
+                total: shiftTotal ?? "",
+                description: observationText,
+              } satisfies HourSegment;
+            })
+            .filter((segment): segment is HourSegment => Boolean(segment));
+        }
+
+        if (entryTotal) {
+          const numericHours =
+            typeof entry.hours === "number" && Number.isFinite(entry.hours)
+              ? entry.hours
+              : parseHour(String(entryTotal).replace(",", "."));
+          if (numericHours <= 0) {
+            return [];
+          }
+
+          const minutes = Math.round(numericHours * 60);
+          const startMinutes = 8 * 60;
+          const endMinutes = startMinutes + minutes;
+          const startLabel = `${String(Math.floor(startMinutes / 60)).padStart(
+            2,
+            "0"
+          )}:${String(startMinutes % 60).padStart(2, "0")}`;
+          const endLabel = `${String(Math.floor(endMinutes / 60)).padStart(
+            2,
+            "0"
+          )}:${String(endMinutes % 60).padStart(2, "0")}`;
+
+          return [
+            {
+              id: `existing-hours-${entry.id}`,
+              start: startLabel,
+              end: endLabel,
+              total: entryTotal,
+              description: observationText,
+            } satisfies HourSegment,
+          ];
+        }
+
+        return [];
+      });
+
+      if (derivedSegments.length > 0) {
+        setSegments(derivedSegments);
+        return;
+      }
+    }
+
+    setSegments([createEmptySegment()]);
+  }, [existingEntries, initialSegments, isOpen]);
+
+  const invalidSegments = useMemo(
+    () =>
+      segments.some((segment) => {
+        if (!segment.start && !segment.end) {
+          return false;
+        }
+
+        if (!segment.start || !segment.end) {
+          return true;
+        }
+
+        const start = parseTimeToMinutes(segment.start);
+        const end = parseTimeToMinutes(segment.end);
+
+        if (start === null || end === null) {
+          return true;
+        }
+
+        return end <= start;
+      }),
+    [segments]
+  );
+
+  const totalMinutes = useMemo(
+    () => calculateSegmentsTotalMinutes(segments),
+    [segments]
+  );
+
+  const totalLabel = formatMinutesToHoursLabel(totalMinutes);
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalMinutesRemainder = totalMinutes % 60;
+
+  const handleSegmentChange = (
+    id: string,
+    field: "start" | "end" | "total" | "description",
+    value: string
+  ) => {
+    setSegments((prev) =>
+      prev.map((segment) =>
+        segment.id === id ? { ...segment, [field]: value } : segment
+      )
+    );
+  };
+
+  const handleRemoveSegment = (id: string) => {
+    setSegments((prev) => {
+      const next = prev.filter((segment) => segment.id !== id);
+      if (next.length === 0) {
+        return [createEmptySegment()];
+      }
+      return next;
+    });
+  };
+
+  const handleAddSegment = () => {
+    setSegments((prev) => [...prev, createEmptySegment()]);
+  };
+
+  const handleSave = () => {
+    const validSegments = segments.filter((segment) => {
+      const start = parseTimeToMinutes(segment.start);
+      const end = parseTimeToMinutes(segment.end);
+      return (
+        segment.start &&
+        segment.end &&
+        start !== null &&
+        end !== null &&
+        end > start
+      );
+    });
+
+    onSave(validSegments.map((segment) => ({ ...segment })));
+  };
+
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={onClose}
+        role="presentation"
+      />
+      <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl dark:bg-gray-900">
+        <div className="flex flex-col gap-1 border-b border-gray-200 p-4 sm:p-5 dark:border-gray-700">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Tramos horarios
+              </h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {workerName} · {dayLabel} · {companyName}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sm text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4 p-4 sm:p-6">
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-500/30 dark:bg-blue-900/20 dark:text-blue-100">
+            Configura los tramos horarios para sumar las horas automáticamente
+            en la celda seleccionada.
+          </div>
+
+          {segments.map((segment, index) => (
+            <div
+              key={segment.id}
+              className="rounded-lg border border-gray-200 p-4 dark:border-gray-700"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  Tramo {index + 1}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleRemoveSegment(segment.id)}
+                  className="px-2 py-1 text-red-600 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
+                  leftIcon={<Trash2 size={16} />}
+                >
+                  Eliminar
+                </Button>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Input
+                  type="time"
+                  size="sm"
+                  label="Inicio"
+                  value={segment.start}
+                  onChange={(event) =>
+                    handleSegmentChange(segment.id, "start", event.target.value)
+                  }
+                  required
+                />
+                <Input
+                  type="time"
+                  size="sm"
+                  label="Fin"
+                  value={segment.end}
+                  onChange={(event) =>
+                    handleSegmentChange(segment.id, "end", event.target.value)
+                  }
+                  required
+                />
+              </div>
+              <div className="mt-4 space-y-3">
+                <Input
+                  label="Descripción"
+                  size="sm"
+                  value={segment.description ?? ""}
+                  onChange={(event) =>
+                    handleSegmentChange(
+                      segment.id,
+                      "description",
+                      event.target.value
+                    )
+                  }
+                  fullWidth
+                  placeholder="Observaciones del tramo"
+                />
+                <div className="sm:w-[12.5%]">
+                  <Input
+                    label="Total horas"
+                    size="sm"
+                    value={segment.total ?? ""}
+                    onChange={(event) =>
+                      handleSegmentChange(
+                        segment.id,
+                        "total",
+                        event.target.value
+                      )
+                    }
+                    fullWidth
+                    inputMode="decimal"
+                    placeholder="Ej. 3,5"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <div className="flex justify-start">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddSegment}
+              leftIcon={<Plus size={16} />}
+            >
+              Añadir tramo
+            </Button>
+          </div>
+
+          {invalidSegments && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-950/30 dark:text-red-200">
+              Revisa los tramos: la hora de fin debe ser posterior a la hora de
+              inicio y el formato debe ser HH:MM.
+            </div>
+          )}
+
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-gray-700 dark:bg-gray-800">
+            <p className="font-medium text-gray-700 dark:text-gray-200">
+              Horas calculadas
+            </p>
+            <p className="mt-1 text-base font-semibold text-gray-900 dark:text-white">
+              {totalLabel} h
+              {totalMinutes > 0 && (
+                <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+                  ({totalHours}h {totalMinutesRemainder}m)
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-gray-200 p-4 sm:flex-row sm:justify-end sm:gap-4 dark:border-gray-700">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            className="w-full sm:w-auto"
+          >
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            onClick={handleSave}
+            disabled={invalidSegments}
+            className="w-full sm:w-auto"
+          >
+            Guardar tramos
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const MultipleHoursRegistryPage: React.FC = () => {
   const { externalJwt } = useAuthStore();
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
 
-  const [assignments, setAssignments] =
-    useState<Assignment[]>(initialAssignments);
+  const [assignments, setAssignments] = useState<Assignment[]>(
+    initialAssignments.map(withNormalizedCompany)
+  );
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
-  const [companyLookupMap, setCompanyLookupMap] = useState<Record<string, string>>({});
+  const [companyLookupMap, setCompanyLookupMap] = useState<
+    Record<string, string>
+  >(() => createDefaultCompanyLookupMap());
   const [groupOptions, setGroupOptions] = useState<WorkerGroupOption[]>([
     {
       id: "all",
@@ -628,6 +1443,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
   const [showInactiveWorkers, setShowInactiveWorkers] = useState(false);
   const [showUnassignedWorkers, setShowUnassignedWorkers] = useState(false);
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState<boolean>(true);
   const [isRefreshingWorkers, setIsRefreshingWorkers] =
     useState<boolean>(false);
@@ -637,13 +1453,21 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [companyGroupsCollapsed, setCompanyGroupsCollapsed] = useState(false);
   const [workerGroupsCollapsed, setWorkerGroupsCollapsed] = useState(false);
-  const [workerWeekData, setWorkerWeekData] =
-    useState<Record<string, WorkerWeeklyData>>({});
+  const [workerWeekData, setWorkerWeekData] = useState<
+    Record<string, WorkerWeeklyData>
+  >({});
   const [isLoadingWeekData, setIsLoadingWeekData] = useState(false);
   const [weekDataError, setWeekDataError] = useState<string | null>(null);
   const companyLastClickRef = useRef<number | null>(null);
   const workerLastClickRef = useRef<number | null>(null);
   const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
+  const [segmentsByAssignment, setSegmentsByAssignment] = useState<
+    Record<string, Record<WeekDayKey, HourSegment[]>>
+  >({});
+  const [segmentModalTarget, setSegmentModalTarget] =
+    useState<SegmentsModalTarget | null>(null);
+  const [notesModalTarget, setNotesModalTarget] =
+    useState<NotesModalTarget | null>(null);
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
     getStartOfWeek(new Date())
   );
@@ -708,28 +1532,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return map;
   }, [allWorkers]);
 
-  const selectedGroupSummary = useMemo(() => {
-    if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
-      const allOption = groupOptions.find((group) => group.id === "all");
-      return {
-        label: allOption?.label ?? "Trabajadores",
-        memberCount: filteredWorkers.length,
-      };
-    }
-
-    const selectedGroups = groupOptions.filter((group) =>
-      selectedGroupIds.includes(group.id)
-    );
-
-    return {
-      label:
-        selectedGroups.length === 1
-          ? selectedGroups[0]?.label ?? "Grupo"
-          : `${selectedGroups.length} grupos seleccionados`,
-      memberCount: filteredWorkers.length,
-    };
-  }, [filteredWorkers.length, groupOptions, selectedGroupIds]);
-
   const filteredWorkerIdSet = useMemo(
     () => new Set(filteredWorkers.map((worker) => worker.id)),
     [filteredWorkers]
@@ -747,37 +1549,196 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
   const workersForSelect = filteredWorkers;
 
-  const visibleAssignments = useMemo(() => {
+  const companyFilterOptions = useMemo(() => {
+    const labelMap = new Map<string, string>();
+
+    assignments.forEach((assignment) => {
+      if (!labelMap.has(assignment.companyId)) {
+        labelMap.set(assignment.companyId, assignment.companyName);
+      }
+    });
+
+    Object.entries(companyLookupMap).forEach(([companyId, name]) => {
+      if (!labelMap.has(companyId) && typeof name === "string") {
+        labelMap.set(companyId, name);
+      }
+    });
+
+    return Array.from(labelMap.entries())
+      .map(([companyId, label]) => ({ value: companyId, label }))
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+      );
+  }, [assignments, companyLookupMap]);
+
+  const selectionAssignments = useMemo(() => {
+    let base: Assignment[];
+
     if (normalizedSelectedWorkers.length) {
       const selectedSet = new Set(normalizedSelectedWorkers);
-      return assignments.filter((assignment) =>
+      base = assignments.filter((assignment) =>
         selectedSet.has(assignment.workerId)
+      );
+    } else if (!filteredWorkerIdSet.size) {
+      base = [] as Assignment[];
+    } else {
+      base = assignments.filter((assignment) =>
+        filteredWorkerIdSet.has(assignment.workerId)
       );
     }
 
-    if (!filteredWorkerIdSet.size) {
+    if (!selectedCompanyIds.length) {
+      return base;
+    }
+
+    const companySet = new Set(selectedCompanyIds);
+    return base.filter((assignment) => companySet.has(assignment.companyId));
+  }, [
+    assignments,
+    filteredWorkerIdSet,
+    normalizedSelectedWorkers,
+    selectedCompanyIds,
+  ]);
+
+  const selectionWorkerIds = useMemo(
+    () =>
+      Array.from(
+        new Set(selectionAssignments.map((assignment) => assignment.workerId))
+      ),
+    [selectionAssignments]
+  );
+
+  const [requestedWorkerIds, setRequestedWorkerIds] = useState<string[] | null>(
+    null
+  );
+  const [requestedCompanyIds, setRequestedCompanyIds] = useState<
+    string[] | null
+  >(null);
+
+  const hasRequestedResults = requestedWorkerIds !== null;
+
+  const visibleAssignments = useMemo(() => {
+    if (requestedWorkerIds === null) {
       return [] as Assignment[];
     }
 
-    return assignments.filter((assignment) =>
-      filteredWorkerIdSet.has(assignment.workerId)
-    );
-  }, [assignments, filteredWorkerIdSet, normalizedSelectedWorkers]);
+    if (!requestedWorkerIds.length) {
+      return [] as Assignment[];
+    }
+
+    const workerSet = new Set(requestedWorkerIds);
+    const companySet =
+      requestedCompanyIds && requestedCompanyIds.length
+        ? new Set(requestedCompanyIds)
+        : null;
+
+    return assignments.filter((assignment) => {
+      if (!workerSet.has(assignment.workerId)) {
+        return false;
+      }
+
+      if (companySet && !companySet.has(assignment.companyId)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [assignments, requestedCompanyIds, requestedWorkerIds]);
 
   const visibleWorkerIds = useMemo(
-    () =>
-      Array.from(
-        new Set(visibleAssignments.map((assignment) => assignment.workerId))
-      ),
-    [visibleAssignments]
+    () => requestedWorkerIds ?? [],
+    [requestedWorkerIds]
   );
 
   const visibleWorkerIdsKey = useMemo(() => {
-    if (!visibleWorkerIds.length) {
+    if (requestedWorkerIds === null) {
+      return null;
+    }
+    if (!requestedWorkerIds.length) {
       return "";
     }
-    return visibleWorkerIds.slice().sort().join("|");
-  }, [visibleWorkerIds]);
+    return requestedWorkerIds.slice().sort().join("|");
+  }, [requestedWorkerIds]);
+
+  const selectionWorkerIdsKey = useMemo(() => {
+    if (!selectionWorkerIds.length) {
+      return "";
+    }
+    return selectionWorkerIds.slice().sort().join("|");
+  }, [selectionWorkerIds]);
+
+  const selectionCompanyIdsKey = useMemo(() => {
+    if (!selectedCompanyIds.length) {
+      return "";
+    }
+    return selectedCompanyIds.slice().sort().join("|");
+  }, [selectedCompanyIds]);
+
+  const requestedCompanyIdsKey = useMemo(() => {
+    if (requestedCompanyIds === null) {
+      return null;
+    }
+    if (!requestedCompanyIds.length) {
+      return "";
+    }
+    return requestedCompanyIds.slice().sort().join("|");
+  }, [requestedCompanyIds]);
+
+  const resultsAreStale = useMemo(() => {
+    if (requestedWorkerIds === null || requestedCompanyIds === null) {
+      return selectionWorkerIds.length > 0 || selectedCompanyIds.length > 0;
+    }
+
+    return (
+      visibleWorkerIdsKey !== selectionWorkerIdsKey ||
+      requestedCompanyIdsKey !== selectionCompanyIdsKey
+    );
+  }, [
+    requestedCompanyIds,
+    requestedCompanyIdsKey,
+    requestedWorkerIds,
+    selectedCompanyIds.length,
+    selectionCompanyIdsKey,
+    selectionWorkerIds.length,
+    selectionWorkerIdsKey,
+    visibleWorkerIdsKey,
+  ]);
+
+  const resultsHelperText = useMemo(() => {
+    if (resultsAreStale) {
+      return 'Hay cambios sin aplicar. Pulsa "Mostrar resultados".';
+    }
+    if (!hasRequestedResults) {
+      return 'Pulsa "Mostrar resultados" para cargar los datos seleccionados.';
+    }
+    if (!visibleWorkerIds.length) {
+      return "No hay trabajadores en la selección actual.";
+    }
+    const companyNote =
+      requestedCompanyIds && requestedCompanyIds.length
+        ? ` en ${requestedCompanyIds.length} empresa${
+            requestedCompanyIds.length > 1 ? "s" : ""
+          }`
+        : "";
+    return `Mostrando resultados para ${visibleWorkerIds.length} trabajador${
+      visibleWorkerIds.length > 1 ? "es" : ""
+    }${companyNote}.`;
+  }, [
+    hasRequestedResults,
+    requestedCompanyIds,
+    resultsAreStale,
+    visibleWorkerIds.length,
+  ]);
+
+  const resultsHelperTone = useMemo(() => {
+    if (resultsAreStale) {
+      return "text-amber-600 dark:text-amber-400";
+    }
+    if (hasRequestedResults) {
+      return "text-emerald-600 dark:text-emerald-400";
+    }
+    return "text-gray-500 dark:text-gray-400";
+  }, [hasRequestedResults, resultsAreStale]);
 
   useEffect(() => {
     setSelectedGroupIds((prev) => {
@@ -802,6 +1763,32 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       setSelectedWorkerIds(normalizedSelectedWorkers);
     }
   }, [normalizedSelectedWorkers, selectedWorkerIds.length]);
+
+  useEffect(() => {
+    const validCompanyIds = new Set(
+      companyFilterOptions.map((option) => option.value)
+    );
+    setSelectedCompanyIds((prev) => {
+      if (!prev.length) {
+        return prev;
+      }
+      const next = prev.filter((id) => validCompanyIds.has(id));
+      const isSame =
+        next.length === prev.length &&
+        next.every((id, index) => id === prev[index]);
+      return isSame ? prev : next;
+    });
+    setRequestedCompanyIds((prev) => {
+      if (prev === null || !prev.length) {
+        return prev;
+      }
+      const next = prev.filter((id) => validCompanyIds.has(id));
+      const isSame =
+        next.length === prev.length &&
+        next.every((id, index) => id === prev[index]);
+      return isSame ? prev : next;
+    });
+  }, [companyFilterOptions]);
 
   const weekDateMap = useMemo(() => {
     const monday = new Date(currentWeekStart);
@@ -842,7 +1829,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return;
     }
 
-    if (!visibleWorkerIds.length) {
+    if (requestedWorkerIds === null) {
+      setWorkerWeekData({});
+      setWeekDataError(null);
+      setIsLoadingWeekData(false);
+      return;
+    }
+
+    if (!requestedWorkerIds.length) {
       setWorkerWeekData({});
       setWeekDataError(null);
       setIsLoadingWeekData(false);
@@ -870,7 +1864,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       setWeekDataError(null);
 
       const results = await Promise.allSettled(
-        visibleWorkerIds.map(async (workerId) => {
+        requestedWorkerIds.map(async (workerId) => {
           try {
             const summary = await fetchWorkerHoursSummary({
               apiUrl,
@@ -879,7 +1873,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               from: fromDate,
               to: toDate,
               companyLookup: companyLookupMap,
-              includeNotes: false,
+              includeNotes: true,
             });
 
             return {
@@ -934,7 +1928,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     companyLookupMap,
     currentWeekStart,
     externalJwt,
-    visibleWorkerIds,
+    requestedWorkerIds,
     visibleWorkerIdsKey,
     workerNameById,
   ]);
@@ -1069,16 +2063,110 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     []
   );
 
+  const openSegmentsModal = useCallback(
+    (assignment: Assignment, dayKey: WeekDayKey, dayLabel: string) => {
+      const dateKey = weekDateMap[dayKey];
+      const dayData = workerWeekData[assignment.workerId]?.days?.[dateKey];
+      const existingEntries = resolveEntriesForAssignment(dayData, assignment);
+
+      setSegmentModalTarget({
+        assignmentId: assignment.id,
+        workerName: assignment.workerName,
+        companyName: assignment.companyName,
+        dayKey,
+        dayLabel,
+        existingEntries,
+      });
+    },
+    [weekDateMap, workerWeekData]
+  );
+
+  const closeSegmentsModal = useCallback(() => {
+    setSegmentModalTarget(null);
+  }, []);
+
+  const openNotesModal = useCallback(
+    (
+      assignment: Assignment,
+      dayKey: WeekDayKey,
+      dayLabel: string,
+      notes: DayNoteEntry[],
+      dateKey: string
+    ) => {
+      const humanReadableDate = dateKey ? formatDate(dateKey) : undefined;
+
+      setNotesModalTarget({
+        workerName: assignment.workerName,
+        companyName: assignment.companyName,
+        dayLabel,
+        dateLabel: humanReadableDate,
+        notes,
+      });
+    },
+    []
+  );
+
+  const closeNotesModal = useCallback(() => {
+    setNotesModalTarget(null);
+  }, []);
+
+  const handleSegmentsModalSave = useCallback(
+    (segments: HourSegment[]) => {
+      if (!segmentModalTarget) {
+        setSegmentModalTarget(null);
+        return;
+      }
+
+      setSegmentsByAssignment((prev) => {
+        const next = { ...prev };
+        const assignmentSegments = {
+          ...(next[segmentModalTarget.assignmentId] ?? {}),
+        };
+
+        if (segments.length === 0) {
+          delete assignmentSegments[segmentModalTarget.dayKey];
+        } else {
+          assignmentSegments[segmentModalTarget.dayKey] = segments;
+        }
+
+        if (Object.keys(assignmentSegments).length === 0) {
+          delete next[segmentModalTarget.assignmentId];
+        } else {
+          next[segmentModalTarget.assignmentId] = assignmentSegments;
+        }
+
+        return next;
+      });
+
+      const totalMinutes = calculateSegmentsTotalMinutes(segments);
+      const formattedValue =
+        totalMinutes > 0 ? formatMinutesToHoursLabel(totalMinutes) : "";
+
+      handleHourChange(
+        segmentModalTarget.assignmentId,
+        segmentModalTarget.dayKey,
+        formattedValue
+      );
+
+      setSegmentModalTarget(null);
+    },
+    [handleHourChange, segmentModalTarget]
+  );
+
   const handleWorkerSelectionChange = useCallback((workerIds: string[]) => {
     setSelectedWorkerIds(workerIds);
-    setExpandedCompany(null);
   }, []);
+
+  const handleShowResults = useCallback(() => {
+    setRequestedWorkerIds(() => [...selectionWorkerIds]);
+    setRequestedCompanyIds(() => [...selectedCompanyIds]);
+  }, [selectedCompanyIds, selectionWorkerIds]);
 
   const fetchWorkers = useCallback(async () => {
     if (!apiUrl || !externalJwt) {
       setWorkersError("Falta configuración de API o token");
       setAllWorkers([]);
-      setAssignments(initialAssignments);
+      setAssignments(initialAssignments.map(withNormalizedCompany));
       setGroupOptions([
         {
           id: "all",
@@ -1089,6 +2177,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       ]);
       setGroupMembersById({ all: initialAssignmentWorkerIds });
       setLastFetchTime(null);
+      setCompanyLookupMap(createDefaultCompanyLookupMap());
       setIsLoadingWorkers(false);
       return;
     }
@@ -1103,16 +2192,17 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         includeInactive: true,
       });
       setAllWorkers(workers);
-      setCompanyLookupMap(companyLookup);
+      const normalizedLookup = normalizeCompanyLookupMap(companyLookup);
+      setCompanyLookupMap(normalizedLookup);
 
       const generatedAssignments = generateAssignmentsFromWorkers(
         workers,
-        companyLookup
+        normalizedLookup
       );
       if (generatedAssignments.length > 0) {
         setAssignments(generatedAssignments);
       } else {
-        setAssignments(initialAssignments);
+        setAssignments(initialAssignments.map(withNormalizedCompany));
       }
 
       try {
@@ -1186,7 +2276,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       console.error("Error fetching workers para registro múltiple", error);
       setWorkersError("No se pudieron cargar los trabajadores");
       setAllWorkers([]);
-      setAssignments(initialAssignments);
+      setAssignments(initialAssignments.map(withNormalizedCompany));
       setGroupOptions([
         {
           id: "all",
@@ -1197,7 +2287,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       ]);
       setGroupMembersById({ all: initialAssignmentWorkerIds });
       setLastFetchTime(null);
-      setCompanyLookupMap({});
+      setCompanyLookupMap(createDefaultCompanyLookupMap());
     } finally {
       setIsLoadingWorkers(false);
     }
@@ -1401,8 +2491,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const workerName =
           workerNameById[workerId] ??
-          visibleAssignments.find((assignment) => assignment.workerId === workerId)
-            ?.workerName ??
+          visibleAssignments.find(
+            (assignment) => assignment.workerId === workerId
+          )?.workerName ??
           workerId;
 
         return {
@@ -1414,12 +2505,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       .sort((a, b) =>
         a.workerName.localeCompare(b.workerName, "es", { sensitivity: "base" })
       );
-  }, [
-    visibleAssignments,
-    visibleWorkerIds,
-    workerNameById,
-    workerWeekData,
-  ]);
+  }, [visibleAssignments, visibleWorkerIds, workerNameById, workerWeekData]);
 
   const renderGroupCard = useCallback(
     (group: GroupView) => {
@@ -1511,7 +2597,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                     {group.assignments.map((assignment, index) => {
-                      const rowTotal = calculateRowTotal(assignment, totalsContext);
+                      const rowTotal = calculateRowTotal(
+                        assignment,
+                        totalsContext
+                      );
 
                       return (
                         <tr
@@ -1527,33 +2616,76 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               ? assignment.workerName
                               : assignment.companyName}
                           </td>
-                          {weekDays.map((day) => (
-                          <td
-                            key={`${assignment.id}-${day.key}`}
-                            className="px-2 py-2"
-                          >
-                              {(() => {
-                                const trackedHours = getTrackedHourValue(
-                                  assignment,
-                                  day.key,
-                                  totalsContext
-                                );
-                                const trackedHoursValue =
-                                  typeof trackedHours === "number"
-                                    ? hoursFormatter.format(trackedHours)
-                                    : "";
+                          {weekDays.map((day) => {
+                            const trackedHours = getTrackedHourValue(
+                              assignment,
+                              day.key,
+                              totalsContext
+                            );
+                            const trackedHoursValue =
+                              typeof trackedHours === "number"
+                                ? hoursFormatter.format(trackedHours)
+                                : "";
 
-                                const currentValue = assignment.hours[day.key];
-                                const hasManualValue =
-                                  typeof currentValue === "string" &&
-                                  currentValue.trim() !== "";
-                                const inputValue = hasManualValue
-                                  ? currentValue
-                                  : trackedHoursValue;
+                            const currentValue = assignment.hours[day.key];
+                            const hasManualValue =
+                              typeof currentValue === "string" &&
+                              currentValue.trim() !== "";
+                            const inputValue = hasManualValue
+                              ? currentValue
+                              : trackedHoursValue;
 
-                                return (
-                                  <div className="flex flex-col items-center gap-1 text-center">
-                                    <div className="flex items-center justify-center gap-0.5">
+                            const existingSegments =
+                              segmentsByAssignment[assignment.id]?.[day.key] ?? [];
+                            const hasSegments = existingSegments.length > 0;
+
+                            const dateKey = weekDateMap[day.key];
+                            const dayData =
+                              workerWeekData[assignment.workerId]?.days?.[dateKey];
+                            const filteredNotes = (dayData?.noteEntries ?? []).filter(
+                              (note) =>
+                                typeof note?.text === "string" &&
+                                note.text.trim().length > 0 &&
+                                noteAppliesToAssignment(note, assignment)
+                            );
+                            const hasNotes = filteredNotes.length > 0;
+
+                            const highlightClass = hasSegments
+                              ? "border-blue-300 focus:ring-blue-400"
+                              : hasNotes
+                              ? "border-amber-300 focus:ring-amber-400"
+                              : "";
+
+                            return (
+                              <td
+                                key={`${assignment.id}-${day.key}`}
+                                className={`px-2 py-2 ${
+                                  hasNotes
+                                    ? "bg-amber-50 dark:bg-amber-900/30"
+                                    : ""
+                                }`}
+                              >
+                                <div className="flex h-full w-full items-center justify-center rounded-lg px-1 py-1 text-center">
+                                  <div className="flex items-center gap-1">
+                                    <div className="relative">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          openNotesModal(
+                                            assignment,
+                                            day.key,
+                                            day.label,
+                                            filteredNotes,
+                                            dateKey
+                                          )
+                                        }
+                                        className={`absolute inset-y-0 left-1.5 z-10 flex items-center text-gray-300 transition hover:text-amber-600 focus:outline-none ${
+                                          hasNotes ? "text-amber-500" : ""
+                                        }`}
+                                        aria-label="Ver notas del día"
+                                      >
+                                        <NotebookPen size={14} />
+                                      </button>
                                       <Input
                                         size="sm"
                                         type="text"
@@ -1566,24 +2698,40 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                             event.target.value
                                           )
                                         }
-                                        className="w-12 text-center"
+                                        className={`w-16 text-center pr-9 pl-7 ${highlightClass}`}
                                         placeholder="0"
                                       />
-                                      <span className="text-xs text-gray-400 dark:text-gray-500">
-                                        h
-                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          openSegmentsModal(
+                                            assignment,
+                                            day.key,
+                                            day.label
+                                          )
+                                        }
+                                        className={`absolute inset-y-0 right-2 flex items-center text-gray-300 transition hover:text-blue-600 focus:outline-none ${
+                                          hasSegments ? "text-blue-600" : ""
+                                        }`}
+                                        aria-label="Configurar tramos horarios"
+                                      >
+                                        <CalendarClock size={14} />
+                                      </button>
                                     </div>
+                                    <span className="text-xs text-gray-400 dark:text-gray-500">
+                                      h
+                                    </span>
                                   </div>
-                                );
-                              })()}
+                                </div>
+                              </td>
+                            );
+                          })}
+                          <td className="px-3 py-2 text-center font-semibold text-gray-700 dark:text-gray-200">
+                            {formatHours(rowTotal)}
                           </td>
-                        ))}
-                        <td className="px-3 py-2 text-center font-semibold text-gray-700 dark:text-gray-200">
-                          {formatHours(rowTotal)}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </tr>
+                      );
+                    })}
                     <tr className="bg-gray-100 dark:bg-gray-800/80">
                       <td className="px-3 py-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
                         Total{" "}
@@ -1612,340 +2760,395 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [
       expandedGroups,
       handleHourChange,
+      openSegmentsModal,
       toggleGroupExpansion,
       viewMode,
       totalsContext,
+      segmentsByAssignment,
     ]
   );
 
   return (
-    <div className="space-y-6 w-full max-w-full min-w-0">
-      <PageHeader
-        title="Registro Múltiple"
-        description="Registra y compara las horas semanales por empresa o trabajador sin perder los totales diarios."
-        actionLabel="Guardar Todo"
-        onAction={handleSaveAll}
-        actionIcon={<Save size={18} />}
-      />
+    <>
+      <div className="space-y-6 w-full max-w-full min-w-0">
+        <PageHeader
+          title="Registro Múltiple"
+          description="Registra y compara las horas semanales por empresa o trabajador sin perder los totales diarios."
+          actionLabel="Guardar Todo"
+          onAction={handleSaveAll}
+          actionIcon={<Save size={18} />}
+        />
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-1.5">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
-                <Users
-                  size={20}
-                  className="mr-2 text-blue-600 dark:text-blue-400"
-                />
-                Selección de grupo
-              </h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                  Actualizado:{" "}
-                  {lastFetchTime
-                    ? lastFetchTime.toLocaleString("es-ES")
-                    : "Sin sincronizar"}
+        <Card className="overflow-visible">
+          <CardHeader>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
+                  <Users
+                    size={20}
+                    className="mr-2 text-blue-600 dark:text-blue-400"
+                  />
+                  Selección de grupo
+                </h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                    Actualizado:{" "}
+                    {lastFetchTime
+                      ? lastFetchTime.toLocaleString("es-ES")
+                      : "Sin sincronizar"}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={refreshWorkers}
+                    disabled={isRefreshingWorkers || isLoadingWorkers}
+                    leftIcon={
+                      <RefreshCw
+                        size={16}
+                        className={isRefreshingWorkers ? "animate-spin" : ""}
+                      />
+                    }
+                  >
+                    Actualizar
+                  </Button>
                 </div>
-                {selectedGroupSummary && (
-                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
-                    {selectedGroupSummary.label}
-                    {""}: {selectedGroupSummary.memberCount}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {isLoadingWorkers ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500" />
+                <span className="ml-2 text-gray-600 dark:text-gray-400">
+                  Sincronizando trabajadores...
+                </span>
+              </div>
+            ) : (
+              <>
+                <GroupSearchSelect
+                  groups={groupOptions}
+                  selectedGroupIds={selectedGroupIds}
+                  onSelectionChange={setSelectedGroupIds}
+                  placeholder="Buscar y seleccionar grupo..."
+                  clearOptionId="all"
+                />
+
+                <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600 dark:text-gray-300">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={showInactiveWorkers}
+                      onChange={(event) =>
+                        setShowInactiveWorkers(event.target.checked)
+                      }
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                    />
+                    Mostrar todos (incluye bajas)
+                  </label>
+
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={showUnassignedWorkers}
+                      onChange={(event) =>
+                        setShowUnassignedWorkers(event.target.checked)
+                      }
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                    />
+                    Incluir sin empresa asignada
+                  </label>
+                </div>
+
+                {workersForSelect.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+                    {workersError ||
+                      (selectedGroupIds.includes("all")
+                        ? "No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API."
+                        : "No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.")}
+                  </div>
+                ) : (
+                  <WorkerSearchSelect
+                    workers={workersForSelect}
+                    selectedWorkerIds={selectedWorkerIds}
+                    onSelectionChange={handleWorkerSelectionChange}
+                    placeholder={
+                      selectedGroupIds.includes("all")
+                        ? "Buscar y seleccionar trabajador..."
+                        : "Buscar trabajador dentro del grupo..."
+                    }
+                    label={
+                      selectedGroupIds.includes("all")
+                        ? "Trabajador"
+                        : "Trabajador del grupo"
+                    }
+                  />
+                )}
+
+                {companyFilterOptions.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                      Filtrar por empresa
+                    </p>
+                    <MultiSelect
+                      options={companyFilterOptions}
+                      value={selectedCompanyIds}
+                      onChange={setSelectedCompanyIds}
+                      placeholder="Selecciona una o más empresas..."
+                    />
                   </div>
                 )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={refreshWorkers}
-                  disabled={isRefreshingWorkers || isLoadingWorkers}
-                  leftIcon={
-                    <RefreshCw
-                      size={16}
-                      className={isRefreshingWorkers ? "animate-spin" : ""}
-                    />
-                  }
-                >
-                  Actualizar
-                </Button>
-              </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {isLoadingWorkers ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500" />
-              <span className="ml-2 text-gray-600 dark:text-gray-400">
-                Sincronizando trabajadores...
-              </span>
-            </div>
-          ) : (
-            <>
-              <GroupSearchSelect
-                groups={groupOptions}
-                selectedGroupIds={selectedGroupIds}
-                onSelectionChange={setSelectedGroupIds}
-                placeholder="Buscar y seleccionar grupo..."
-                clearOptionId="all"
-              />
 
-              <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600 dark:text-gray-300">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={showInactiveWorkers}
-                    onChange={(event) =>
-                      setShowInactiveWorkers(event.target.checked)
-                    }
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
-                  />
-                  Mostrar todos (incluye bajas)
-                </label>
+                {workersError && workersForSelect.length !== 0 && (
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    {workersError}
+                  </p>
+                )}
 
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={showUnassignedWorkers}
-                    onChange={(event) =>
-                      setShowUnassignedWorkers(event.target.checked)
-                    }
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
-                  />
-                  Incluir sin empresa asignada
-                </label>
-              </div>
-
-              {workersForSelect.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
-                  {workersError ||
-                    (selectedGroupIds.includes("all")
-                      ? "No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API."
-                      : "No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.")}
-                </div>
-              ) : (
-                <WorkerSearchSelect
-                  workers={workersForSelect}
-                  selectedWorkerIds={selectedWorkerIds}
-                  onSelectionChange={handleWorkerSelectionChange}
-                  placeholder={
-                    selectedGroupIds.includes("all")
-                      ? "Buscar y seleccionar trabajador..."
-                      : "Buscar trabajador dentro del grupo..."
-                  }
-                  label={
-                    selectedGroupIds.includes("all")
-                      ? "Trabajador"
-                      : "Trabajador del grupo"
-                  }
-                />
-              )}
-
-              {workersError && workersForSelect.length !== 0 && (
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  {workersError}
-                </p>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="gap-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-xl truncate font-semibold text-gray-900 dark:text-white">
-                Registro semanal
-              </h2>
-            </div>
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4 lg:w-full">
-              <div className="flex w-full flex-wrap items-center justify-center gap-2 lg:flex-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleWeekChange(-1)}
-                  leftIcon={<ChevronLeft size={16} />}
-                  aria-label="Semana anterior"
-                >
-                  Anterior
-                </Button>
-                <div className="w-55 rounded-lg border border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-200 whitespace-nowrap">
-                  {weekRangeLabel}
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleWeekChange(1)}
-                  rightIcon={<ChevronRight size={16} />}
-                  aria-label="Semana siguiente"
-                >
-                  Siguiente
-                </Button>
-              </div>
-              <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800 lg:ml-auto">
-                {[
-                  { value: "company", label: "Por empresa" },
-                  { value: "worker", label: "Por trabajador" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={
-                      option.value === "company"
-                        ? handleCompanyButtonClick
-                        : handleWorkerButtonClick
-                    }
-                    className={`px-4 py-2 text-sm font-medium rounded-full transition ${
-                      viewMode === option.value
-                        ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
-                        : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
-                    }`}
+                <div className="flex flex-col items-center gap-2 text-center sm:flex-row sm:items-center sm:justify-center sm:gap-4">
+                  <Button
+                    onClick={handleShowResults}
+                    disabled={isLoadingWorkers}
                   >
-                    {option.label}
-                  </button>
+                    Mostrar resultados
+                  </Button>
+                  <span className={`text-sm ${resultsHelperTone}`}>
+                    {resultsHelperText}
+                  </span>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-xl truncate font-semibold text-gray-900 dark:text-white">
+                  Registro semanal
+                </h2>
+              </div>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4 lg:w-full">
+                <div className="flex w-full flex-wrap items-center justify-center gap-2 lg:flex-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleWeekChange(-1)}
+                    leftIcon={<ChevronLeft size={16} />}
+                    aria-label="Semana anterior"
+                  >
+                    Anterior
+                  </Button>
+                  <div className="w-55 rounded-lg border border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-200 whitespace-nowrap">
+                    {weekRangeLabel}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleWeekChange(1)}
+                    rightIcon={<ChevronRight size={16} />}
+                    aria-label="Semana siguiente"
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800 lg:ml-auto">
+                  {[
+                    { value: "company", label: "Por empresa" },
+                    { value: "worker", label: "Por trabajador" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={
+                        option.value === "company"
+                          ? handleCompanyButtonClick
+                          : handleWorkerButtonClick
+                      }
+                      className={`px-4 py-2 text-sm font-medium rounded-full transition ${
+                        viewMode === option.value
+                          ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
+                          : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isLoadingWeekData && (
+              <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                <RefreshCw size={16} className="h-4 w-4 animate-spin" />
+                <span>Cargando registros horarios...</span>
+              </div>
+            )}
+
+            {weekDataError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
+                {weekDataError}
+              </div>
+            )}
+
+            {!hasRequestedResults ? (
+              <div className="rounded-xl border border-dashed border-blue-200 bg-blue-50 p-12 text-center text-blue-700 dark:border-blue-400/40 dark:bg-blue-950/20 dark:text-blue-200">
+                Pulsa "Mostrar resultados" para cargar los registros horarios.
+              </div>
+            ) : currentGroups.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No hay trabajadores asignados a esta vista.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {currentGroups.map((group) => renderGroupCard(group))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {hasRequestedResults && workerWeeklyTotals.length > 0 && (
+          <Card>
+            <CardHeader>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Horas por trabajador ({weekRangeLabel})
+              </h2>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {workerWeeklyTotals.map((worker) => (
+                  <div
+                    key={`worker-total-${worker.workerId}`}
+                    className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+                  >
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                      {worker.workerName}
+                    </span>
+                    <span className="text-base font-semibold text-blue-600 dark:text-blue-300">
+                      {formatHours(worker.total)}
+                    </span>
+                  </div>
                 ))}
               </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isLoadingWeekData && (
-            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-              <RefreshCw size={16} className="h-4 w-4 animate-spin" />
-              <span>Cargando registros horarios...</span>
-            </div>
-          )}
+            </CardContent>
+          </Card>
+        )}
 
-          {weekDataError && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
-              {weekDataError}
-            </div>
-          )}
+        {hasRequestedResults && (
+          <Card>
+            <CardContent className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Total semanal
+                </p>
+                <p className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {formatHours(weeklyTotalHours)}
+                </p>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  Sumatoria de todas las horas registradas en la tabla.
+                </p>
+              </div>
+              <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-4 md:grid-cols-7 lg:w-auto">
+                {weekDays.map((day) => (
+                  <div
+                    key={`summary-${day.key}`}
+                    className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm dark:border-gray-700 dark:bg-gray-900"
+                  >
+                    <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                      {day.label}
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+                      {formatHours(weeklyTotals[day.key])}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-          {currentGroups.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-300 p-12 text-center text-gray-500 dark:border-gray-700 dark:text-gray-400">
-              No hay trabajadores asignados a esta vista.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {currentGroups.map((group) => renderGroupCard(group))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {workerWeeklyTotals.length > 0 && (
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Horas por trabajador ({weekRangeLabel})
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+              <Clock
+                size={20}
+                className="mr-2 text-purple-600 dark:text-purple-400"
+              />
+              Entradas recientes
             </h2>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {workerWeeklyTotals.map((worker) => (
-                <div
-                  key={`worker-total-${worker.workerId}`}
-                  className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-900"
-                >
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                    {worker.workerName}
-                  </span>
-                  <span className="text-base font-semibold text-blue-600 dark:text-blue-300">
-                    {formatHours(worker.total)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardContent className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              Total semanal
-            </p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">
-              {formatHours(weeklyTotalHours)}
-            </p>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Sumatoria de todas las horas registradas en la tabla.
-            </p>
-          </div>
-          <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-4 md:grid-cols-7 lg:w-auto">
-            {weekDays.map((day) => (
-              <div
-                key={`summary-${day.key}`}
-                className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm dark:border-gray-700 dark:bg-gray-900"
-              >
-                <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                  {day.label}
+            {recentEntries.length === 0 ? (
+              <div className="text-center py-8">
+                <Clock size={48} className="mx-auto text-gray-400 mb-4" />
+                <p className="text-gray-500 dark:text-gray-400">
+                  No hay registros de horas recientes
                 </p>
-                <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                  {formatHours(weeklyTotals[day.key])}
+                <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+                  Las entradas aparecerán aquí después de guardar el registro
+                  múltiple
                 </p>
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-            <Clock
-              size={20}
-              className="mr-2 text-purple-600 dark:text-purple-400"
-            />
-            Entradas recientes
-          </h2>
-        </CardHeader>
-        <CardContent>
-          {recentEntries.length === 0 ? (
-            <div className="text-center py-8">
-              <Clock size={48} className="mx-auto text-gray-400 mb-4" />
-              <p className="text-gray-500 dark:text-gray-400">
-                No hay registros de horas recientes
-              </p>
-              <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
-                Las entradas aparecerán aquí después de guardar el registro
-                múltiple
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {recentEntries.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center justify-between rounded-lg bg-gray-50 p-3 dark:bg-gray-800"
-                >
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">
-                      {entry.workerName}
-                    </p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {formatDate(entry.date)} · {entry.regularHours}h ·{" "}
-                      {entry.description}
-                    </p>
+            ) : (
+              <div className="space-y-3">
+                {recentEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-center justify-between rounded-lg bg-gray-50 p-3 dark:bg-gray-800"
+                  >
+                    <div>
+                      <p className="font-medium text-gray-900 dark:text-white">
+                        {entry.workerName}
+                      </p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {formatDate(entry.date)} · {entry.regularHours}h ·{" "}
+                        {entry.description}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          entry.approved
+                            ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+                            : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
+                        }`}
+                      >
+                        {entry.approved ? "Aprobado" : "Pendiente"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        entry.approved
-                          ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-                          : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
-                      }`}
-                    >
-                      {entry.approved ? "Aprobado" : "Pendiente"}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      <DayNotesModal
+        isOpen={notesModalTarget !== null}
+        workerName={notesModalTarget?.workerName ?? ""}
+        companyName={notesModalTarget?.companyName ?? ""}
+        dayLabel={notesModalTarget?.dayLabel ?? ""}
+        dateLabel={notesModalTarget?.dateLabel}
+        notes={notesModalTarget?.notes ?? []}
+        onClose={closeNotesModal}
+      />
+      <HourSegmentsModal
+        isOpen={segmentModalTarget !== null}
+        workerName={segmentModalTarget?.workerName ?? ""}
+        companyName={segmentModalTarget?.companyName ?? ""}
+        dayLabel={segmentModalTarget?.dayLabel ?? ""}
+        initialSegments={
+          segmentModalTarget
+            ? segmentsByAssignment[segmentModalTarget.assignmentId]?.[
+                segmentModalTarget.dayKey
+              ] ?? []
+            : []
+        }
+        existingEntries={segmentModalTarget?.existingEntries ?? []}
+        onClose={closeSegmentsModal}
+        onSave={handleSegmentsModalSave}
+      />
+    </>
   );
 };

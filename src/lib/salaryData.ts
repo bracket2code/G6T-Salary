@@ -797,8 +797,26 @@ export const fetchWorkerHoursSummary = async (
     Accept: "application/json",
   };
 
+  const resolveApiBase = (value: string | undefined): string => {
+    if (!value) {
+      return "/api";
+    }
+    const trimmed = value.trim().replace(/\/$/, "");
+    if (/\/api(\/|$)/i.test(trimmed)) {
+      return trimmed;
+    }
+    return `${trimmed}/api`;
+  };
+
+  const buildEndpoint = (path: string) => {
+    const base = resolveApiBase(apiUrl);
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${normalizedPath}`;
+  };
+
   const fetchScheduleEntries = async (types: number[]) => {
-    const response = await fetch(`${apiUrl}/ControlSchedule/List`, {
+    const endpoint = buildEndpoint("/ControlSchedule/List");
+    const response = await fetch(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -1224,6 +1242,36 @@ export const fetchWorkerHoursSummary = async (
 
     noteCollector.forEach((text) => aggregate.notesText.add(text));
 
+    const noteCompanyIdRaw = pickString(
+      entry?.companyId,
+      entry?.company_id,
+      entry?.companyID,
+      entry?.company?.id,
+      entry?.companyContractId,
+      entry?.companyAssignmentId
+    );
+
+    const noteCompanyNameRaw = pickString(
+      entry?.companyName,
+      entry?.company_name,
+      entry?.company,
+      entry?.company?.name,
+      entry?.companyDescription
+    );
+
+    const noteCompanyId =
+      typeof noteCompanyIdRaw === "string" && noteCompanyIdRaw.trim().length
+        ? noteCompanyIdRaw.trim()
+        : undefined;
+
+    const noteCompanyNameCandidate =
+      typeof noteCompanyNameRaw === "string" && noteCompanyNameRaw.trim().length
+        ? noteCompanyNameRaw.trim()
+        : undefined;
+
+    const resolvedNoteCompanyName =
+      (noteCompanyId && companyLookup[noteCompanyId]) || noteCompanyNameCandidate;
+
     const providedId =
       normalizeIdentifier(entry?.id) ??
       normalizeIdentifier(entry?.noteId) ??
@@ -1236,6 +1284,8 @@ export const fetchWorkerHoursSummary = async (
       id: noteId,
       text: primaryNoteText,
       origin: 'note',
+      companyId: noteCompanyId,
+      companyName: resolvedNoteCompanyName ?? undefined,
       raw: entry,
     });
   });

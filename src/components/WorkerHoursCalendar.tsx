@@ -10,6 +10,8 @@ import type { Worker } from "../types/salary";
 
 export interface DayNoteEntry {
   id: string;
+  companyId?: string;
+  companyName?: string;
   text: string;
   origin?: 'note' | 'description' | 'generated';
   raw?: unknown;
