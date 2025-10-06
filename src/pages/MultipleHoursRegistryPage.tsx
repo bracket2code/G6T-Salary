@@ -29,7 +29,11 @@ import type {
   DayScheduleEntry,
   DayNoteEntry,
 } from "../components/WorkerHoursCalendar";
-import { Worker, WorkerCompanyContract, WorkerCompanyStats } from "../types/salary";
+import {
+  Worker,
+  WorkerCompanyContract,
+  WorkerCompanyStats,
+} from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
 import type { WorkerHoursSummaryResult } from "../lib/salaryData";
@@ -94,6 +98,19 @@ const UNASSIGNED_COMPANY_NAME_VARIANTS = new Set([
   "sin asignación de empresa",
   "sin asignacion de empresa",
 ]);
+
+const ALL_COMPANIES_OPTION_ID = "all-companies";
+const ALL_COMPANIES_OPTION_LABEL = "Todas las empresas";
+
+const getEffectiveCompanyIds = (ids: string[]): string[] => {
+  if (!ids.length) {
+    return ids;
+  }
+  if (ids.includes(ALL_COMPANIES_OPTION_ID)) {
+    return ids.filter((id) => id !== ALL_COMPANIES_OPTION_ID);
+  }
+  return ids;
+};
 
 const trimToNull = (value?: string | null): string | null => {
   if (value === null || value === undefined) {
@@ -229,14 +246,18 @@ const buildApiEndpoint = (baseUrl: string, path: string): string => {
 };
 
 const generateUuid = (): string => {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
 
   const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
   return template.replace(/[xy]/g, (char) => {
     const random = Math.random() * 16;
-    const value = char === "x" ? Math.floor(random) : (Math.floor(random) & 0x3) | 0x8;
+    const value =
+      char === "x" ? Math.floor(random) : (Math.floor(random) & 0x3) | 0x8;
     return value.toString(16);
   });
 };
@@ -420,8 +441,7 @@ const WorkerContractList: React.FC<WorkerContractListProps> = ({
       </div>
       <div className="space-y-3">
         {contracts.map((contract, index) => {
-          const label =
-            trimToNull(contract.label) ?? `Contrato ${index + 1}`;
+          const label = trimToNull(contract.label) ?? `Contrato ${index + 1}`;
           const typeText = trimToNull(contract.typeLabel ?? contract.position);
           const descriptionText = trimToNull(contract.description);
           const startDate = formatMaybeDate(contract.startDate);
@@ -463,9 +483,7 @@ const WorkerContractList: React.FC<WorkerContractListProps> = ({
                   </span>
                 )}
                 {typeof contract.hourlyRate === "number" && (
-                  <span>
-                    Tarifa: {contract.hourlyRate.toFixed(2)} €/h
-                  </span>
+                  <span>Tarifa: {contract.hourlyRate.toFixed(2)} €/h</span>
                 )}
               </div>
 
@@ -482,21 +500,23 @@ const WorkerContractList: React.FC<WorkerContractListProps> = ({
   );
 };
 
-const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => {
+const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
+  state,
+  onClose,
+}) => {
   if (!state.isOpen) {
     return null;
   }
 
-  const [copyFeedback, setCopyFeedback] = useState<
-    | {
-        type: "email" | "phone";
-        message: string;
-        target?: string;
-      }
-    | null
-  >(null);
+  const [copyFeedback, setCopyFeedback] = useState<{
+    type: "email" | "phone";
+    message: string;
+    target?: string;
+  } | null>(null);
 
-  const phoneHref = state.data?.phone ? sanitizeTelHref(state.data.phone) : null;
+  const phoneHref = state.data?.phone
+    ? sanitizeTelHref(state.data.phone)
+    : null;
   const whatsappHref = state.data?.phone
     ? buildWhatsAppLink(state.data.phone)
     : null;
@@ -1939,8 +1959,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
   const [showInactiveWorkers, setShowInactiveWorkers] = useState(false);
   const [showUnassignedWorkers, setShowUnassignedWorkers] = useState(false);
-  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([
+    ALL_COMPANIES_OPTION_ID,
+  ]);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState<boolean>(true);
+  const [isLoadingGroupOptions, setIsLoadingGroupOptions] =
+    useState<boolean>(true);
+  const [isLoadingCompanyOptions, setIsLoadingCompanyOptions] =
+    useState<boolean>(true);
   const [isRefreshingWorkers, setIsRefreshingWorkers] =
     useState<boolean>(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
@@ -2062,11 +2088,21 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       }
     });
 
-    return Array.from(labelMap.entries())
+    const entries = Array.from(labelMap.entries())
       .map(([companyId, label]) => ({ value: companyId, label }))
       .sort((a, b) =>
         a.label.localeCompare(b.label, "es", { sensitivity: "base" })
       );
+
+    if (!entries.some((entry) => entry.value === ALL_COMPANIES_OPTION_ID)) {
+      entries.unshift({
+        value: ALL_COMPANIES_OPTION_ID,
+        label: ALL_COMPANIES_OPTION_LABEL,
+        description: "Incluye empresas detectadas en las asignaciones",
+      });
+    }
+
+    return entries;
   }, [assignments, companyLookupMap]);
 
   const selectionAssignments = useMemo(() => {
@@ -2085,11 +2121,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       );
     }
 
-    if (!selectedCompanyIds.length) {
+    const effectiveSelectedCompanies =
+      getEffectiveCompanyIds(selectedCompanyIds);
+
+    if (!effectiveSelectedCompanies.length) {
       return base;
     }
 
-    const companySet = new Set(selectedCompanyIds);
+    const companySet = new Set(effectiveSelectedCompanies);
     return base.filter((assignment) => companySet.has(assignment.companyId));
   }, [
     assignments,
@@ -2125,9 +2164,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     }
 
     const workerSet = new Set(requestedWorkerIds);
+    const effectiveRequestedCompanies = requestedCompanyIds
+      ? getEffectiveCompanyIds(requestedCompanyIds)
+      : null;
     const companySet =
-      requestedCompanyIds && requestedCompanyIds.length
-        ? new Set(requestedCompanyIds)
+      effectiveRequestedCompanies && effectiveRequestedCompanies.length
+        ? new Set(effectiveRequestedCompanies)
         : null;
 
     return assignments.filter((assignment) => {
@@ -2166,20 +2208,22 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   }, [selectionWorkerIds]);
 
   const selectionCompanyIdsKey = useMemo(() => {
-    if (!selectedCompanyIds.length) {
+    const effective = getEffectiveCompanyIds(selectedCompanyIds);
+    if (!effective.length) {
       return "";
     }
-    return selectedCompanyIds.slice().sort().join("|");
+    return effective.slice().sort().join("|");
   }, [selectedCompanyIds]);
 
   const requestedCompanyIdsKey = useMemo(() => {
     if (requestedCompanyIds === null) {
       return null;
     }
-    if (!requestedCompanyIds.length) {
+    const effective = getEffectiveCompanyIds(requestedCompanyIds);
+    if (!effective.length) {
       return "";
     }
-    return requestedCompanyIds.slice().sort().join("|");
+    return effective.slice().sort().join("|");
   }, [requestedCompanyIds]);
 
   const resultsAreStale = useMemo(() => {
@@ -2212,12 +2256,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     if (!visibleWorkerIds.length) {
       return "No hay trabajadores en la selección actual.";
     }
-    const companyNote =
-      requestedCompanyIds && requestedCompanyIds.length
-        ? ` en ${requestedCompanyIds.length} empresa${
-            requestedCompanyIds.length > 1 ? "s" : ""
-          }`
-        : "";
+    const effectiveCompanies = requestedCompanyIds
+      ? getEffectiveCompanyIds(requestedCompanyIds)
+      : [];
+    const companyNote = effectiveCompanies.length
+      ? ` en ${effectiveCompanies.length} empresa${
+          effectiveCompanies.length > 1 ? "s" : ""
+        }`
+      : "";
     return `Mostrando resultados para ${visibleWorkerIds.length} trabajador${
       visibleWorkerIds.length > 1 ? "es" : ""
     }${companyNote}.`;
@@ -2255,6 +2301,34 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return valid;
     });
   }, [groupOptions]);
+
+  useEffect(() => {
+    if (!companyFilterOptions.length) {
+      return;
+    }
+
+    const optionValues = new Set(
+      companyFilterOptions.map((option) => option.value)
+    );
+
+    setSelectedCompanyIds((prev) => {
+      const filtered = prev.filter((id) => optionValues.has(id));
+
+      let next = filtered;
+
+      if (!next.length && optionValues.has(ALL_COMPANIES_OPTION_ID)) {
+        next = [ALL_COMPANIES_OPTION_ID];
+      } else if (next.includes(ALL_COMPANIES_OPTION_ID) && next.length > 1) {
+        next = next.filter((id) => id !== ALL_COMPANIES_OPTION_ID);
+      }
+
+      const isSame =
+        next.length === prev.length &&
+        next.every((id, index) => id === prev[index]);
+
+      return isSame ? prev : next;
+    });
+  }, [companyFilterOptions]);
 
   useEffect(() => {
     if (normalizedSelectedWorkers.length !== selectedWorkerIds.length) {
@@ -2633,7 +2707,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       }
 
       const matchingAssignment = assignments.find(
-        (assignmentItem) => normalizeKeyPart(assignmentItem.companyId) === normalized
+        (assignmentItem) =>
+          normalizeKeyPart(assignmentItem.companyId) === normalized
       );
       if (matchingAssignment) {
         return matchingAssignment.companyName;
@@ -2654,10 +2729,16 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       const normalizedSecondaryEmail = trimToNull(worker.secondaryEmail);
       const normalizedPhone = trimToNull(worker.phone);
 
-      const companyMap = new Map<string, { id: string; name: string; count: number }>();
+      const companyMap = new Map<
+        string,
+        { id: string; name: string; count: number }
+      >();
       const contractsByCompany: Record<string, WorkerCompanyContract[]> = {};
 
-      const appendCompany = (name?: string | null, stats?: WorkerCompanyStats) => {
+      const appendCompany = (
+        name?: string | null,
+        stats?: WorkerCompanyStats
+      ) => {
         const normalizedName = trimToNull(name);
         if (!normalizedName) {
           return;
@@ -2739,8 +2820,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const openWorkerInfoModal = useCallback(
     async (workerId: string, workerName: string) => {
       const normalizedTargetId = normalizeKeyPart(workerId) ?? workerId;
-      const existingWorker = allWorkers.find((worker) =>
-        normalizeKeyPart(worker.id) === normalizedTargetId
+      const existingWorker = allWorkers.find(
+        (worker) => normalizeKeyPart(worker.id) === normalizedTargetId
       );
 
       if (existingWorker) {
@@ -2771,7 +2852,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           workerName,
           isOpen: true,
           isLoading: false,
-          error: "Falta configuración de API o token para obtener los datos del trabajador.",
+          error:
+            "Falta configuración de API o token para obtener los datos del trabajador.",
           data: null,
         });
         return;
@@ -2813,7 +2895,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             payload?.email2 ??
             payload?.secondaryemail
         );
-        const phone = trimToNull(payload?.phone ?? payload?.telefon ?? payload?.telefono);
+        const phone = trimToNull(
+          payload?.phone ?? payload?.telefon ?? payload?.telefono
+        );
 
         const companyAggregates = new Map<
           string,
@@ -2824,7 +2908,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         if (Array.isArray(payload?.parameterRelations)) {
           payload.parameterRelations.forEach((relation: any, index: number) => {
             const relationId = trimToNull(relation?.parameterRelationId);
-            const normalizedId = normalizeKeyPart(relationId ?? relation?.parameterRelationID);
+            const normalizedId = normalizeKeyPart(
+              relationId ?? relation?.parameterRelationID
+            );
 
             const resolvedName =
               resolveCompanyLabel(normalizedId) ??
@@ -2834,7 +2920,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               normalizedId ??
               `Empresa ${index + 1}`;
 
-            const aggregateKey = normalizedId ?? createGroupId(resolvedName ?? "empresa");
+            const aggregateKey =
+              normalizedId ?? createGroupId(resolvedName ?? "empresa");
             const existingAggregate = companyAggregates.get(aggregateKey);
             if (existingAggregate) {
               existingAggregate.count += 1;
@@ -2865,7 +2952,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 relation?.dateStart
             );
             const endDate = trimToNull(
-              relation?.endDate ?? relation?.contractEndDate ?? relation?.dateEnd
+              relation?.endDate ??
+                relation?.contractEndDate ??
+                relation?.dateEnd
             );
 
             const contractEntry: WorkerCompanyContract = {
@@ -2877,11 +2966,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               relationType: Number.isFinite(Number(relation?.type))
                 ? Number(relation?.type)
                 : undefined,
-              typeLabel: trimToNull(
-                relation?.contractTypeName ??
-                  relation?.typeLabel ??
-                  relation?.typeDescription
-              ) ?? undefined,
+              typeLabel:
+                trimToNull(
+                  relation?.contractTypeName ??
+                    relation?.typeLabel ??
+                    relation?.typeDescription
+                ) ?? undefined,
               hourlyRate:
                 typeof relation?.amount === "number"
                   ? relation.amount
@@ -2892,11 +2982,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               description: descriptionCandidate ?? undefined,
               startDate: startDate ?? undefined,
               endDate: endDate ?? undefined,
-              status: trimToNull(relation?.status ?? relation?.contractStatus) ?? undefined,
+              status:
+                trimToNull(relation?.status ?? relation?.contractStatus) ??
+                undefined,
               details: undefined,
             };
 
-            const bucket = contractsByCompany[resolvedName ?? aggregateKey] ?? [];
+            const bucket =
+              contractsByCompany[resolvedName ?? aggregateKey] ?? [];
             bucket.push(contractEntry);
             contractsByCompany[resolvedName ?? aggregateKey] = bucket;
           });
@@ -2949,7 +3042,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         });
       }
     },
-    [apiUrl, allWorkers, buildWorkerInfoFromWorker, externalJwt, resolveCompanyLabel]
+    [
+      apiUrl,
+      allWorkers,
+      buildWorkerInfoFromWorker,
+      externalJwt,
+      resolveCompanyLabel,
+    ]
   );
 
   useEffect(() => {
@@ -2957,9 +3056,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return;
     }
     const handler = (event: Event) => {
-      const custom = event as CustomEvent<{ workerId: string; workerName: string }>;
+      const custom = event as CustomEvent<{
+        workerId: string;
+        workerName: string;
+      }>;
       if (custom?.detail?.workerId) {
-        void openWorkerInfoModal(custom.detail.workerId, custom.detail.workerName);
+        void openWorkerInfoModal(
+          custom.detail.workerId,
+          custom.detail.workerName
+        );
       }
     };
 
@@ -3007,9 +3112,32 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     setSelectedWorkerIds(workerIds);
   }, []);
 
+  const handleCompanySelectionChange = useCallback(
+    (values: string[]) => {
+      if (!values.length) {
+        setSelectedCompanyIds([ALL_COMPANIES_OPTION_ID]);
+        return;
+      }
+
+      const hasAll = values.includes(ALL_COMPANIES_OPTION_ID);
+
+      if (hasAll && values.length > 1) {
+        setSelectedCompanyIds(
+          values.filter((value) => value !== ALL_COMPANIES_OPTION_ID)
+        );
+        return;
+      }
+
+      setSelectedCompanyIds(values);
+    },
+    []
+  );
+
   const handleShowResults = useCallback(() => {
     setRequestedWorkerIds(() => [...selectionWorkerIds]);
-    setRequestedCompanyIds(() => [...selectedCompanyIds]);
+    setRequestedCompanyIds(() => [
+      ...getEffectiveCompanyIds(selectedCompanyIds),
+    ]);
   }, [selectedCompanyIds, selectionWorkerIds]);
 
   const fetchWorkers = useCallback(async () => {
@@ -3028,11 +3156,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       setGroupMembersById({ all: initialAssignmentWorkerIds });
       setLastFetchTime(null);
       setCompanyLookupMap(createDefaultCompanyLookupMap());
+      setIsLoadingGroupOptions(false);
+      setIsLoadingCompanyOptions(false);
       setIsLoadingWorkers(false);
       return;
     }
 
     setIsLoadingWorkers(true);
+    setIsLoadingGroupOptions(true);
+    setIsLoadingCompanyOptions(true);
     setWorkersError(null);
 
     try {
@@ -3044,6 +3176,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       setAllWorkers(workers);
       const normalizedLookup = normalizeCompanyLookupMap(companyLookup);
       setCompanyLookupMap(normalizedLookup);
+      setIsLoadingCompanyOptions(false);
 
       const generatedAssignments = generateAssignmentsFromWorkers(
         workers,
@@ -3073,7 +3206,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         const options: WorkerGroupOption[] = [
           {
             id: "all",
-            label: "",
+            label: "Todos los grupos",
             description: grouping.groups.length
               ? "Incluye todos los grupos"
               : "No hay grupos disponibles",
@@ -3102,6 +3235,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         setGroupOptions(options);
         setGroupMembersById(sanitizedMembers);
+        setIsLoadingGroupOptions(false);
       } catch (groupError) {
         console.error(
           "No se pudieron obtener los grupos para registro múltiple",
@@ -3119,6 +3253,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           },
         ]);
         setGroupMembersById({ all: fallbackIds });
+        setIsLoadingGroupOptions(false);
       }
 
       setLastFetchTime(new Date());
@@ -3138,6 +3273,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       setGroupMembersById({ all: initialAssignmentWorkerIds });
       setLastFetchTime(null);
       setCompanyLookupMap(createDefaultCompanyLookupMap());
+      setIsLoadingGroupOptions(false);
+      setIsLoadingCompanyOptions(false);
     } finally {
       setIsLoadingWorkers(false);
     }
@@ -3244,7 +3381,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return;
     }
 
-    type ControlScheduleShift = ControlScheduleSavePayload["workShifts"][number];
+    type ControlScheduleShift =
+      ControlScheduleSavePayload["workShifts"][number];
 
     const payload: ControlScheduleSavePayload[] = [];
 
@@ -3262,8 +3400,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         const hoursValue = trimmedValue ? parseHour(trimmedValue) : 0;
 
         const dayData = workerWeekData[assignment.workerId]?.days?.[dateKey];
-        const existingEntries = resolveEntriesForAssignment(dayData, assignment);
-        const primaryEntry = existingEntries.length > 0 ? existingEntries[0] : null;
+        const existingEntries = resolveEntriesForAssignment(
+          dayData,
+          assignment
+        );
+        const primaryEntry =
+          existingEntries.length > 0 ? existingEntries[0] : null;
         const existingEntryId = primaryEntry?.id?.trim?.() ?? "";
 
         const assignmentSegments = segmentsByAssignment[assignment.id];
@@ -3329,7 +3471,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         }
 
         const companyId = assignment.companyId.trim();
-        if (companyId && !isUnassignedCompany(companyId, assignment.companyName)) {
+        if (
+          companyId &&
+          !isUnassignedCompany(companyId, assignment.companyName)
+        ) {
           payloadItem.companyId = companyId;
         }
 
@@ -3620,13 +3765,18 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               : trackedHoursValue;
 
                             const existingSegments =
-                              segmentsByAssignment[assignment.id]?.[day.key] ?? [];
+                              segmentsByAssignment[assignment.id]?.[day.key] ??
+                              [];
                             const hasSegments = existingSegments.length > 0;
 
                             const dateKey = weekDateMap[day.key];
                             const dayData =
-                              workerWeekData[assignment.workerId]?.days?.[dateKey];
-                            const filteredNotes = (dayData?.noteEntries ?? []).filter(
+                              workerWeekData[assignment.workerId]?.days?.[
+                                dateKey
+                              ];
+                            const filteredNotes = (
+                              dayData?.noteEntries ?? []
+                            ).filter(
                               (note) =>
                                 typeof note?.text === "string" &&
                                 note.text.trim().length > 0 &&
@@ -3806,22 +3956,30 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            {isLoadingWorkers ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500" />
-                <span className="ml-2 text-gray-600 dark:text-gray-400">
-                  Sincronizando trabajadores...
-                </span>
-              </div>
-            ) : (
-              <>
-                <GroupSearchSelect
-                  groups={groupOptions}
-                  selectedGroupIds={selectedGroupIds}
-                  onSelectionChange={setSelectedGroupIds}
-                  placeholder="Buscar y seleccionar grupo..."
-                  clearOptionId="all"
-                />
+            <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-6">
+              <div className="w-full md:w-1/2 space-y-4">
+                <div
+                  className={
+                    isLoadingGroupOptions
+                      ? groupOptions.length > 0
+                        ? "opacity-80"
+                        : "pointer-events-none opacity-60"
+                      : ""
+                  }
+                >
+                  <GroupSearchSelect
+                    groups={groupOptions}
+                    selectedGroupIds={selectedGroupIds}
+                    onSelectionChange={setSelectedGroupIds}
+                    placeholder="Buscar y seleccionar grupo..."
+                    clearOptionId="all"
+                  />
+                </div>
+                {isLoadingGroupOptions && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Cargando grupos disponibles...
+                  </p>
+                )}
 
                 <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600 dark:text-gray-300">
                   <label className="flex items-center gap-2">
@@ -3848,61 +4006,90 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     Incluir sin empresa asignada
                   </label>
                 </div>
+              </div>
 
+              <div className="w-full md:w-1/2 space-y-4">
                 {companyFilterOptions.length > 0 && (
-                  <CompanySearchSelect
-                    options={companyFilterOptions}
-                    selectedValues={selectedCompanyIds}
-                    onSelectionChange={setSelectedCompanyIds}
-                    placeholder="Buscar empresa..."
-                    label="Filtrar por empresa"
-                  />
-                )}
-
-                {workersForSelect.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
-                    {workersError ||
-                      (selectedGroupIds.includes("all")
-                        ? "No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API."
-                        : "No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.")}
+                  <div
+                    className={
+                      isLoadingCompanyOptions
+                        ? companyFilterOptions.length > 0
+                          ? "opacity-80"
+                          : "pointer-events-none opacity-60"
+                        : ""
+                    }
+                  >
+                    <CompanySearchSelect
+                      options={companyFilterOptions}
+                      selectedValues={selectedCompanyIds}
+                      onSelectionChange={handleCompanySelectionChange}
+                      placeholder="Buscar y seleccionar empresa..."
+                      label="Empresas"
+                    />
                   </div>
-                ) : (
-                  <WorkerSearchSelect
-                    workers={workersForSelect}
-                    selectedWorkerIds={selectedWorkerIds}
-                    onSelectionChange={handleWorkerSelectionChange}
-                    placeholder={
-                      selectedGroupIds.includes("all")
-                        ? "Buscar y seleccionar trabajador..."
-                        : "Buscar trabajador dentro del grupo..."
-                    }
-                    label={
-                      selectedGroupIds.includes("all")
-                        ? "Trabajador"
-                        : "Trabajador del grupo"
-                    }
-                  />
                 )}
-
-                {workersError && workersForSelect.length !== 0 && (
-                  <p className="text-sm text-red-600 dark:text-red-400">
-                    {workersError}
+                {isLoadingCompanyOptions && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Cargando empresas asociadas...
                   </p>
                 )}
+              </div>
+            </div>
 
-                <div className="flex flex-col items-center gap-2 text-center sm:flex-row sm:items-center sm:justify-center sm:gap-4">
-                  <Button
-                    onClick={handleShowResults}
-                    disabled={isLoadingWorkers}
-                  >
-                    Mostrar resultados
-                  </Button>
-                  <span className={`text-sm ${resultsHelperTone}`}>
-                    {resultsHelperText}
-                  </span>
+            {isLoadingWorkers ? (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-6 shadow-sm dark:border-gray-700 dark:bg-gray-800/70">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-500 border-t-transparent dark:border-blue-400" />
+                  <div className="flex flex-col text-left text-sm">
+                    <span className="font-medium text-gray-700 dark:text-gray-200">
+                      Sincronizando trabajadores...
+                    </span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Podés seguir configurando grupos y empresas mientras
+                      terminamos.
+                    </span>
+                  </div>
                 </div>
-              </>
+              </div>
+            ) : workersForSelect.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
+                {workersError ||
+                  (selectedGroupIds.includes("all")
+                    ? "No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API."
+                    : "No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.")}
+              </div>
+            ) : (
+              <WorkerSearchSelect
+                workers={workersForSelect}
+                selectedWorkerIds={selectedWorkerIds}
+                onSelectionChange={handleWorkerSelectionChange}
+                placeholder={
+                  selectedGroupIds.includes("all")
+                    ? "Buscar y seleccionar trabajador..."
+                    : "Buscar trabajador dentro del grupo..."
+                }
+                label={
+                  selectedGroupIds.includes("all") ? "Trabajador" : "Trabajador"
+                }
+              />
             )}
+
+            {workersError &&
+              !isLoadingWorkers &&
+              workersForSelect.length !== 0 && (
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  {workersError}
+                </p>
+              )}
+
+            <div className="flex flex-col items-center gap-2 text-center sm:flex-row sm:items-center sm:justify-center sm:gap-4">
+              <Button onClick={handleShowResults} disabled={isLoadingWorkers}>
+                Mostrar resultados
+              </Button>
+              <span className={`text-sm ${resultsHelperTone}`}>
+                {resultsHelperText}
+              </span>
+            </div>
           </CardContent>
         </Card>
 
@@ -4053,7 +4240,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             </CardContent>
           </Card>
         )}
-
       </div>
       <DayNotesModal
         isOpen={notesModalTarget !== null}
@@ -4081,7 +4267,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         onSave={handleSegmentsModalSave}
       />
       {workerInfoModal?.isOpen && (
-        <WorkerInfoModal state={workerInfoModal} onClose={closeWorkerInfoModal} />
+        <WorkerInfoModal
+          state={workerInfoModal}
+          onClose={closeWorkerInfoModal}
+        />
       )}
     </>
   );

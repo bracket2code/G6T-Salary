@@ -9,20 +9,6 @@ export interface WorkerGroupOption {
   memberCount: number;
 }
 
-const formatSelectionSummary = (
-  count: number,
-  singular: string,
-  plural: string
-) => {
-  if (count <= 0) {
-    return "";
-  }
-  if (count === 1) {
-    return singular;
-  }
-  return `${count} ${plural}`;
-};
-
 export interface WorkerSearchSelectProps {
   workers: Worker[];
   selectedWorkerIds: string[];
@@ -59,27 +45,13 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
     [selectedWorkerIds]
   );
 
-  const selectionLabel = useMemo(() => {
-    if (!selectedWorkerIds.length) {
-      return "";
-    }
-
-    if (!multiSelect) {
-      const worker = workersById.get(selectedWorkerIds[0]);
-      return worker?.name ?? "";
-    }
-
-    if (selectedWorkerIds.length === 1) {
-      const worker = workersById.get(selectedWorkerIds[0]);
-      return worker?.name ?? "";
-    }
-
-    return formatSelectionSummary(
-      selectedWorkerIds.length,
-      "1 trabajador seleccionado",
-      "trabajadores seleccionados"
-    );
-  }, [multiSelect, selectedWorkerIds, workersById]);
+  const selectedWorkers = useMemo(
+    () =>
+      selectedWorkerIds
+        .map((id) => workersById.get(id))
+        .filter((worker): worker is Worker => Boolean(worker)),
+    [selectedWorkerIds, workersById]
+  );
 
   const filteredWorkers = useMemo(() => {
     const query = searchQuery.toLowerCase();
@@ -171,6 +143,25 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
     [multiSelect, onSelectionChange, selectedSet, selectedWorkerIds]
   );
 
+  const handleRemoveSelected = useCallback(
+    (workerId: string) => {
+      if (!selectedWorkerIds.length) {
+        return;
+      }
+
+      if (multiSelect) {
+        const updated = selectedWorkerIds.filter((id) => id !== workerId);
+        onSelectionChange(updated);
+      } else {
+        onSelectionChange([]);
+      }
+
+      setSearchQuery("");
+      setHighlightedIndex(-1);
+    },
+    [multiSelect, onSelectionChange, selectedWorkerIds]
+  );
+
   const handleClear = useCallback(
     (event: React.MouseEvent) => {
       event.stopPropagation();
@@ -205,6 +196,17 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
 
   const handleInputKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Backspace" && searchQuery.trim() === "") {
+        if (!selectedWorkerIds.length) {
+          return;
+        }
+
+        const lastSelected = selectedWorkerIds[selectedWorkerIds.length - 1];
+        event.preventDefault();
+        handleRemoveSelected(lastSelected);
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         setIsOpen(false);
@@ -246,11 +248,18 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
         }
       }
     },
-    [filteredWorkers, handleWorkerToggle, highlightedIndex, isOpen]
+    [
+      filteredWorkers,
+      handleRemoveSelected,
+      handleWorkerToggle,
+      highlightedIndex,
+      isOpen,
+      searchQuery,
+      selectedWorkerIds,
+    ]
   );
 
-  const inputDisplayValue = isOpen ? searchQuery : selectionLabel;
-  const hasSelection = selectedWorkerIds.length > 0;
+  const hasSelection = selectedWorkers.length > 0;
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -266,32 +275,52 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
           ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
         `}
       >
-        <div className="flex-1 flex items-center px-3 py-2">
-          <Search size={18} className="text-gray-400 mr-2" />
-          <input
-            type="text"
-            value={inputDisplayValue}
-            onChange={handleInputChange}
-            onFocus={handleInputFocus}
-            onClick={() => setIsOpen(true)}
-            onKeyDown={handleInputKeyDown}
-            placeholder={placeholder}
-            className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none"
-          />
+        <div className="flex flex-1 flex-wrap items-center gap-2 px-3 py-2">
+          <Search size={18} className="text-gray-400" />
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            {selectedWorkers.map((worker) => (
+              <span
+                key={worker.id}
+                className="inline-flex items-center gap-1 rounded-md bg-blue-100 px-2 py-1 text-sm text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"
+              >
+                {worker.name}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemoveSelected(worker.id);
+                  }}
+                  className="rounded p-0.5 transition hover:bg-blue-200 hover:text-blue-700 dark:hover:bg-blue-800/60"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={handleInputChange}
+              onFocus={handleInputFocus}
+              onClick={() => setIsOpen(true)}
+              onKeyDown={handleInputKeyDown}
+              placeholder={hasSelection ? "" : placeholder}
+              className="flex-1 min-w-[140px] bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400"
+            />
+          </div>
         </div>
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1 pr-2">
           {(hasSelection || searchQuery) && (
             <button
               type="button"
               onClick={handleClear}
-              className="p-1 mr-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
             >
               <X size={14} className="text-gray-400" />
             </button>
           )}
           <button
             type="button"
-            className="p-1 mr-2"
+            className="p-1"
             onClick={() => setIsOpen((prev) => !prev)}
           >
             <ChevronDown
@@ -472,10 +501,19 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
       return labelMatch || descriptionMatch;
     });
 
-    return filtered.sort((a, b) =>
-      a.label.localeCompare(b.label, "es", { sensitivity: "base" })
-    );
-  }, [groups, searchQuery]);
+    return filtered.sort((a, b) => {
+      if (clearOptionId) {
+        if (a.id === clearOptionId) {
+          return -1;
+        }
+        if (b.id === clearOptionId) {
+          return 1;
+        }
+      }
+
+      return a.label.localeCompare(b.label, "es", { sensitivity: "base" });
+    });
+  }, [clearOptionId, groups, searchQuery]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -589,6 +627,30 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
     [isOpen]
   );
 
+  const handleRemoveSelected = useCallback(
+    (groupId: string) => {
+      if (multiSelect) {
+        if (groupId === clearOptionId) {
+          onSelectionChange([]);
+        } else {
+          const current = normalizedSelection.filter((id) => id !== groupId);
+          if (!current.length && clearOptionId) {
+            onSelectionChange([clearOptionId]);
+          } else {
+            onSelectionChange(current);
+          }
+        }
+      } else if (clearOptionId) {
+        onSelectionChange([clearOptionId]);
+      } else {
+        onSelectionChange([]);
+      }
+      setSearchQuery("");
+      setHighlightedIndex(-1);
+    },
+    [clearOptionId, multiSelect, normalizedSelection, onSelectionChange]
+  );
+
   const handleInputFocus = useCallback(() => {
     setIsOpen(true);
     if (filteredGroups.length > 0 && highlightedIndex === -1) {
@@ -598,6 +660,21 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
 
   const handleInputKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Backspace" && searchQuery.trim() === "") {
+        if (!normalizedSelection.length) {
+          return;
+        }
+
+        const lastSelected = normalizedSelection[normalizedSelection.length - 1];
+        if (lastSelected === clearOptionId && normalizedSelection.length === 1) {
+          return;
+        }
+
+        event.preventDefault();
+        handleRemoveSelected(lastSelected);
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         setIsOpen(false);
@@ -639,34 +716,19 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
         }
       }
     },
-    [filteredGroups, handleSelectionChange, highlightedIndex, isOpen]
+    [
+      clearOptionId,
+      filteredGroups,
+      handleRemoveSelected,
+      handleSelectionChange,
+      highlightedIndex,
+      isOpen,
+      normalizedSelection,
+      searchQuery,
+    ]
   );
 
   const hasSelection = selectedGroups.length > 0;
-
-  const handleRemoveSelected = useCallback(
-    (groupId: string) => {
-      if (multiSelect) {
-        if (groupId === clearOptionId) {
-          onSelectionChange([]);
-        } else {
-          const current = normalizedSelection.filter((id) => id !== groupId);
-          if (!current.length && clearOptionId) {
-            onSelectionChange([clearOptionId]);
-          } else {
-            onSelectionChange(current);
-          }
-        }
-      } else if (clearOptionId) {
-        onSelectionChange([clearOptionId]);
-      } else {
-        onSelectionChange([]);
-      }
-      setSearchQuery("");
-      setHighlightedIndex(-1);
-    },
-    [clearOptionId, multiSelect, normalizedSelection, onSelectionChange]
-  );
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -882,9 +944,7 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
       return labelMatch || descriptionMatch || valueMatch;
     });
 
-    return filtered.sort((a, b) =>
-      a.label.localeCompare(b.label, "es", { sensitivity: "base" })
-    );
+    return filtered;
   }, [options, searchQuery]);
 
   useEffect(() => {
@@ -969,6 +1029,16 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
     [isOpen]
   );
 
+  const handleRemoveSelected = useCallback(
+    (value: string) => {
+      const next = selectedValues.filter((item) => item !== value);
+      onSelectionChange(next);
+      setSearchQuery("");
+      setHighlightedIndex(-1);
+    },
+    [onSelectionChange, selectedValues]
+  );
+
   const handleInputFocus = useCallback(() => {
     setIsOpen(true);
     if (filteredOptions.length > 0 && highlightedIndex === -1) {
@@ -978,6 +1048,15 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
 
   const handleInputKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Backspace" && searchQuery.trim() === "") {
+        if (!selectedValues.length) {
+          return;
+        }
+        event.preventDefault();
+        handleRemoveSelected(selectedValues[selectedValues.length - 1]);
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         setIsOpen(false);
@@ -1019,20 +1098,18 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
         }
       }
     },
-    [filteredOptions, handleToggle, highlightedIndex, isOpen]
+    [
+      filteredOptions,
+      handleRemoveSelected,
+      handleToggle,
+      highlightedIndex,
+      isOpen,
+      searchQuery,
+      selectedValues,
+    ]
   );
 
   const hasSelection = selectedOptions.length > 0;
-
-  const handleRemoveSelected = useCallback(
-    (value: string) => {
-      const next = selectedValues.filter((item) => item !== value);
-      onSelectionChange(next);
-      setSearchQuery("");
-      setHighlightedIndex(-1);
-    },
-    [onSelectionChange, selectedValues]
-  );
 
   return (
     <div className="relative" ref={dropdownRef}>

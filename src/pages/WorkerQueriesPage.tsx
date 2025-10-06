@@ -148,10 +148,11 @@ export const WorkerQueriesPage: React.FC = () => {
       memberCount: 0,
     },
   ]);
-  const [groupMembersById, setGroupMembersById] = useState<Record<string, string[]>>({
+  const [groupMembersById, setGroupMembersById] = useState<
+    Record<string, string[]>
+  >({
     all: [],
   });
-
 
   const allowedWorkerIdSet = useMemo(() => {
     if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
@@ -262,7 +263,9 @@ export const WorkerQueriesPage: React.FC = () => {
       return;
     }
 
-    setSelectedWorkerIds((prev) => prev.filter((id) => filteredWorkerIdSet.has(id)));
+    setSelectedWorkerIds((prev) =>
+      prev.filter((id) => filteredWorkerIdSet.has(id))
+    );
     setExpandedCompany(null);
   }, [filteredWorkerIdSet, selectedWorkerIds.length]);
 
@@ -436,7 +439,8 @@ export const WorkerQueriesPage: React.FC = () => {
         });
 
         const fallbackGroups = Array.from(fallbackGroupsMap.values()).sort(
-          (a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+          (a, b) =>
+            a.label.localeCompare(b.label, "es", { sensitivity: "base" })
         );
 
         const fallbackMembers: Record<string, string[]> = {};
@@ -542,7 +546,8 @@ export const WorkerQueriesPage: React.FC = () => {
                 </div>
                 {selectedGroupSummary && (
                   <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
-                    {selectedGroupSummary.label}: {selectedGroupSummary.memberCount}
+                    {selectedGroupSummary.label}:{" "}
+                    {selectedGroupSummary.memberCount}
                   </div>
                 )}
                 <Button
@@ -585,7 +590,9 @@ export const WorkerQueriesPage: React.FC = () => {
                 <input
                   type="checkbox"
                   checked={showInactiveWorkers}
-                  onChange={(event) => setShowInactiveWorkers(event.target.checked)}
+                  onChange={(event) =>
+                    setShowInactiveWorkers(event.target.checked)
+                  }
                   className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
                 />
                 Mostrar todos (incluye bajas)
@@ -609,7 +616,7 @@ export const WorkerQueriesPage: React.FC = () => {
                   label={
                     selectedGroupIds.includes("all")
                       ? "Trabajador"
-                      : "Trabajador del grupo"
+                      : "Trabajador"
                   }
                   multiSelect={false}
                 />
