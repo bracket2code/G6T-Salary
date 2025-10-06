@@ -17,6 +17,9 @@ import {
   Trash2,
   NotebookPen,
   X,
+  Mail,
+  Phone,
+  MessageCircle,
 } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
@@ -26,7 +29,7 @@ import type {
   DayScheduleEntry,
   DayNoteEntry,
 } from "../components/WorkerHoursCalendar";
-import { Worker } from "../types/salary";
+import { Worker, WorkerCompanyStats } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
 import type { WorkerHoursSummaryResult } from "../lib/salaryData";
@@ -318,6 +321,281 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
   );
 };
 
+const sanitizeTelHref = (phone: string) => {
+  const sanitized = phone.replace(/[^+\d]/g, "");
+  return sanitized.length > 0 ? `tel:${sanitized}` : null;
+};
+
+const buildWhatsAppLink = (phone: string) => {
+  const digitsOnly = phone.replace(/\D/g, "");
+  return digitsOnly ? `https://wa.me/${digitsOnly}` : null;
+};
+
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return false;
+  }
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (error) {
+    console.error("Clipboard API write failed:", error);
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+
+    const selection = document.getSelection();
+    const selectedRange =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+    textarea.select();
+    const copied = document.execCommand("copy");
+
+    document.body.removeChild(textarea);
+
+    if (selectedRange && selection) {
+      selection.removeAllRanges();
+      selection.addRange(selectedRange);
+    }
+
+    return copied;
+  } catch (error) {
+    console.error("Fallback clipboard copy failed:", error);
+    return false;
+  }
+};
+
+interface WorkerInfoModalProps {
+  state: WorkerInfoModalState;
+  onClose: () => void;
+}
+
+const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => {
+  if (!state.isOpen) {
+    return null;
+  }
+
+  const [copyFeedback, setCopyFeedback] = useState<
+    | {
+        type: "email" | "phone";
+        message: string;
+        target?: string;
+      }
+    | null
+  >(null);
+
+  const phoneHref = state.data?.phone ? sanitizeTelHref(state.data.phone) : null;
+  const whatsappHref = state.data?.phone
+    ? buildWhatsAppLink(state.data.phone)
+    : null;
+  const emailHref = state.data?.email ? `mailto:${state.data.email}` : null;
+
+  useEffect(() => {
+    if (!copyFeedback) {
+      return;
+    }
+    const timer = window.setTimeout(() => setCopyFeedback(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [copyFeedback]);
+
+  const handleCopy = useCallback(
+    async (type: "email" | "phone", value?: string | null) => {
+      const trimmed = trimToNull(value);
+      if (!trimmed) {
+        return;
+      }
+
+      const success = await copyTextToClipboard(trimmed);
+      setCopyFeedback({
+        type,
+        message: success ? "Copiado al portapapeles" : "No se pudo copiar",
+        target: trimmed,
+      });
+    },
+    []
+  );
+
+  const handleOpenEmail = useCallback(() => {
+    if (emailHref) {
+      window.open(emailHref, "_self");
+    }
+  }, [emailHref]);
+
+  const handleOpenPhone = useCallback(() => {
+    if (phoneHref) {
+      window.open(phoneHref, "_self");
+    }
+  }, [phoneHref]);
+
+  const handleOpenWhatsApp = useCallback(() => {
+    if (whatsappHref) {
+      window.open(whatsappHref, "_blank", "noopener,noreferrer");
+    }
+  }, [whatsappHref]);
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+              {state.data?.name ?? state.workerName}
+            </h3>
+            {state.isLoading ? (
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                Cargando información...
+              </p>
+            ) : state.error ? (
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                {state.error}
+              </p>
+            ) : (
+              <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+                <div>
+                  <span className="font-medium text-gray-700 dark:text-gray-200">
+                    Email:
+                  </span>{" "}
+                  {state.data?.email ? (
+                    <a
+                      href={emailHref ?? "#"}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void handleCopy("email", state.data?.email);
+                      }}
+                      className="text-blue-600 transition hover:underline dark:text-blue-400"
+                    >
+                      {state.data.email}
+                    </a>
+                  ) : (
+                    <span className="text-gray-500 dark:text-gray-400">
+                      No disponible
+                    </span>
+                  )}
+                  {copyFeedback?.type === "email" && (
+                    <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                      {copyFeedback.message}
+                    </span>
+                  )}
+                </div>
+                {state.data?.secondaryEmail && (
+                  <div>
+                    <span className="font-medium text-gray-700 dark:text-gray-200">
+                      Email 2:
+                    </span>{" "}
+                    <a
+                      href={emailHref ?? "#"}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void handleCopy("email", state.data?.secondaryEmail);
+                      }}
+                      className="text-blue-600 transition hover:underline dark:text-blue-400"
+                    >
+                      {state.data.secondaryEmail}
+                    </a>
+                  </div>
+                )}
+                <div>
+                  <span className="font-medium text-gray-700 dark:text-gray-200">
+                    Teléfono:
+                  </span>{" "}
+                  {state.data?.phone ? (
+                    <a
+                      href={phoneHref ?? "#"}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void handleCopy("phone", state.data?.phone);
+                      }}
+                      className="text-blue-600 transition hover:underline dark:text-blue-400"
+                    >
+                      {state.data.phone}
+                    </a>
+                  ) : (
+                    <span className="text-gray-500 dark:text-gray-400">
+                      No disponible
+                    </span>
+                  )}
+                  {copyFeedback?.type === "phone" && (
+                    <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                      {copyFeedback.message}
+                    </span>
+                  )}
+                </div>
+                {state.data?.companies && state.data.companies.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="font-medium text-gray-700 dark:text-gray-200">
+                      Empresas asignadas:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {state.data.companies.map((company) => (
+                        <span
+                          key={company.id}
+                          className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"
+                        >
+                          {company.name}
+                          <span className="rounded-full bg-blue-200 px-1.5 text-[10px] text-blue-700 dark:bg-blue-800/70 dark:text-blue-100">
+                            {company.count}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            aria-label="Cerrar información de trabajador"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!emailHref || state.isLoading || Boolean(state.error)}
+            onClick={handleOpenEmail}
+            leftIcon={<Mail size={16} />}
+          >
+            Enviar email
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!phoneHref || state.isLoading || Boolean(state.error)}
+            onClick={handleOpenPhone}
+            leftIcon={<Phone size={16} />}
+          >
+            Llamar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!whatsappHref || state.isLoading || Boolean(state.error)}
+            onClick={handleOpenWhatsApp}
+            leftIcon={<MessageCircle size={16} />}
+          >
+            WhatsApp
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface HourSegment {
   id: string;
   start: string;
@@ -341,6 +619,24 @@ interface NotesModalTarget {
   dayLabel: string;
   dateLabel?: string;
   notes: DayNoteEntry[];
+}
+
+interface WorkerInfoData {
+  id: string;
+  name: string;
+  email?: string;
+  secondaryEmail?: string;
+  phone?: string;
+  companies: Array<{ id: string; name: string; count: number }>;
+}
+
+interface WorkerInfoModalState {
+  workerId: string;
+  workerName: string;
+  isOpen: boolean;
+  isLoading: boolean;
+  error?: string | null;
+  data?: WorkerInfoData | null;
 }
 
 interface GroupView {
@@ -1539,6 +1835,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
     getStartOfWeek(new Date())
   );
+  const [workerInfoModal, setWorkerInfoModal] =
+    useState<WorkerInfoModalState | null>(null);
 
   const allowedWorkersFromGroups = useMemo<Set<string> | null>(() => {
     if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
@@ -1858,7 +2156,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     });
   }, [companyFilterOptions]);
 
-  const weekDateMap = useMemo(() => {
+  const weekInfo = useMemo(() => {
     const monday = new Date(currentWeekStart);
     const dates: Record<WeekDayKey, string> = {
       monday: "",
@@ -1869,15 +2167,28 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       saturday: "",
       sunday: "",
     };
+    const daysOfMonth: Record<WeekDayKey, number> = {
+      monday: 0,
+      tuesday: 0,
+      wednesday: 0,
+      thursday: 0,
+      friday: 0,
+      saturday: 0,
+      sunday: 0,
+    };
 
     weekDays.forEach((day, index) => {
       const current = new Date(monday);
       current.setDate(monday.getDate() + index);
       dates[day.key] = formatLocalDateKey(current);
+      daysOfMonth[day.key] = current.getDate();
     });
 
-    return dates;
+    return { dates, daysOfMonth };
   }, [currentWeekStart]);
+
+  const weekDateMap = weekInfo.dates;
+  const weekDayNumbers = weekInfo.daysOfMonth;
 
   const weekRangeLabel = useMemo(
     () => formatWeekRange(currentWeekStart),
@@ -2177,6 +2488,279 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const closeNotesModal = useCallback(() => {
     setNotesModalTarget(null);
   }, []);
+
+  const resolveCompanyLabel = useCallback(
+    (candidateId?: string | null) => {
+      const normalized = normalizeKeyPart(candidateId);
+      if (!normalized) {
+        return null;
+      }
+
+      if (companyLookupMap[normalized]) {
+        return companyLookupMap[normalized];
+      }
+
+      const matchingAssignment = assignments.find(
+        (assignmentItem) => normalizeKeyPart(assignmentItem.companyId) === normalized
+      );
+      if (matchingAssignment) {
+        return matchingAssignment.companyName;
+      }
+
+      return null;
+    },
+    [assignments, companyLookupMap]
+  );
+
+  const closeWorkerInfoModal = useCallback(() => {
+    setWorkerInfoModal(null);
+  }, []);
+
+  const buildWorkerInfoFromWorker = useCallback(
+    (worker: Worker): WorkerInfoData => {
+      const normalizedEmail = trimToNull(worker.email);
+      const normalizedSecondaryEmail = trimToNull(worker.secondaryEmail);
+      const normalizedPhone = trimToNull(worker.phone);
+
+      const companyMap = new Map<string, { id: string; name: string; count: number }>();
+
+      const appendCompany = (name?: string | null, stats?: WorkerCompanyStats) => {
+        const normalizedName = trimToNull(name);
+        if (!normalizedName) {
+          return;
+        }
+
+        const normalizedId = stats?.companyId
+          ? normalizeKeyPart(stats.companyId) ?? stats.companyId
+          : createGroupId(normalizedName);
+
+        const existing = companyMap.get(normalizedId);
+        const countCandidate = Math.max(
+          stats?.contractCount ?? 0,
+          stats?.assignmentCount ?? 0,
+          1
+        );
+
+        if (existing) {
+          existing.count = Math.max(existing.count, countCandidate);
+        } else {
+          companyMap.set(normalizedId, {
+            id: normalizedId,
+            name: normalizedName,
+            count: countCandidate,
+          });
+        }
+      };
+
+      if (Array.isArray(worker.companyNames)) {
+        worker.companyNames.forEach((companyName) => {
+          const stats = worker.companyStats?.[companyName];
+          appendCompany(companyName, stats);
+        });
+      }
+
+      if (Array.isArray(worker.companyRelations)) {
+        worker.companyRelations.forEach((relation) => {
+          const relationName = relation.companyName ?? relation.relationId;
+          const stats =
+            relation.companyName && worker.companyStats
+              ? worker.companyStats[relation.companyName]
+              : undefined;
+          appendCompany(relationName, stats);
+        });
+      }
+
+      const companies = Array.from(companyMap.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+      );
+
+      return {
+        id: worker.id,
+        name: worker.name,
+        email: normalizedEmail ?? undefined,
+        secondaryEmail: normalizedSecondaryEmail ?? undefined,
+        phone: normalizedPhone ?? undefined,
+        companies,
+      };
+    },
+    []
+  );
+
+  const openWorkerInfoModal = useCallback(
+    async (workerId: string, workerName: string) => {
+      const normalizedTargetId = normalizeKeyPart(workerId) ?? workerId;
+      const existingWorker = allWorkers.find((worker) =>
+        normalizeKeyPart(worker.id) === normalizedTargetId
+      );
+
+      if (existingWorker) {
+        const info = buildWorkerInfoFromWorker(existingWorker);
+        setWorkerInfoModal({
+          workerId: existingWorker.id,
+          workerName: existingWorker.name,
+          isOpen: true,
+          isLoading: false,
+          error: null,
+          data: info,
+        });
+        return;
+      }
+
+      setWorkerInfoModal({
+        workerId,
+        workerName,
+        isOpen: true,
+        isLoading: true,
+        error: null,
+        data: null,
+      });
+
+      if (!apiUrl || !externalJwt) {
+        setWorkerInfoModal({
+          workerId,
+          workerName,
+          isOpen: true,
+          isLoading: false,
+          error: "Falta configuración de API o token para obtener los datos del trabajador.",
+          data: null,
+        });
+        return;
+      }
+
+      const endpoint = buildApiEndpoint(
+        apiUrl,
+        `/Parameter/${encodeURIComponent(workerId)}`
+      );
+
+      try {
+        const response = await fetch(endpoint, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${externalJwt}`,
+            Accept: "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}`;
+          try {
+            const text = await response.text();
+            if (text) {
+              message = text;
+            }
+          } catch {
+            // ignore parse failure
+          }
+          throw new Error(message);
+        }
+
+        const payload = await response.json();
+        const email = trimToNull(payload?.providerEmail ?? payload?.email);
+        const secondaryEmail = trimToNull(
+          payload?.secondaryEmail ??
+            payload?.secondary_email ??
+            payload?.providerSecondaryEmail ??
+            payload?.email2 ??
+            payload?.secondaryemail
+        );
+        const phone = trimToNull(payload?.phone ?? payload?.telefon ?? payload?.telefono);
+
+        const companyAggregates = new Map<string, { id: string; name: string; count: number }>();
+        if (Array.isArray(payload?.parameterRelations)) {
+          payload.parameterRelations.forEach((relation: any) => {
+            const relationId = trimToNull(relation?.parameterRelationId);
+            if (!relationId) {
+              return;
+            }
+
+            const normalizedId = normalizeKeyPart(relationId);
+            if (!normalizedId) {
+              return;
+            }
+
+            const resolvedName =
+              resolveCompanyLabel(normalizedId) ??
+              resolveCompanyLabel(relationId) ??
+              relationId;
+
+            const current = companyAggregates.get(normalizedId);
+            if (current) {
+              current.count += 1;
+            } else {
+              companyAggregates.set(normalizedId, {
+                id: normalizedId,
+                name: resolvedName,
+                count: 1,
+              });
+            }
+          });
+        }
+
+        const companies = Array.from(companyAggregates.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+        );
+
+        setWorkerInfoModal((previous) => {
+          if (!previous || previous.workerId !== workerId) {
+            return previous;
+          }
+
+          return {
+            workerId,
+            workerName,
+            isOpen: true,
+            isLoading: false,
+            error: null,
+            data: {
+              id: trimToNull(payload?.id ?? workerId) ?? workerId,
+              name: trimToNull(payload?.name ?? workerName) ?? workerName,
+              email: email ?? undefined,
+              secondaryEmail: secondaryEmail ?? undefined,
+              phone: phone ?? undefined,
+              companies,
+            },
+          };
+        });
+      } catch (error) {
+        console.error("Error fetching worker details", error);
+        setWorkerInfoModal((previous) => {
+          if (!previous || previous.workerId !== workerId) {
+            return previous;
+          }
+
+          return {
+            workerId,
+            workerName,
+            isOpen: true,
+            isLoading: false,
+            error:
+              error instanceof Error && error.message
+                ? error.message
+                : "No se pudo obtener la información del trabajador.",
+            data: null,
+          };
+        });
+      }
+    },
+    [apiUrl, allWorkers, buildWorkerInfoFromWorker, externalJwt, resolveCompanyLabel]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ workerId: string; workerName: string }>;
+      if (custom?.detail?.workerId) {
+        void openWorkerInfoModal(custom.detail.workerId, custom.detail.workerName);
+      }
+    };
+
+    window.addEventListener("worker-info-modal", handler as EventListener);
+    return () => {
+      window.removeEventListener("worker-info-modal", handler as EventListener);
+    };
+  }, [openWorkerInfoModal]);
 
   const handleSegmentsModalSave = useCallback(
     (segments: HourSegment[]) => {
@@ -2700,9 +3284,22 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 )}
               </button>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  {group.name}
-                </h3>
+                {viewMode === "worker" ? (
+                  <button
+                    type="button"
+                    onDoubleClick={() =>
+                      openWorkerInfoModal(group.id, group.name)
+                    }
+                    className="text-left text-lg font-semibold text-gray-900 transition hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white dark:hover:text-blue-300"
+                    title="Doble clic para ver detalles del trabajador"
+                  >
+                    {group.name}
+                  </button>
+                ) : (
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    {group.name}
+                  </h3>
+                )}
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   {viewMode === "company"
                     ? `${group.assignments.length} trabajador${
@@ -2753,7 +3350,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                           key={`${group.id}-${day.key}-header`}
                           className="px-2 py-2 text-center font-medium text-gray-600 dark:text-gray-300"
                         >
-                          {day.label}
+                          {day.label} {weekDayNumbers[day.key] ?? ""}
                         </th>
                       ))}
                       <th className="px-3 py-2 text-center font-medium text-gray-600 dark:text-gray-300">
@@ -2777,10 +3374,24 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               : "bg-gray-50 dark:bg-gray-900/70"
                           }
                         >
-                          <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">
-                            {viewMode === "company"
-                              ? assignment.workerName
-                              : assignment.companyName}
+                          <td className="px-3 py-2 text-left font-medium text-gray-900 dark:text-white">
+                            {viewMode === "company" ? (
+                              <button
+                                type="button"
+                                onDoubleClick={() =>
+                                  openWorkerInfoModal(
+                                    assignment.workerId,
+                                    assignment.workerName
+                                  )
+                                }
+                                className="inline-flex w-full cursor-pointer select-none items-center justify-start gap-2 rounded-md px-2 py-1 text-left transition hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:hover:bg-blue-900/30"
+                                title="Doble clic para ver detalles"
+                              >
+                                {assignment.workerName}
+                              </button>
+                            ) : (
+                              assignment.companyName
+                            )}
                           </td>
                           {weekDays.map((day) => {
                             const trackedHours = getTrackedHourValue(
@@ -2929,10 +3540,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       expandedGroups,
       handleHourChange,
       openSegmentsModal,
+      openWorkerInfoModal,
       toggleGroupExpansion,
       viewMode,
       totalsContext,
       segmentsByAssignment,
+      weekDayNumbers,
     ]
   );
 
@@ -3260,6 +3873,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         onClose={closeSegmentsModal}
         onSave={handleSegmentsModalSave}
       />
+      {workerInfoModal?.isOpen && (
+        <WorkerInfoModal state={workerInfoModal} onClose={closeWorkerInfoModal} />
+      )}
     </>
   );
 };

@@ -342,15 +342,32 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
                       onMouseEnter={() => setHighlightedIndex(index)}
                     >
                       <div className="flex-1 min-w-0 pr-3">
-                        <p
-                          className={`text-sm font-medium truncate ${
+                        <button
+                          type="button"
+                          onDoubleClick={(event) => {
+                            event.stopPropagation();
+                            if (typeof window !== "undefined") {
+                              const detailEvent = new CustomEvent(
+                                "worker-info-modal",
+                                {
+                                  detail: {
+                                    workerId: worker.id,
+                                    workerName: worker.name,
+                                  },
+                                }
+                              );
+                              window.dispatchEvent(detailEvent);
+                            }
+                          }}
+                          className={`w-full text-left text-sm font-medium truncate transition ${
                             isSelected
-                              ? "text-blue-700 dark:text-blue-300"
-                              : "text-gray-900 dark:text-white"
+                              ? "text-blue-700 hover:text-blue-600 dark:text-blue-300"
+                              : "text-gray-900 hover:text-blue-700 dark:text-white"
                           }`}
+                          title="Doble clic para ver detalles del trabajador"
                         >
                           {worker.name}
-                        </p>
+                        </button>
                         <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                           {worker.email}
                         </p>
