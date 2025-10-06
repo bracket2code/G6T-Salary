@@ -54,24 +54,50 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
   );
 
   const filteredWorkers = useMemo(() => {
-    const query = searchQuery.toLowerCase();
-    const filtered = workers.filter((worker) => {
-      if (!query) {
-        return true;
+    const normalize = (value: unknown): string => {
+      if (typeof value !== "string") {
+        if (Array.isArray(value)) {
+          return value.map(normalize).join(" ");
+        }
+        if (value && typeof value === "object") {
+          return Object.values(value as Record<string, unknown>)
+            .map(normalize)
+            .join(" ");
+        }
+        return "";
       }
 
-      return (
-        worker.name.toLowerCase().includes(query) ||
-        worker.email.toLowerCase().includes(query) ||
-        (worker.phone && worker.phone.toLowerCase().includes(query)) ||
-        (worker.department &&
-          worker.department.toLowerCase().includes(query)) ||
-        (worker.position && worker.position.toLowerCase().includes(query)) ||
-        (worker.companyNames &&
-          worker.companyNames.some((company) =>
-            company.toLowerCase().includes(query)
-          ))
-      );
+      return value
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "");
+    };
+
+    const normalizedQuery = normalize(searchQuery).trim();
+    if (!normalizedQuery) {
+      return workers
+        .slice()
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+        );
+    }
+
+    const tokens = normalizedQuery
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+
+    const filtered = workers.filter((worker) => {
+      const haystack = normalize([
+        worker.name,
+        worker.email,
+        worker.phone,
+        worker.department,
+        worker.position,
+        worker.companyNames,
+      ]);
+
+      return tokens.every((token) => haystack.includes(token));
     });
 
     return filtered.sort((a, b) =>

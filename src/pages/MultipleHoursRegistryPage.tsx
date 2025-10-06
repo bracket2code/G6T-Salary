@@ -2246,44 +2246,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     visibleWorkerIdsKey,
   ]);
 
-  const resultsHelperText = useMemo(() => {
-    if (resultsAreStale) {
-      return 'Hay cambios sin aplicar. Pulsa "Mostrar resultados".';
-    }
-    if (!hasRequestedResults) {
-      return 'Pulsa "Mostrar resultados" para cargar los datos seleccionados.';
-    }
-    if (!visibleWorkerIds.length) {
-      return "No hay trabajadores en la selección actual.";
-    }
-    const effectiveCompanies = requestedCompanyIds
-      ? getEffectiveCompanyIds(requestedCompanyIds)
-      : [];
-    const companyNote = effectiveCompanies.length
-      ? ` en ${effectiveCompanies.length} empresa${
-          effectiveCompanies.length > 1 ? "s" : ""
-        }`
-      : "";
-    return `Mostrando resultados para ${visibleWorkerIds.length} trabajador${
-      visibleWorkerIds.length > 1 ? "es" : ""
-    }${companyNote}.`;
-  }, [
-    hasRequestedResults,
-    requestedCompanyIds,
-    resultsAreStale,
-    visibleWorkerIds.length,
-  ]);
-
-  const resultsHelperTone = useMemo(() => {
-    if (resultsAreStale) {
-      return "text-amber-600 dark:text-amber-400";
-    }
-    if (hasRequestedResults) {
-      return "text-emerald-600 dark:text-emerald-400";
-    }
-    return "text-gray-500 dark:text-gray-400";
-  }, [hasRequestedResults, resultsAreStale]);
-
   useEffect(() => {
     setSelectedGroupIds((prev) => {
       const valid = prev.filter((id) =>
@@ -3912,11 +3874,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         <PageHeader
           title="Registro Múltiple"
           description="Registra y compara las horas semanales por empresa o trabajador sin perder los totales diarios."
-          actionLabel="Guardar Todo"
-          onAction={handleSaveAll}
-          actionIcon={<Save size={18} />}
-          actionDisabled={isSavingAll}
-          actionLoading={isSavingAll}
         />
 
         <Card className="overflow-visible">
@@ -4082,50 +4039,19 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 </p>
               )}
 
-            <div className="flex flex-col items-center gap-2 text-center sm:flex-row sm:items-center sm:justify-center sm:gap-4">
+            <div className="flex justify-center">
               <Button onClick={handleShowResults} disabled={isLoadingWorkers}>
                 Mostrar resultados
               </Button>
-              <span className={`text-sm ${resultsHelperTone}`}>
-                {resultsHelperText}
-              </span>
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="gap-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-xl truncate font-semibold text-gray-900 dark:text-white">
-                  Registro semanal
-                </h2>
-              </div>
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4 lg:w-full">
-                <div className="flex w-full flex-wrap items-center justify-center gap-2 lg:flex-1">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleWeekChange(-1)}
-                    leftIcon={<ChevronLeft size={16} />}
-                    aria-label="Semana anterior"
-                  >
-                    Anterior
-                  </Button>
-                  <div className="w-55 rounded-lg border border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-200 whitespace-nowrap">
-                    {weekRangeLabel}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleWeekChange(1)}
-                    rightIcon={<ChevronRight size={16} />}
-                    aria-label="Semana siguiente"
-                  >
-                    Siguiente
-                  </Button>
-                </div>
-                <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800 lg:ml-auto">
+            <div className="flex flex-wrap items-center gap-3 lg:gap-4">
+              <div className="order-1 flex w-full items-center justify-center gap-2 sm:w-auto lg:justify-start">
+                <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800">
                   {[
                     { value: "company", label: "Por empresa" },
                     { value: "worker", label: "Por trabajador" },
@@ -4148,6 +4074,41 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div className="order-2 flex w-full items-center justify-center gap-3 sm:order-2 sm:w-auto lg:flex-1">
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleWeekChange(-1)}
+                    leftIcon={<ChevronLeft size={16} />}
+                    aria-label="Semana anterior"
+                  >
+                    Anterior
+                  </Button>
+                  <div className="w-55 rounded-lg border border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-200 whitespace-nowrap">
+                    {weekRangeLabel}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleWeekChange(1)}
+                    rightIcon={<ChevronRight size={16} />}
+                    aria-label="Semana siguiente"
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
+              <div className="order-3 flex w-full items-center justify-center sm:order-3 sm:w-auto lg:justify-end">
+                <Button
+                  size="sm"
+                  onClick={handleSaveAll}
+                  disabled={isSavingAll}
+                  leftIcon={<Save size={16} />}
+                >
+                  Guardar Todo
+                </Button>
               </div>
             </div>
           </CardHeader>
