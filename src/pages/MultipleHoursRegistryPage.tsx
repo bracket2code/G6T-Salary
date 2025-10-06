@@ -6,7 +6,6 @@ import React, {
   useState,
 } from "react";
 import {
-  Clock,
   Save,
   ChevronDown,
   ChevronLeft,
@@ -23,18 +22,18 @@ import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
-import { MultiSelect } from "../components/ui/MultiSelect";
 import type {
   DayScheduleEntry,
   DayNoteEntry,
 } from "../components/WorkerHoursCalendar";
-import { HourEntry, Worker } from "../types/salary";
+import { Worker } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
 import type { WorkerHoursSummaryResult } from "../lib/salaryData";
 import { formatLocalDateKey } from "../lib/timezone";
 import { useAuthStore } from "../store/authStore";
 import {
+  CompanySearchSelect,
   GroupSearchSelect,
   WorkerGroupOption,
   WorkerSearchSelect,
@@ -62,8 +61,26 @@ interface Assignment {
   hours: Record<WeekDayKey, string>;
 }
 
+interface ControlScheduleSavePayload {
+  id: string;
+  dateTime: string;
+  parameterId: string;
+  controlScheduleType: number;
+  value?: string;
+  companyId?: string;
+  workShifts?: Array<{
+    id: string;
+    workStart: string;
+    workEnd: string;
+    observations: string;
+  }>;
+}
+
 const UNASSIGNED_COMPANY_ID = "sin-empresa";
 const UNASSIGNED_COMPANY_LABEL = "Sin empresa asignada";
+
+const CONTROL_SCHEDULE_TYPE_MANUAL = 1;
+const CONTROL_SCHEDULE_SAVE_PATH = "/controlSchedule/save";
 
 const UNASSIGNED_COMPANY_NAME_VARIANTS = new Set([
   "sin empresa",
@@ -169,6 +186,57 @@ const normalizeCompanyLookupMap = (
 };
 
 const createDefaultCompanyLookupMap = () => normalizeCompanyLookupMap({});
+
+const formatDateKeyToApiDateTime = (dateKey: string): string => {
+  if (typeof dateKey === "string") {
+    const normalized = dateKey.trim();
+    if (normalized.length > 0) {
+      const [yearPart, monthPart, dayPart] = normalized.split("-");
+      const parsedYear = Number(yearPart);
+      const parsedMonth = Number(monthPart);
+      const parsedDay = Number(dayPart);
+
+      if (
+        Number.isFinite(parsedYear) &&
+        Number.isFinite(parsedMonth) &&
+        Number.isFinite(parsedDay)
+      ) {
+        const year = String(parsedYear).padStart(4, "0");
+        const month = String(parsedMonth).padStart(2, "0");
+        const day = String(parsedDay).padStart(2, "0");
+        return `${year}-${month}-${day}T00:00:00+00:00`;
+      }
+    }
+  }
+
+  const today = new Date();
+  const year = String(today.getUTCFullYear()).padStart(4, "0");
+  const month = String(today.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(today.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T00:00:00+00:00`;
+};
+
+const buildApiEndpoint = (baseUrl: string, path: string): string => {
+  const trimmedBase = baseUrl.trim().replace(/\/$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (/\/api(\/|$)/i.test(trimmedBase)) {
+    return `${trimmedBase}${normalizedPath}`;
+  }
+  return `${trimmedBase}/api${normalizedPath}`;
+};
+
+const generateUuid = (): string => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
+  return template.replace(/[xy]/g, (char) => {
+    const random = Math.random() * 16;
+    const value = char === "x" ? Math.floor(random) : (Math.floor(random) & 0x3) | 0x8;
+    return value.toString(16);
+  });
+};
 
 interface DayNotesModalProps {
   isOpen: boolean;
@@ -1017,7 +1085,7 @@ interface HourSegmentsModalProps {
 }
 
 const createEmptySegment = (): HourSegment => ({
-  id: `segment-${Math.random().toString(36).slice(2, 9)}`,
+  id: generateUuid(),
   start: "",
   end: "",
   total: "",
@@ -1460,10 +1528,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [weekDataError, setWeekDataError] = useState<string | null>(null);
   const companyLastClickRef = useRef<number | null>(null);
   const workerLastClickRef = useRef<number | null>(null);
-  const [recentEntries, setRecentEntries] = useState<HourEntry[]>([]);
   const [segmentsByAssignment, setSegmentsByAssignment] = useState<
     Record<string, Record<WeekDayKey, HourSegment[]>>
   >({});
+  const [isSavingAll, setIsSavingAll] = useState(false);
   const [segmentModalTarget, setSegmentModalTarget] =
     useState<SegmentsModalTarget | null>(null);
   const [notesModalTarget, setNotesModalTarget] =
@@ -2123,17 +2191,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           ...(next[segmentModalTarget.assignmentId] ?? {}),
         };
 
-        if (segments.length === 0) {
-          delete assignmentSegments[segmentModalTarget.dayKey];
-        } else {
-          assignmentSegments[segmentModalTarget.dayKey] = segments;
-        }
-
-        if (Object.keys(assignmentSegments).length === 0) {
-          delete next[segmentModalTarget.assignmentId];
-        } else {
-          next[segmentModalTarget.assignmentId] = assignmentSegments;
-        }
+        assignmentSegments[segmentModalTarget.dayKey] = segments;
+        next[segmentModalTarget.assignmentId] = assignmentSegments;
 
         return next;
       });
@@ -2389,79 +2448,186 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     workerGroupsCollapsed,
   ]);
 
-  const handleSaveAll = useCallback(() => {
-    const entriesToSave: HourEntry[] = [];
+  const handleSaveAll = useCallback(async () => {
+    if (isSavingAll) {
+      return;
+    }
+
+    type ControlScheduleShift = ControlScheduleSavePayload["workShifts"][number];
+
+    const payload: ControlScheduleSavePayload[] = [];
 
     visibleAssignments.forEach((assignment) => {
       weekDays.forEach((day) => {
-        const rawValue = assignment.hours[day.key].trim();
-        if (!rawValue) {
+        const dateKey = weekDateMap[day.key];
+        const parameterId = assignment.workerId.trim();
+
+        if (!dateKey || !parameterId) {
           return;
         }
 
-        const hoursValue = parseHour(rawValue);
-        if (hoursValue <= 0) {
+        const raw = assignment.hours[day.key];
+        const trimmedValue = typeof raw === "string" ? raw.trim() : "";
+        const hoursValue = trimmedValue ? parseHour(trimmedValue) : 0;
+
+        const dayData = workerWeekData[assignment.workerId]?.days?.[dateKey];
+        const existingEntries = resolveEntriesForAssignment(dayData, assignment);
+        const primaryEntry = existingEntries.length > 0 ? existingEntries[0] : null;
+        const existingEntryId = primaryEntry?.id?.trim?.() ?? "";
+
+        const assignmentSegments = segmentsByAssignment[assignment.id];
+        const storedSegments = assignmentSegments
+          ? assignmentSegments[day.key]
+          : undefined;
+
+        const fallbackSegments: HourSegment[] = primaryEntry?.workShifts
+          ? primaryEntry.workShifts.map((shift) => ({
+              id: shift.id?.trim() ?? "",
+              start: shift.startTime ?? "",
+              end: shift.endTime ?? "",
+              total: shift.hours ? String(shift.hours) : "",
+              description: "",
+            }))
+          : [];
+
+        const segmentsSource =
+          storedSegments !== undefined ? storedSegments : fallbackSegments;
+
+        const workShifts = segmentsSource
+          .map((segment): ControlScheduleShift | null => {
+            const workStart = segment.start?.trim() ?? "";
+            const workEnd = segment.end?.trim() ?? "";
+            if (!workStart || !workEnd) {
+              return null;
+            }
+
+            const shiftId = segment.id?.trim() ?? "";
+            return {
+              id: shiftId,
+              workStart,
+              workEnd,
+              observations: segment.description?.trim() ?? "",
+            };
+          })
+          .filter((shift): shift is ControlScheduleShift => Boolean(shift));
+
+        const hasValueToSave = trimmedValue.length > 0 && hoursValue > 0;
+        const hasSegmentsDefined =
+          storedSegments !== undefined ? true : workShifts.length > 0;
+        const hasExistingEntry = Boolean(existingEntryId);
+
+        if (!hasValueToSave && !hasSegmentsDefined && !hasExistingEntry) {
           return;
         }
 
-        entriesToSave.push({
-          id: `${assignment.id}-${day.key}-${Date.now()}-${Math.random()
-            .toString(36)
-            .slice(2, 6)}`,
-          workerId: assignment.workerId,
-          workerName: assignment.workerName,
-          date: weekDateMap[day.key],
-          regularHours: hoursValue,
-          overtimeHours: 0,
-          description: `${assignment.companyName} · ${day.label}`,
-          approved: false,
-          createdAt: new Date().toISOString(),
-        });
+        const payloadItem: ControlScheduleSavePayload = {
+          id: existingEntryId || "",
+          dateTime: formatDateKeyToApiDateTime(dateKey),
+          parameterId,
+          controlScheduleType: CONTROL_SCHEDULE_TYPE_MANUAL,
+        };
+
+        if (hasValueToSave) {
+          payloadItem.value = hoursValue.toFixed(2);
+        }
+
+        if (hasSegmentsDefined) {
+          payloadItem.workShifts = workShifts;
+        } else if (hasExistingEntry) {
+          payloadItem.workShifts = [];
+        }
+
+        const companyId = assignment.companyId.trim();
+        if (companyId && !isUnassignedCompany(companyId, assignment.companyName)) {
+          payloadItem.companyId = companyId;
+        }
+
+        payload.push(payloadItem);
       });
     });
 
-    if (entriesToSave.length === 0) {
+    if (payload.length === 0) {
       alert("No hay horas registradas para guardar");
       return;
     }
 
-    setRecentEntries((prev) => [...entriesToSave, ...prev].slice(0, 12));
-    alert("Horas registradas exitosamente");
-  }, [visibleAssignments, weekDateMap]);
+    if (!apiUrl || !externalJwt) {
+      alert("Falta configuración de API o token de autenticación");
+      return;
+    }
 
-  const fetchRecentEntries = useCallback(() => {
-    const mockRecentEntries: HourEntry[] = [
-      {
-        id: "recent-1",
-        workerId: "w1",
-        workerName: "Luis Martínez",
-        date: weekDateMap.monday,
-        regularHours: 7.5,
-        overtimeHours: 1,
-        description: "Mombassa · Reparación maquinaria",
-        approved: true,
-        approvedBy: "gerencia@mombassa.com",
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-      },
-      {
-        id: "recent-2",
-        workerId: "w2",
-        workerName: "Pablo Ortega",
-        date: weekDateMap.tuesday,
-        regularHours: 6,
-        overtimeHours: 0,
-        description: "Cafetería Central · Inventario",
-        approved: false,
-        createdAt: new Date(Date.now() - 172800000).toISOString(),
-      },
-    ];
+    setIsSavingAll(true);
 
-    setRecentEntries(mockRecentEntries);
-  }, [weekDateMap]);
+    try {
+      const endpoint = buildApiEndpoint(apiUrl, CONTROL_SCHEDULE_SAVE_PATH);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${externalJwt}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
 
-  useEffect(() => {
-    fetchRecentEntries();
-  }, [fetchRecentEntries]);
+      if (!response.ok) {
+        let errorMessage = `Error ${response.status}`;
+        let responseText = "";
+
+        try {
+          responseText = await response.text();
+        } catch {
+          responseText = "";
+        }
+
+        if (responseText && responseText.trim().length > 0) {
+          try {
+            const data = JSON.parse(responseText);
+            if (typeof data === "string" && data.trim().length > 0) {
+              errorMessage = data;
+            } else if (data && typeof data === "object") {
+              const candidate =
+                (data as Record<string, unknown>).message ??
+                (data as Record<string, unknown>).error ??
+                (data as Record<string, unknown>).title ??
+                (data as Record<string, unknown>).detail;
+              if (
+                typeof candidate === "string" &&
+                candidate.trim().length > 0
+              ) {
+                errorMessage = candidate;
+              } else {
+                errorMessage = JSON.stringify(data);
+              }
+            }
+          } catch {
+            errorMessage = responseText;
+          }
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      alert("Horas registradas exitosamente");
+    } catch (error) {
+      console.error("Error al guardar horas", error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "No se pudieron guardar las horas. Inténtalo nuevamente.";
+      alert(`No se pudieron guardar las horas: ${message}`);
+    } finally {
+      setIsSavingAll(false);
+    }
+  }, [
+    apiUrl,
+    externalJwt,
+    isSavingAll,
+    segmentsByAssignment,
+    visibleAssignments,
+    weekDateMap,
+    workerWeekData,
+  ]);
 
   const weeklyTotals = useMemo(
     () => calculateTotals(visibleAssignments, totalsContext),
@@ -2779,6 +2945,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           actionLabel="Guardar Todo"
           onAction={handleSaveAll}
           actionIcon={<Save size={18} />}
+          actionDisabled={isSavingAll}
+          actionLoading={isSavingAll}
         />
 
         <Card className="overflow-visible">
@@ -2862,17 +3030,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 </div>
 
                 {companyFilterOptions.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                      Filtrar por empresa
-                    </p>
-                    <MultiSelect
-                      options={companyFilterOptions}
-                      value={selectedCompanyIds}
-                      onChange={setSelectedCompanyIds}
-                      placeholder="Selecciona una o más empresas..."
-                    />
-                  </div>
+                  <CompanySearchSelect
+                    options={companyFilterOptions}
+                    selectedValues={selectedCompanyIds}
+                    onSelectionChange={setSelectedCompanyIds}
+                    placeholder="Buscar empresa..."
+                    label="Filtrar por empresa"
+                  />
                 )}
 
                 {workersForSelect.length === 0 ? (
@@ -3070,61 +3234,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           </Card>
         )}
 
-        <Card>
-          <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-              <Clock
-                size={20}
-                className="mr-2 text-purple-600 dark:text-purple-400"
-              />
-              Entradas recientes
-            </h2>
-          </CardHeader>
-          <CardContent>
-            {recentEntries.length === 0 ? (
-              <div className="text-center py-8">
-                <Clock size={48} className="mx-auto text-gray-400 mb-4" />
-                <p className="text-gray-500 dark:text-gray-400">
-                  No hay registros de horas recientes
-                </p>
-                <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
-                  Las entradas aparecerán aquí después de guardar el registro
-                  múltiple
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {recentEntries.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="flex items-center justify-between rounded-lg bg-gray-50 p-3 dark:bg-gray-800"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {entry.workerName}
-                      </p>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {formatDate(entry.date)} · {entry.regularHours}h ·{" "}
-                        {entry.description}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          entry.approved
-                            ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-                            : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
-                        }`}
-                      >
-                        {entry.approved ? "Aprobado" : "Pendiente"}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
       <DayNotesModal
         isOpen={notesModalTarget !== null}

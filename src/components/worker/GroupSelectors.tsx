@@ -441,26 +441,6 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
     [groupsById, normalizedSelection]
   );
 
-  const selectionLabel = useMemo(() => {
-    if (!selectedGroups.length) {
-      return "";
-    }
-
-    if (!multiSelect) {
-      return selectedGroups[0]?.label ?? "";
-    }
-
-    if (selectedGroups.length === 1) {
-      return selectedGroups[0]?.label ?? "";
-    }
-
-    return formatSelectionSummary(
-      selectedGroups.length,
-      "1 grupo seleccionado",
-      "grupos seleccionados"
-    );
-  }, [multiSelect, selectedGroups]);
-
   const filteredGroups = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     const filtered = groups.filter((group) => {
@@ -645,8 +625,31 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
     [filteredGroups, handleSelectionChange, highlightedIndex, isOpen]
   );
 
-  const inputDisplayValue = isOpen ? searchQuery : selectionLabel;
   const hasSelection = selectedGroups.length > 0;
+
+  const handleRemoveSelected = useCallback(
+    (groupId: string) => {
+      if (multiSelect) {
+        if (groupId === clearOptionId) {
+          onSelectionChange([]);
+        } else {
+          const current = normalizedSelection.filter((id) => id !== groupId);
+          if (!current.length && clearOptionId) {
+            onSelectionChange([clearOptionId]);
+          } else {
+            onSelectionChange(current);
+          }
+        }
+      } else if (clearOptionId) {
+        onSelectionChange([clearOptionId]);
+      } else {
+        onSelectionChange([]);
+      }
+      setSearchQuery("");
+      setHighlightedIndex(-1);
+    },
+    [clearOptionId, multiSelect, normalizedSelection, onSelectionChange]
+  );
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -662,32 +665,52 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
           ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
         `}
       >
-        <div className="flex-1 flex items-center px-3 py-2">
-          <Search size={18} className="text-gray-400 mr-2" />
-          <input
-            type="text"
-            value={inputDisplayValue}
-            onChange={handleInputChange}
-            onFocus={handleInputFocus}
-            onClick={() => setIsOpen(true)}
-            onKeyDown={handleInputKeyDown}
-            placeholder={placeholder}
-            className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none"
-          />
+        <div className="flex flex-1 flex-wrap items-center gap-2 px-3 py-2">
+          <Search size={18} className="text-gray-400" />
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            {selectedGroups.map((group) => (
+              <span
+                key={group.id}
+                className="inline-flex items-center gap-1 rounded-md bg-blue-100 px-2 py-1 text-sm text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"
+              >
+                {group.label}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemoveSelected(group.id);
+                  }}
+                  className="rounded p-0.5 transition hover:bg-blue-200 hover:text-blue-700 dark:hover:bg-blue-800/60"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={handleInputChange}
+              onFocus={handleInputFocus}
+              onClick={() => setIsOpen(true)}
+              onKeyDown={handleInputKeyDown}
+              placeholder={hasSelection ? "" : placeholder}
+              className="flex-1 min-w-[140px] bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400"
+            />
+          </div>
         </div>
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1 pr-2">
           {(hasSelection || searchQuery) && (
             <button
               type="button"
               onClick={handleClear}
-              className="p-1 mr-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
             >
               <X size={14} className="text-gray-400" />
             </button>
           )}
           <button
             type="button"
-            className="p-1 mr-2"
+            className="p-1"
             onClick={() => setIsOpen((prev) => !prev)}
           >
             <ChevronDown
@@ -759,6 +782,365 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
                           className="text-gray-400 dark:text-gray-500"
                         />
                         <span>{group.memberCount}</span>
+                      </div>
+                      {isSelected && (
+                        <Check
+                          size={16}
+                          className="text-blue-600 dark:text-blue-400 ml-2"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export interface CompanySearchOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface CompanySearchSelectProps {
+  options: CompanySearchOption[];
+  selectedValues: string[];
+  onSelectionChange: (values: string[]) => void;
+  placeholder?: string;
+  label?: string;
+}
+
+export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
+  options,
+  selectedValues,
+  onSelectionChange,
+  placeholder = "Buscar empresa...",
+  label = "Empresas",
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const optionsByValue = useMemo(() => {
+    const map = new Map<string, CompanySearchOption>();
+    options.forEach((option) => {
+      map.set(option.value, option);
+    });
+    return map;
+  }, [options]);
+
+  const selectedSet = useMemo(
+    () => new Set<string>(selectedValues),
+    [selectedValues]
+  );
+
+  const selectedOptions = useMemo(
+    () =>
+      selectedValues
+        .map((value) => optionsByValue.get(value))
+        .filter((option): option is CompanySearchOption => Boolean(option)),
+    [optionsByValue, selectedValues]
+  );
+
+  const filteredOptions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const filtered = options.filter((option) => {
+      if (!query) {
+        return true;
+      }
+
+      const labelMatch = option.label.toLowerCase().includes(query);
+      const descriptionMatch = option.description
+        ?.toLowerCase()
+        .includes(query);
+      const valueMatch = option.value.toLowerCase().includes(query);
+
+      return labelMatch || descriptionMatch || valueMatch;
+    });
+
+    return filtered.sort((a, b) =>
+      a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+    );
+  }, [options, searchQuery]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+        setSearchQuery("");
+        setHighlightedIndex(-1);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    itemRefs.current = itemRefs.current.slice(0, filteredOptions.length);
+  }, [filteredOptions.length]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (!filteredOptions.length) {
+      setHighlightedIndex(-1);
+      return;
+    }
+
+    if (highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    } else if (highlightedIndex >= filteredOptions.length) {
+      setHighlightedIndex(filteredOptions.length - 1);
+    }
+  }, [filteredOptions, highlightedIndex, isOpen]);
+
+  useEffect(() => {
+    if (highlightedIndex >= 0) {
+      itemRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedIndex]);
+
+  const handleToggle = useCallback(
+    (option: CompanySearchOption) => {
+      const current = new Set(selectedValues);
+      if (current.has(option.value)) {
+        current.delete(option.value);
+      } else {
+        current.add(option.value);
+      }
+
+      onSelectionChange(Array.from(current));
+      setSearchQuery("");
+      setIsOpen(true);
+      setHighlightedIndex(-1);
+    },
+    [onSelectionChange, selectedValues]
+  );
+
+  const handleClear = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      setSearchQuery("");
+      onSelectionChange([]);
+      setHighlightedIndex(-1);
+    },
+    [onSelectionChange]
+  );
+
+  const handleInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const value = event.target.value;
+      setSearchQuery(value);
+      if (!isOpen) {
+        setIsOpen(true);
+      }
+      setHighlightedIndex(-1);
+    },
+    [isOpen]
+  );
+
+  const handleInputFocus = useCallback(() => {
+    setIsOpen(true);
+    if (filteredOptions.length > 0 && highlightedIndex === -1) {
+      setHighlightedIndex(0);
+    }
+  }, [filteredOptions.length, highlightedIndex]);
+
+  const handleInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsOpen(false);
+        setSearchQuery("");
+        setHighlightedIndex(-1);
+        return;
+      }
+
+      if (!isOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        setIsOpen(true);
+        return;
+      }
+
+      if (!filteredOptions.length) {
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setHighlightedIndex((prev) => {
+          const nextIndex = prev + 1;
+          if (nextIndex >= filteredOptions.length || prev === -1) {
+            return 0;
+          }
+          return nextIndex;
+        });
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setHighlightedIndex((prev) => {
+          if (prev <= 0) {
+            return filteredOptions.length - 1;
+          }
+          return prev - 1;
+        });
+      } else if (event.key === "Enter") {
+        if (highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
+          event.preventDefault();
+          handleToggle(filteredOptions[highlightedIndex]);
+        }
+      }
+    },
+    [filteredOptions, handleToggle, highlightedIndex, isOpen]
+  );
+
+  const hasSelection = selectedOptions.length > 0;
+
+  const handleRemoveSelected = useCallback(
+    (value: string) => {
+      const next = selectedValues.filter((item) => item !== value);
+      onSelectionChange(next);
+      setSearchQuery("");
+      setHighlightedIndex(-1);
+    },
+    [onSelectionChange, selectedValues]
+  );
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+        {label}
+      </label>
+
+      <div
+        className={`
+          min-h-[42px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600
+          rounded-md flex items-center
+          hover:border-gray-400 dark:hover:border-gray-500
+          ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
+        `}
+      >
+        <div className="flex flex-1 flex-wrap items-center gap-2 px-3 py-2">
+          <Search size={18} className="text-gray-400" />
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            {selectedOptions.map((option) => (
+              <span
+                key={option.value}
+                className="inline-flex items-center gap-1 rounded-md bg-blue-100 px-2 py-1 text-sm text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"
+              >
+                {option.label}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemoveSelected(option.value);
+                  }}
+                  className="rounded p-0.5 transition hover:bg-blue-200 hover:text-blue-700 dark:hover:bg-blue-800/60"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={handleInputChange}
+              onFocus={handleInputFocus}
+              onClick={() => setIsOpen(true)}
+              onKeyDown={handleInputKeyDown}
+              placeholder={hasSelection ? "" : placeholder}
+              className="flex-1 min-w-[140px] bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400"
+            />
+          </div>
+        </div>
+        <div className="flex items-center space-x-1 pr-2">
+          {(hasSelection || searchQuery) && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            >
+              <X size={14} className="text-gray-400" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="p-1"
+            onClick={() => setIsOpen((prev) => !prev)}
+          >
+            <ChevronDown
+              size={16}
+              className={`text-gray-400 transition-transform duration-200 ${
+                isOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className="w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-hidden">
+          <div className="max-h-48 overflow-y-auto">
+            {filteredOptions.length === 0 ? (
+              <div className="px-3 py-4 text-center text-gray-500 dark:text-gray-400 text-sm">
+                {searchQuery
+                  ? `No se encontraron empresas con "${searchQuery}"`
+                  : "No hay empresas disponibles"}
+              </div>
+            ) : (
+              <>
+                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
+                  {searchQuery
+                    ? `${filteredOptions.length} de ${options.length} empresas`
+                    : `${options.length} empresas disponibles`}
+                </div>
+
+                {filteredOptions.map((option, index) => {
+                  const isHighlighted = highlightedIndex === index;
+                  const isSelected = selectedSet.has(option.value);
+                  const baseClasses = `px-3 py-3 cursor-pointer flex items-center justify-between border-b border-gray-100 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700`;
+                  const highlightClass = isSelected
+                    ? "bg-blue-50 dark:bg-blue-900/20"
+                    : isHighlighted
+                    ? "bg-gray-100 dark:bg-gray-700"
+                    : "";
+
+                  return (
+                    <div
+                      key={`${option.value}-${index}`}
+                      ref={(el) => {
+                        itemRefs.current[index] = el;
+                      }}
+                      className={`${baseClasses} ${highlightClass}`}
+                      onClick={() => handleToggle(option)}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                    >
+                      <div className="flex-1 min-w-0 pr-3">
+                        <p
+                          className={`text-sm font-medium truncate ${
+                            isSelected
+                              ? "text-blue-700 dark:text-blue-300"
+                              : "text-gray-900 dark:text-white"
+                          }`}
+                        >
+                          {option.label}
+                        </p>
+                        {option.description && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                            {option.description}
+                          </p>
+                        )}
                       </div>
                       {isSelected && (
                         <Check

@@ -5,8 +5,10 @@ interface PageHeaderProps {
   title: string;
   description?: string;
   actionLabel?: string;
-  onAction?: () => void;
+  onAction?: () => void | Promise<void>;
   actionIcon?: React.ReactNode;
+  actionDisabled?: boolean;
+  actionLoading?: boolean;
 }
 
 export const PageHeader: React.FC<PageHeaderProps> = ({
@@ -15,6 +17,8 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   actionLabel,
   onAction,
   actionIcon,
+  actionDisabled = false,
+  actionLoading = false,
 }) => {
   return (
     <div className="mb-6 pt-6 md:flex md:items-center md:justify-between">
@@ -33,6 +37,8 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
           <Button 
             onClick={onAction} 
             leftIcon={actionIcon}
+            disabled={actionDisabled}
+            isLoading={actionLoading}
           >
             {actionLabel}
           </Button>

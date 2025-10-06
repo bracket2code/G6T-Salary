@@ -14,6 +14,8 @@ interface MultiSelectProps {
   className?: string;
   disabled?: boolean;
   showSelectAll?: boolean;
+  enableSearch?: boolean;
+  searchPlaceholder?: string;
 }
 
 export const MultiSelect: React.FC<MultiSelectProps> = ({
@@ -24,8 +26,11 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   className = "",
   disabled = false,
   showSelectAll = true,
+  enableSearch = false,
+  searchPlaceholder = "Buscar...",
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,6 +45,12 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchTerm("");
+    }
+  }, [isOpen]);
 
   const handleToggleOption = (optionValue: string) => {
     if (value.includes(optionValue)) {
@@ -63,6 +74,13 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
 
   const selectedOptions = options.filter(option => value.includes(option.value));
   const allSelected = options.length > 0 && value.length === options.length;
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredOptions = enableSearch && normalizedSearch
+    ? options.filter((option) =>
+        option.label.toLowerCase().includes(normalizedSearch) ||
+        option.value.toLowerCase().includes(normalizedSearch)
+      )
+    : options;
 
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
@@ -142,12 +160,25 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
               </div>
             </>
           )}
-          {options.length === 0 ? (
+          {enableSearch && options.length > 0 && (
+            <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-600">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder={searchPlaceholder}
+                className="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder:text-gray-400"
+              />
+            </div>
+          )}
+          {filteredOptions.length === 0 ? (
             <div className="px-3 py-2 text-gray-500 dark:text-gray-400 text-sm">
-              No hay opciones disponibles
+              {enableSearch && normalizedSearch
+                ? "No se encontraron resultados"
+                : "No hay opciones disponibles"}
             </div>
           ) : (
-            options.map((option) => {
+            filteredOptions.map((option) => {
               const isSelected = value.includes(option.value);
               return (
                 <div
