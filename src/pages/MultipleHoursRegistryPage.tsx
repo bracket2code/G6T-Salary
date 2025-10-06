@@ -2683,6 +2683,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                           hasNotes ? "text-amber-500" : ""
                                         }`}
                                         aria-label="Ver notas del día"
+                                        tabIndex={-1}
                                       >
                                         <NotebookPen size={14} />
                                       </button>
@@ -2714,6 +2715,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                           hasSegments ? "text-blue-600" : ""
                                         }`}
                                         aria-label="Configurar tramos horarios"
+                                        tabIndex={-1}
                                       >
                                         <CalendarClock size={14} />
                                       </button>
