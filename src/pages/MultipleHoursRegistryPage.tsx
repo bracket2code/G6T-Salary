@@ -2859,6 +2859,20 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   </label>
                 </div>
 
+                {companyFilterOptions.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                      Filtrar por empresa
+                    </p>
+                    <MultiSelect
+                      options={companyFilterOptions}
+                      value={selectedCompanyIds}
+                      onChange={setSelectedCompanyIds}
+                      placeholder="Selecciona una o más empresas..."
+                    />
+                  </div>
+                )}
+
                 {workersForSelect.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
                     {workersError ||
@@ -2882,20 +2896,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                         : "Trabajador del grupo"
                     }
                   />
-                )}
-
-                {companyFilterOptions.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                      Filtrar por empresa
-                    </p>
-                    <MultiSelect
-                      options={companyFilterOptions}
-                      value={selectedCompanyIds}
-                      onChange={setSelectedCompanyIds}
-                      placeholder="Selecciona una o más empresas..."
-                    />
-                  </div>
                 )}
 
                 {workersError && workersForSelect.length !== 0 && (
