@@ -120,6 +120,65 @@ const trimToNull = (value?: string | null): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const INACTIVE_SITUATION_TOKENS = new Set([
+  "1",
+  "01",
+  "10",
+  "1.0",
+  "baja",
+  "inactive",
+  "inactivo",
+  "inactiva",
+  "debaja",
+  "bajalaboral",
+]);
+
+const ACTIVE_SITUATION_TOKENS = new Set([
+  "0",
+  "00",
+  "0.0",
+  "alta",
+  "activo",
+  "activa",
+]);
+
+const normalizeSituationToken = (value: string): string =>
+  value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z0-9]/g, "");
+
+const parseSituationValue = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const numeric = Number(trimmed);
+    if (!Number.isNaN(numeric) && Number.isFinite(numeric)) {
+      return numeric;
+    }
+
+    const normalized = normalizeSituationToken(trimmed);
+    if (!normalized) {
+      return null;
+    }
+
+    if (INACTIVE_SITUATION_TOKENS.has(normalized)) {
+      return 1;
+    }
+    if (ACTIVE_SITUATION_TOKENS.has(normalized)) {
+      return 0;
+    }
+  }
+  return null;
+};
+
 const isUnassignedCompanyIdValue = (value: string): boolean => {
   const normalized = value.toLowerCase();
   return (
@@ -2026,13 +2085,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
   const filteredWorkers = useMemo(() => {
     return workersMatchingGroups.filter((worker) => {
-      const situationValue =
-        typeof worker.situation === "number"
-          ? worker.situation
-          : worker.isActive === false
-          ? 1
-          : 0;
-      const isInactive = situationValue === 1 || worker.isActive === false;
+      const situationParsed = parseSituationValue(worker.situation);
+      const isInactiveBySituation =
+        situationParsed !== null ? situationParsed >= 1 : null;
+      const isInactive =
+        isInactiveBySituation !== null
+          ? isInactiveBySituation
+          : worker.isActive === false;
       if (!showInactiveWorkers && isInactive) {
         return false;
       }
