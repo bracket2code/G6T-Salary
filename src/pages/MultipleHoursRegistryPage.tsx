@@ -29,7 +29,7 @@ import type {
   DayScheduleEntry,
   DayNoteEntry,
 } from "../components/WorkerHoursCalendar";
-import { Worker, WorkerCompanyStats } from "../types/salary";
+import { Worker, WorkerCompanyContract, WorkerCompanyStats } from "../types/salary";
 import { formatDate } from "../lib/utils";
 import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
 import type { WorkerHoursSummaryResult } from "../lib/salaryData";
@@ -379,6 +379,109 @@ interface WorkerInfoModalProps {
   onClose: () => void;
 }
 
+interface WorkerContractListProps {
+  companyName: string;
+  contracts: WorkerCompanyContract[];
+}
+
+const formatMaybeDate = (value?: string | null) => {
+  const normalized = trimToNull(value);
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) {
+      return formatDate(parsed.toISOString());
+    }
+  } catch (error) {
+    console.warn("No se pudo formatear la fecha", error);
+  }
+
+  return normalized;
+};
+
+const WorkerContractList: React.FC<WorkerContractListProps> = ({
+  companyName,
+  contracts,
+}) => {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/50">
+      <div className="mb-3 flex items-center justify-between">
+        <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          {companyName}
+        </h5>
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          {contracts.length === 1
+            ? "1 contrato"
+            : `${contracts.length} contratos`}
+        </span>
+      </div>
+      <div className="space-y-3">
+        {contracts.map((contract, index) => {
+          const label =
+            trimToNull(contract.label) ?? `Contrato ${index + 1}`;
+          const typeText = trimToNull(contract.typeLabel ?? contract.position);
+          const descriptionText = trimToNull(contract.description);
+          const startDate = formatMaybeDate(contract.startDate);
+          const endDate = formatMaybeDate(contract.endDate);
+          const statusText = trimToNull(contract.status);
+
+          return (
+            <div
+              key={`${contract.id}-${index}`}
+              className="rounded-md bg-white p-3 text-sm text-gray-700 shadow-sm dark:bg-gray-900 dark:text-gray-200"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium text-gray-900 dark:text-white">
+                  {label}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
+                      contract.hasContract
+                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
+                        : "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                    }`}
+                  >
+                    {contract.hasContract ? "Activo" : "Asignación"}
+                  </span>
+                  {statusText && (
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {statusText}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-2 grid gap-1 text-xs text-gray-600 dark:text-gray-400">
+                {typeText && <span>{typeText}</span>}
+                {(startDate || endDate) && (
+                  <span>
+                    {startDate ?? "¿"} – {endDate ?? "¿"}
+                  </span>
+                )}
+                {typeof contract.hourlyRate === "number" && (
+                  <span>
+                    Tarifa: {contract.hourlyRate.toFixed(2)} €/h
+                  </span>
+                )}
+              </div>
+
+              {descriptionText && (
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  {descriptionText}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => {
   if (!state.isOpen) {
     return null;
@@ -591,6 +694,34 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
             WhatsApp
           </Button>
         </div>
+
+        {state.data?.contractsByCompany &&
+          Object.values(state.data.contractsByCompany).some(
+            (contracts) => contracts && contracts.length > 0
+          ) && (
+            <div className="mt-6 space-y-3">
+              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                Contratos asociados
+              </h4>
+              {(state.data.companies.length > 0
+                ? state.data.companies.map((company) => company.name)
+                : Object.keys(state.data.contractsByCompany)
+              ).map((companyName) => {
+                const contracts =
+                  state.data?.contractsByCompany?.[companyName] ?? [];
+                if (!contracts.length) {
+                  return null;
+                }
+                return (
+                  <WorkerContractList
+                    key={companyName}
+                    companyName={companyName}
+                    contracts={contracts}
+                  />
+                );
+              })}
+            </div>
+          )}
       </div>
     </div>
   );
@@ -628,6 +759,7 @@ interface WorkerInfoData {
   secondaryEmail?: string;
   phone?: string;
   companies: Array<{ id: string; name: string; count: number }>;
+  contractsByCompany: Record<string, WorkerCompanyContract[]>;
 }
 
 interface WorkerInfoModalState {
@@ -2523,6 +2655,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       const normalizedPhone = trimToNull(worker.phone);
 
       const companyMap = new Map<string, { id: string; name: string; count: number }>();
+      const contractsByCompany: Record<string, WorkerCompanyContract[]> = {};
 
       const appendCompany = (name?: string | null, stats?: WorkerCompanyStats) => {
         const normalizedName = trimToNull(name);
@@ -2559,6 +2692,22 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         });
       }
 
+      if (worker.companyContracts) {
+        Object.entries(worker.companyContracts).forEach(
+          ([companyName, contracts]) => {
+            if (!contracts || contracts.length === 0) {
+              return;
+            }
+            contractsByCompany[companyName] = contracts.map((contract) => ({
+              ...contract,
+            }));
+
+            const stats = worker.companyStats?.[companyName];
+            appendCompany(companyName, stats);
+          }
+        );
+      }
+
       if (Array.isArray(worker.companyRelations)) {
         worker.companyRelations.forEach((relation) => {
           const relationName = relation.companyName ?? relation.relationId;
@@ -2581,6 +2730,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         secondaryEmail: normalizedSecondaryEmail ?? undefined,
         phone: normalizedPhone ?? undefined,
         companies,
+        contractsByCompany,
       };
     },
     []
@@ -2665,34 +2815,90 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         );
         const phone = trimToNull(payload?.phone ?? payload?.telefon ?? payload?.telefono);
 
-        const companyAggregates = new Map<string, { id: string; name: string; count: number }>();
-        if (Array.isArray(payload?.parameterRelations)) {
-          payload.parameterRelations.forEach((relation: any) => {
-            const relationId = trimToNull(relation?.parameterRelationId);
-            if (!relationId) {
-              return;
-            }
+        const companyAggregates = new Map<
+          string,
+          { id: string; name: string; count: number }
+        >();
+        const contractsByCompany: Record<string, WorkerCompanyContract[]> = {};
 
-            const normalizedId = normalizeKeyPart(relationId);
-            if (!normalizedId) {
-              return;
-            }
+        if (Array.isArray(payload?.parameterRelations)) {
+          payload.parameterRelations.forEach((relation: any, index: number) => {
+            const relationId = trimToNull(relation?.parameterRelationId);
+            const normalizedId = normalizeKeyPart(relationId ?? relation?.parameterRelationID);
 
             const resolvedName =
               resolveCompanyLabel(normalizedId) ??
               resolveCompanyLabel(relationId) ??
-              relationId;
+              trimToNull(relation?.companyName) ??
+              trimToNull(relation?.parameterRelationName) ??
+              normalizedId ??
+              `Empresa ${index + 1}`;
 
-            const current = companyAggregates.get(normalizedId);
-            if (current) {
-              current.count += 1;
+            const aggregateKey = normalizedId ?? createGroupId(resolvedName ?? "empresa");
+            const existingAggregate = companyAggregates.get(aggregateKey);
+            if (existingAggregate) {
+              existingAggregate.count += 1;
             } else {
-              companyAggregates.set(normalizedId, {
-                id: normalizedId,
-                name: resolvedName,
+              companyAggregates.set(aggregateKey, {
+                id: aggregateKey,
+                name: resolvedName ?? aggregateKey,
                 count: 1,
               });
             }
+
+            const hasContract = Number(relation?.type) === 1;
+            const labelCandidate =
+              trimToNull(relation?.contractName) ??
+              trimToNull(relation?.name) ??
+              `Relación ${existingAggregate ? existingAggregate.count : 1}`;
+
+            const descriptionCandidate = trimToNull(
+              relation?.description ??
+                relation?.contractDescription ??
+                relation?.notes ??
+                relation?.observations
+            );
+
+            const startDate = trimToNull(
+              relation?.startDate ??
+                relation?.contractStartDate ??
+                relation?.dateStart
+            );
+            const endDate = trimToNull(
+              relation?.endDate ?? relation?.contractEndDate ?? relation?.dateEnd
+            );
+
+            const contractEntry: WorkerCompanyContract = {
+              id:
+                trimToNull(relation?.id) ??
+                normalizedId ??
+                `${aggregateKey}-${index}`,
+              hasContract,
+              relationType: Number.isFinite(Number(relation?.type))
+                ? Number(relation?.type)
+                : undefined,
+              typeLabel: trimToNull(
+                relation?.contractTypeName ??
+                  relation?.typeLabel ??
+                  relation?.typeDescription
+              ) ?? undefined,
+              hourlyRate:
+                typeof relation?.amount === "number"
+                  ? relation.amount
+                  : undefined,
+              companyId: trimToNull(relation?.companyId) ?? undefined,
+              companyName: resolvedName ?? undefined,
+              label: labelCandidate ?? undefined,
+              description: descriptionCandidate ?? undefined,
+              startDate: startDate ?? undefined,
+              endDate: endDate ?? undefined,
+              status: trimToNull(relation?.status ?? relation?.contractStatus) ?? undefined,
+              details: undefined,
+            };
+
+            const bucket = contractsByCompany[resolvedName ?? aggregateKey] ?? [];
+            bucket.push(contractEntry);
+            contractsByCompany[resolvedName ?? aggregateKey] = bucket;
           });
         }
 
@@ -2718,6 +2924,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               secondaryEmail: secondaryEmail ?? undefined,
               phone: phone ?? undefined,
               companies,
+              contractsByCompany,
             },
           };
         });
