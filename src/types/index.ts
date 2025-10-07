@@ -29,6 +29,16 @@ export interface Worker {
   department?: string;
   position?: string;
   startDate?: string;
+  dni?: string;
+  socialSecurity?: string;
+  birthDate?: string;
+  address?: string;
+  iban?: string;
+  category?: string;
+  categoryId?: string;
+  subcategory?: string;
+  subcategoryId?: string;
+  staffType?: string;
 }
 
 export interface Location {

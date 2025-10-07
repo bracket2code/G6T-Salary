@@ -301,9 +301,9 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
           ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
         `}
       >
-        <div className="flex flex-1 flex-wrap items-center gap-2 px-3 py-2">
-          <Search size={18} className="text-gray-400" />
-          <div className="flex flex-1 flex-wrap items-center gap-2">
+        <div className="flex flex-1 flex-wrap items-start gap-2 px-3 py-2 min-w-0 sm:items-center">
+          <Search size={18} className="text-gray-400 self-center" />
+          <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
             {selectedWorkers.map((worker) => (
               <span
                 key={worker.id}
@@ -330,7 +330,7 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
               onClick={() => setIsOpen(true)}
               onKeyDown={handleInputKeyDown}
               placeholder={hasSelection ? "" : placeholder}
-              className="flex-1 min-w-[140px] bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400"
+              className="flex-1 min-w-0 bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400 sm:min-w-[140px]"
             />
           </div>
         </div>
@@ -770,9 +770,9 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
           ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
         `}
       >
-        <div className="flex flex-1 flex-wrap items-center gap-2 px-3 py-2">
-          <Search size={18} className="text-gray-400" />
-          <div className="flex flex-1 flex-wrap items-center gap-2">
+        <div className="flex flex-1 flex-wrap items-start gap-2 px-3 py-2 min-w-0 sm:items-center">
+          <Search size={18} className="text-gray-400 self-center" />
+          <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
             {selectedGroups.map((group) => (
               <span
                 key={group.id}
@@ -799,7 +799,7 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
               onClick={() => setIsOpen(true)}
               onKeyDown={handleInputKeyDown}
               placeholder={hasSelection ? "" : placeholder}
-              className="flex-1 min-w-[140px] bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400"
+              className="flex-1 min-w-0 bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400 sm:min-w-[140px]"
             />
           </div>
         </div>
@@ -1151,9 +1151,9 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
           ${isOpen ? "border-blue-500 ring-1 ring-blue-500" : ""}
         `}
       >
-        <div className="flex flex-1 flex-wrap items-center gap-2 px-3 py-2">
-          <Search size={18} className="text-gray-400" />
-          <div className="flex flex-1 flex-wrap items-center gap-2">
+        <div className="flex flex-1 flex-wrap items-start gap-2 px-3 py-2 min-w-0 sm:items-center">
+          <Search size={18} className="text-gray-400 self-center" />
+          <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
             {selectedOptions.map((option) => (
               <span
                 key={option.value}
@@ -1180,7 +1180,7 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
               onClick={() => setIsOpen(true)}
               onKeyDown={handleInputKeyDown}
               placeholder={hasSelection ? "" : placeholder}
-              className="flex-1 min-w-[140px] bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400"
+              className="flex-1 min-w-0 bg-transparent text-gray-900 placeholder:text-gray-500 focus:outline-none dark:text-white dark:placeholder:text-gray-400 sm:min-w-[140px]"
             />
           </div>
         </div>

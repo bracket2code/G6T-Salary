@@ -28,6 +28,9 @@ export interface DayScheduleEntry {
     startTime?: string;
     endTime?: string;
     hours?: number;
+    description?: string;
+    observations?: unknown;
+    raw?: unknown;
   }>;
   raw?: unknown;
 }

@@ -1439,6 +1439,7 @@ interface WorkerWeeklyDayData {
     }
   >;
   entries?: DayScheduleEntry[];
+  noteEntries?: DayNoteEntry[];
 }
 
 interface WorkerWeeklyData {
@@ -1978,10 +1979,20 @@ const buildWorkerWeeklyData = (
       };
     });
 
+    const noteEntries = (detail.noteEntries ?? []).map((note) => {
+      const identity = buildCompanyIdentity(note.companyId, note.companyName);
+      return {
+        ...note,
+        companyId: identity.id,
+        companyName: identity.name,
+      };
+    });
+
     days[dayKey] = {
       totalHours: detail.totalHours,
       companyHours,
       entries,
+      noteEntries,
     };
   });
 
@@ -2275,6 +2286,8 @@ const extractShiftDescription = (
 
 const MOBILE_BREAKPOINT_QUERY = "(max-width: 640px)";
 const LONG_PRESS_DURATION_MS = 500;
+// Minimum pixel width needed to keep the note/turn icons without covering the value.
+const HOUR_CELL_ICON_MIN_WIDTH = 136;
 
 const useIsCompactLayout = (): boolean => {
   const [isCompact, setIsCompact] = useState<boolean>(() => {
@@ -2361,7 +2374,7 @@ const MobileCellActionsSheet: React.FC<MobileCellActionsSheetProps> = ({
             onClick={() => onSelectSegments(target)}
             leftIcon={<CalendarClock size={16} />}
           >
-            Gestionar tramos horarios
+            Gestionar turnos horarios
           </Button>
           <Button variant="ghost" fullWidth onClick={onClose}>
             Cancelar
@@ -2370,6 +2383,181 @@ const MobileCellActionsSheet: React.FC<MobileCellActionsSheetProps> = ({
         <p className="mt-4 text-center text-xs text-gray-400 dark:text-gray-500">
           Mantén pulsada la celda para abrir este menú en pantallas compactas.
         </p>
+      </div>
+    </div>
+  );
+};
+
+interface HourEntryCellProps {
+  assignment: Assignment;
+  day: DayDescriptor;
+  displayLabel: string;
+  inputValue: string;
+  hasNotes: boolean;
+  hasSegments: boolean;
+  highlightClass: string;
+  filteredNotes: DayNoteEntry[];
+  onHourChange: (assignmentId: string, dateKey: string, value: string) => void;
+  onOpenNotes: (
+    assignment: Assignment,
+    day: DayDescriptor,
+    displayLabel: string,
+    notes: DayNoteEntry[]
+  ) => void;
+  onOpenSegments: (
+    assignment: Assignment,
+    day: DayDescriptor,
+    displayLabel: string
+  ) => void;
+  onLongPressStart: (
+    enable: boolean,
+    payload: MobileCellActionsTarget
+  ) => void;
+  onLongPressEnd: () => void;
+  onCellDoubleClick: (
+    event: React.MouseEvent<HTMLDivElement>,
+    enable: boolean,
+    assignment: Assignment,
+    day: DayDescriptor,
+    displayLabel: string
+  ) => void;
+  isCompactLayout: boolean;
+}
+
+const HourEntryCell: React.FC<HourEntryCellProps> = ({
+  assignment,
+  day,
+  displayLabel,
+  inputValue,
+  hasNotes,
+  hasSegments,
+  highlightClass,
+  filteredNotes,
+  onHourChange,
+  onOpenNotes,
+  onOpenSegments,
+  onLongPressStart,
+  onLongPressEnd,
+  onCellDoubleClick,
+  isCompactLayout,
+}) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [showIcons, setShowIcons] = useState<boolean>(() => !isCompactLayout);
+
+  useEffect(() => {
+    const element = containerRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    if (typeof ResizeObserver === "undefined") {
+      setShowIcons(!isCompactLayout);
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+
+      const shouldShow =
+        entry.contentRect.width >= HOUR_CELL_ICON_MIN_WIDTH && !isCompactLayout;
+      setShowIcons((prev) => (prev === shouldShow ? prev : shouldShow));
+    });
+
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [isCompactLayout]);
+
+  useEffect(() => {
+    if (isCompactLayout) {
+      setShowIcons(false);
+    }
+  }, [isCompactLayout]);
+
+  const enableCompactInteractions = isCompactLayout || !showIcons;
+  const inputTitle = enableCompactInteractions
+    ? "Mantén pulsado o haz doble clic para ver notas o turnos en pantallas compactas"
+    : "Haz clic en los iconos para gestionar notas o turnos horarios";
+  const inputSizingClasses = showIcons
+    ? "w-28 pl-8 pr-10"
+    : "w-24 px-3";
+
+  return (
+    <div
+      className="flex h-full w-full items-center justify-center rounded-lg px-1 py-1 text-center"
+      onPointerDown={() =>
+        onLongPressStart(enableCompactInteractions, {
+          assignment,
+          day,
+          displayLabel,
+          notes: filteredNotes,
+        })
+      }
+      onPointerUp={onLongPressEnd}
+      onPointerLeave={onLongPressEnd}
+      onPointerCancel={onLongPressEnd}
+      onDoubleClick={(event) =>
+        onCellDoubleClick(
+          event,
+          enableCompactInteractions,
+          assignment,
+          day,
+          displayLabel
+        )
+      }
+    >
+      <div className="flex items-center gap-1">
+        <div ref={containerRef} className="relative">
+          {showIcons && (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenNotes(assignment, day, displayLabel, filteredNotes)
+              }
+              className={`absolute inset-y-0 left-1.5 z-10 flex items-center text-gray-300 transition hover:text-amber-600 focus:outline-none ${
+                hasNotes ? "text-amber-500" : ""
+              }`}
+              aria-label="Ver notas del día"
+              tabIndex={-1}
+            >
+              <NotebookPen size={14} />
+            </button>
+          )}
+          <Input
+            size="sm"
+            type="text"
+            inputMode="decimal"
+            value={inputValue}
+            onChange={(event) =>
+              onHourChange(assignment.id, day.dateKey, event.target.value)
+            }
+            className={`${inputSizingClasses} text-center ${highlightClass}`}
+            placeholder="0"
+            title={inputTitle}
+          />
+          {showIcons && (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenSegments(assignment, day, displayLabel)
+              }
+              className={`absolute inset-y-0 right-2 flex items-center text-gray-300 transition hover:text-blue-600 focus:outline-none ${
+                hasSegments ? "text-blue-600" : ""
+              }`}
+              aria-label="Configurar turnos horarios"
+              tabIndex={-1}
+            >
+              <CalendarClock size={14} />
+            </button>
+          )}
+        </div>
+        <span className="text-xs text-gray-400 dark:text-gray-500">h</span>
       </div>
     </div>
   );
@@ -2584,14 +2772,9 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
         role="presentation"
       />
       <div className="relative z-10 flex w-full max-h-[90vh] max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-xl dark:bg-gray-900">
-        <div className="flex flex-col gap-2 border-b border-gray-200 p-4 sm:p-5 dark:border-gray-700">
-          <div className="flex items-center justify-center">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {dayLabel}
-            </h2>
-          </div>
-          <div className="flex items-start justify-between gap-3">
-            <div>
+        <div className="border-b border-gray-200 p-4 sm:p-5 dark:border-gray-700">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
+            <div className="text-left">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                 {companyName}
               </h2>
@@ -2599,21 +2782,25 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
                 {workerName}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-sm text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            >
-              Cerrar
-            </button>
+            <div className="text-center">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                {dayLabel}
+              </h2>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                aria-label="Cerrar configuración de turnos"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-500/30 dark:bg-blue-900/20 dark:text-blue-100">
-            Configura los tramos horarios para sumar las horas automáticamente
-            en la celda seleccionada.
-          </div>
 
           {segments.map((segment, index) => (
             <div
@@ -2622,7 +2809,7 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  Tramo {index + 1}
+                  Turno {index + 1}
                 </span>
                 <Button
                   type="button"
@@ -2670,7 +2857,7 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
                     )
                   }
                   fullWidth
-                  placeholder="Observaciones del tramo"
+                  placeholder="Observaciones del turno"
                 />
                 <div className="sm:w-[12.5%]">
                   <Input
@@ -2701,13 +2888,13 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
               onClick={handleAddSegment}
               leftIcon={<Plus size={16} />}
             >
-              Añadir tramo
+              Añadir turno
             </Button>
           </div>
 
           {invalidSegments && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-950/30 dark:text-red-200">
-              Revisa los tramos: la hora de fin debe ser posterior a la hora de
+              Revisa los turnos: la hora de fin debe ser posterior a la hora de
               inicio y el formato debe ser HH:MM.
             </div>
           )}
@@ -2742,7 +2929,7 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
             disabled={invalidSegments}
             className="w-full sm:w-auto"
           >
-            Guardar tramos
+            Guardar turnos
           </Button>
         </div>
       </div>
@@ -3518,6 +3705,43 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       openSegmentsModal(target.assignment, target.day, target.displayLabel);
     },
     [closeMobileCellActions, openSegmentsModal]
+  );
+
+  const handleCellLongPressStart = useCallback(
+    (enable: boolean, payload: MobileCellActionsTarget) => {
+      if (!enable || typeof window === "undefined") {
+        return;
+      }
+
+      clearMobileLongPressTimer();
+      longPressTimerRef.current = window.setTimeout(() => {
+        longPressTimerRef.current = null;
+        openMobileCellActions(payload);
+      }, LONG_PRESS_DURATION_MS);
+    },
+    [clearMobileLongPressTimer, openMobileCellActions]
+  );
+
+  const handleCellDoubleClick = useCallback(
+    (
+      event: React.MouseEvent<HTMLDivElement>,
+      enable: boolean,
+      assignment: Assignment,
+      day: DayDescriptor,
+      displayLabel: string
+    ) => {
+      if (!enable) {
+        return;
+      }
+
+      if (event.target instanceof HTMLInputElement) {
+        return;
+      }
+
+      clearMobileLongPressTimer();
+      openSegmentsModal(assignment, day, displayLabel);
+    },
+    [clearMobileLongPressTimer, openSegmentsModal]
   );
 
   const resolveCompanyLabel = useCallback(
@@ -4937,41 +5161,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               ? "border-amber-300 focus:ring-amber-400"
                               : "";
 
-                            const handleLongPressStart = () => {
-                              if (!isCompactLayout || typeof window === "undefined") {
-                                return;
-                              }
-                              clearMobileLongPressTimer();
-                              longPressTimerRef.current = window.setTimeout(() => {
-                                longPressTimerRef.current = null;
-                                openMobileCellActions({
-                                  assignment,
-                                  day,
-                                  displayLabel,
-                                  notes: filteredNotes,
-                                });
-                              }, LONG_PRESS_DURATION_MS);
-                            };
-
-                            const handleLongPressEnd = () => {
-                              clearMobileLongPressTimer();
-                            };
-
-                            const handleCellDoubleClick = (
-                              event: React.MouseEvent<HTMLDivElement>
-                            ) => {
-                              if (!isCompactLayout) {
-                                return;
-                              }
-
-                              if (event.target instanceof HTMLInputElement) {
-                                return;
-                              }
-
-                              clearMobileLongPressTimer();
-                              openSegmentsModal(assignment, day, displayLabel);
-                            };
-
                             return (
                               <td
                                 key={`${assignment.id}-${day.dateKey}`}
@@ -4981,73 +5170,23 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                     : ""
                                 }`}
                               >
-                                <div
-                                  className="flex h-full w-full items-center justify-center rounded-lg px-1 py-1 text-center"
-                                  onPointerDown={handleLongPressStart}
-                                  onPointerUp={handleLongPressEnd}
-                                  onPointerLeave={handleLongPressEnd}
-                                  onPointerCancel={handleLongPressEnd}
-                                  onDoubleClick={handleCellDoubleClick}
-                                >
-                                  <div className="flex items-center gap-1">
-                                    <div className="relative">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          openNotesModal(
-                                            assignment,
-                                            day,
-                                            displayLabel,
-                                            filteredNotes
-                                          )
-                                        }
-                                        className={`absolute inset-y-0 left-1.5 z-10 hidden items-center text-gray-300 transition hover:text-amber-600 focus:outline-none sm:flex ${
-                                          hasNotes ? "text-amber-500" : ""
-                                        }`}
-                                        aria-label="Ver notas del día"
-                                        tabIndex={-1}
-                                      >
-                                        <NotebookPen size={14} />
-                                      </button>
-                                      <Input
-                                        size="sm"
-                                        type="text"
-                                        inputMode="decimal"
-                                        value={inputValue}
-                                        onChange={(event) =>
-                                          handleHourChange(
-                                            assignment.id,
-                                            day.dateKey,
-                                            event.target.value
-                                          )
-                                        }
-                                        className={`w-24 text-center pr-3 pl-3 sm:w-20 sm:pr-9 sm:pl-7 ${highlightClass}`}
-                                        placeholder="0"
-                                        title="Mantén pulsado para ver notas o tramos en pantallas compactas"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          openSegmentsModal(
-                                            assignment,
-                                            day,
-                                            displayLabel
-                                          )
-                                        }
-                                        className={`absolute inset-y-0 right-2 hidden items-center text-gray-300 transition hover:text-blue-600 focus:outline-none sm:flex ${
-                                          hasSegments ? "text-blue-600" : ""
-                                        }`}
-                                        aria-label="Configurar tramos horarios"
-                                        tabIndex={-1}
-                                      >
-                                        <CalendarClock size={14} />
-                                      </button>
-                                    </div>
-                                    <span className="text-xs text-gray-400 dark:text-gray-500">
-                                      h
-                                    </span>
-                                  </div>
-                                </div>
+                                <HourEntryCell
+                                  assignment={assignment}
+                                  day={day}
+                                  displayLabel={displayLabel}
+                                  inputValue={inputValue}
+                                  hasNotes={hasNotes}
+                                  hasSegments={hasSegments}
+                                  highlightClass={highlightClass}
+                                  filteredNotes={filteredNotes}
+                                  onHourChange={handleHourChange}
+                                  onOpenNotes={openNotesModal}
+                                  onOpenSegments={openSegmentsModal}
+                                  onLongPressStart={handleCellLongPressStart}
+                                  onLongPressEnd={clearMobileLongPressTimer}
+                                  onCellDoubleClick={handleCellDoubleClick}
+                                  isCompactLayout={isCompactLayout}
+                                />
                               </td>
                             );
                           })}
@@ -5110,43 +5249,42 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         <Card className="overflow-visible">
           <CardHeader>
-            <div className="flex flex-col gap-1.5">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
-                  <Users
-                    size={20}
-                    className="mr-2 text-blue-600 dark:text-blue-400"
-                  />
-                  Selección de grupo
-                </h2>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                    Actualizado:{" "}
-                    {lastFetchTime
-                      ? lastFetchTime.toLocaleString("es-ES")
-                      : "Sin sincronizar"}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={refreshWorkers}
-                    disabled={isRefreshingWorkers || isLoadingWorkers}
-                    leftIcon={
-                      <RefreshCw
-                        size={16}
-                        className={isRefreshingWorkers ? "animate-spin" : ""}
-                      />
-                    }
-                  >
-                    Actualizar
-                  </Button>
+            <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+              <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white pr-28 sm:pr-0">
+                <Users
+                  size={20}
+                  className="mr-2 text-blue-600 dark:text-blue-400"
+                />
+                Selección de grupo
+              </h2>
+              <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+                <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
+                  Actualizado:{" "}
+                  {lastFetchTime
+                    ? lastFetchTime.toLocaleString("es-ES")
+                    : "Sin sincronizar"}
                 </div>
               </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={refreshWorkers}
+                disabled={isRefreshingWorkers || isLoadingWorkers}
+                leftIcon={
+                  <RefreshCw
+                    size={16}
+                    className={isRefreshingWorkers ? "animate-spin" : ""}
+                  />
+                }
+                className="absolute right-0 top-0 sm:static sm:ml-2"
+              >
+                Actualizar
+              </Button>
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-6">
-              <div className="w-full md:w-1/2 space-y-4">
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:gap-6">
+              <div className="w-full xl:w-1/2 space-y-4">
                 <div
                   className={
                     isLoadingGroupOptions
@@ -5197,7 +5335,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="w-full md:w-1/2 space-y-4">
+              <div className="w-full xl:w-1/2 space-y-4">
                 {companyFilterOptions.length > 0 && (
                   <div
                     className={
@@ -5315,8 +5453,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     onClick={() => shiftSelectedRange(-1)}
                     leftIcon={<ChevronLeft size={16} />}
                     aria-label="Rango anterior"
+                    className="px-2 sm:px-3"
                   >
-                    Anterior
+                    <span className="hidden sm:inline">Anterior</span>
                   </Button>
                   <DateRangePicker
                     value={{ from: selectedRange.start, to: selectedRange.end }}
@@ -5328,8 +5467,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     onClick={() => shiftSelectedRange(1)}
                     rightIcon={<ChevronRight size={16} />}
                     aria-label="Rango siguiente"
+                    className="px-2 sm:px-3"
                   >
-                    Siguiente
+                    <span className="hidden sm:inline">Siguiente</span>
                   </Button>
                 </div>
               </div>

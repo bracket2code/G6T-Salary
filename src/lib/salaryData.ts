@@ -420,6 +420,66 @@ export const fetchWorkersData = async ({
         ? lookedUpSecondary
         : undefined;
 
+    const parentIdValue =
+      pickString(
+        apiWorker?.parentId,
+        apiWorker?.parent,
+        apiWorker?.parentParameterId,
+        apiWorker?.parentParameter,
+        apiWorker?.parentParameter_id,
+        apiWorker?.parentParameterID,
+        apiWorker?.parentParameterGuid,
+        apiWorker?.parentGuid
+      ) ?? undefined;
+
+    const parentLabelValue =
+      pickString(
+        apiWorker?.parentName,
+        apiWorker?.parentLabel,
+        apiWorker?.parentDescription,
+        apiWorker?.parentTitle,
+        apiWorker?.parentParameterName,
+        apiWorker?.parentParameterLabel,
+        apiWorker?.parentParameterDescription
+      ) ?? undefined;
+
+    const categoryIdValue =
+      parentIdValue ??
+      (pickString(
+        apiWorker?.categoryId,
+        apiWorker?.category_id,
+        apiWorker?.categoryParameterId,
+        apiWorker?.parentCategoryId,
+        apiWorker?.categoryGuid
+      ) ?? undefined);
+
+    const categoryLabelValue =
+      parentLabelValue ??
+      (pickString(
+        apiWorker?.categoryName,
+        apiWorker?.category,
+        apiWorker?.categoria,
+        apiWorker?.categoryLabel
+      ) ?? undefined);
+
+    const subcategoryIdValue =
+      pickString(
+        apiWorker?.subcategoryId,
+        apiWorker?.subCategoryId,
+        apiWorker?.subcategory_id,
+        apiWorker?.subCategory_id,
+        apiWorker?.subcategoryGuid
+      ) ?? undefined;
+
+    const subcategoryLabelValue =
+      pickString(
+        apiWorker?.subcategoryName,
+        apiWorker?.subcategory,
+        apiWorker?.subCategory,
+        apiWorker?.subcategoria,
+        apiWorker?.subcategoryLabel
+      ) ?? undefined;
+
     const baseWorker: Worker = {
       id: workerId,
       name:
@@ -491,6 +551,67 @@ export const fetchWorkersData = async ({
           apiWorker?.startDate,
           apiWorker?.dateStart,
           apiWorker?.beginDate
+        ) ?? undefined,
+      dni:
+        pickString(
+          apiWorker?.dni,
+          apiWorker?.dniNumber,
+          apiWorker?.documentNumber,
+          apiWorker?.documento,
+          apiWorker?.document,
+          apiWorker?.nif,
+          apiWorker?.nie,
+          apiWorker?.cif
+        ) ?? undefined,
+      socialSecurity:
+        pickString(
+          apiWorker?.socialSecurity,
+          apiWorker?.socialSecurityNumber,
+          apiWorker?.seguridadSocial,
+          apiWorker?.ssn,
+          apiWorker?.nss,
+          apiWorker?.numSeguridadSocial
+        ) ?? undefined,
+      birthDate:
+        pickString(
+          apiWorker?.birthDate,
+          apiWorker?.dateBirth,
+          apiWorker?.fechaNacimiento,
+          apiWorker?.dob
+        ) ?? undefined,
+      address:
+        pickString(
+          apiWorker?.address,
+          apiWorker?.direccion,
+          apiWorker?.addressLine1,
+          apiWorker?.street,
+          apiWorker?.domicilio,
+          apiWorker?.address1
+        ) ?? undefined,
+      iban:
+        pickString(
+          apiWorker?.iban,
+          apiWorker?.ibanNumber,
+          apiWorker?.ibanProvider,
+          apiWorker?.bankAccount,
+          apiWorker?.accountNumber,
+          apiWorker?.ccc
+        ) ?? undefined,
+      category: categoryLabelValue,
+      categoryId: categoryIdValue,
+      subcategory: subcategoryLabelValue,
+      subcategoryId: subcategoryIdValue,
+      staffType:
+        pickString(
+          apiWorker?.staffType,
+          apiWorker?.personalType,
+          apiWorker?.personnelType,
+          apiWorker?.movementType,
+          apiWorker?.payrollType,
+          apiWorker?.salaryPeriod,
+          apiWorker?.tipoPersonal,
+          apiWorker?.tipo_personal,
+          apiWorker?.tipoDePersonal
         ) ?? undefined,
       companies: pickString(apiWorker?.companies, apiWorker?.companyList),
       companyNames: undefined,
@@ -1161,6 +1282,15 @@ export const fetchWorkerHoursSummary = async (
               return null;
             }
 
+            const descriptionValue =
+              typeof shift?.description === 'string'
+                ? shift.description.trim()
+                : undefined;
+            const observationsValue =
+              shift && typeof shift === 'object'
+                ? (shift.observations ?? shift.observation ?? undefined)
+                : undefined;
+
             return {
               id:
                 normalizeIdentifier(shift?.id) ??
@@ -1172,6 +1302,9 @@ export const fetchWorkerHoursSummary = async (
                 typeof shiftHours === 'number' && Number.isFinite(shiftHours)
                   ? shiftHours
                   : undefined,
+              description: descriptionValue && descriptionValue.length ? descriptionValue : undefined,
+              observations: observationsValue,
+              raw: shift,
             };
           })
           .filter((shift): shift is NonNullable<typeof shift> => Boolean(shift))
