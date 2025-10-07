@@ -2500,7 +2500,7 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
 
   return (
     <div
-      className="flex h-full w-full items-center justify-center rounded-lg px-1 py-1 text-center"
+      className="flex h-full w-full min-w-[65px] items-center justify-center rounded-lg px-1 py-1 text-center"
       onPointerDown={() =>
         onLongPressStart(enableCompactInteractions, {
           assignment,

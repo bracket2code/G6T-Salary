@@ -6,24 +6,39 @@ import { useSidebarStore } from '../../store/sidebarStore';
 import { Button } from '../ui/Button';
 
 const isMobile = () => window.innerWidth < 768;
+const isCompactWidth = () => window.innerWidth < 1200;
 
 export const Layout: React.FC = () => {
-  const { isOpen, toggle, setInitialState } = useSidebarStore();
+  const { isOpen, toggle, setInitialState, close } = useSidebarStore();
   const [clickCount, setClickCount] = React.useState(0);
   const [showClickProgress, setShowClickProgress] = React.useState(false);
   const [isReloading, setIsReloading] = React.useState(false);
   const clickTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  const sidebarWidth = isOpen ? 'w-64' : 'w-16';
+  const sidebarWidth = isMobile()
+    ? 'w-64'
+    : isCompactWidth()
+    ? (isOpen ? 'w-64' : 'w-16')
+    : isOpen
+    ? 'w-64'
+    : 'w-16';
 
   useEffect(() => {
     const handleResize = () => {
       setInitialState();
     };
 
+    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [setInitialState]);
+
+  useEffect(() => {
+    const width = window.innerWidth;
+    if (width < 1200 && width >= 768 && isOpen) {
+      close();
+    }
+  }, [isOpen, close]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
