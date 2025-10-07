@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { addDays, differenceInCalendarDays } from "date-fns";
 import {
   Save,
   ChevronDown,
@@ -46,18 +47,20 @@ import {
   WorkerSearchSelect,
 } from "../components/worker/GroupSelectors";
 import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
+import { DateRangePicker } from "../components/ui/DateRangePicker";
 
-const weekDays = [
-  { key: "monday", label: "Lunes", shortLabel: "Lun" },
-  { key: "tuesday", label: "Martes", shortLabel: "Mar" },
-  { key: "wednesday", label: "Miércoles", shortLabel: "Mié" },
-  { key: "thursday", label: "Jueves", shortLabel: "Jue" },
-  { key: "friday", label: "Viernes", shortLabel: "Vie" },
-  { key: "saturday", label: "Sábado", shortLabel: "Sáb" },
-  { key: "sunday", label: "Domingo", shortLabel: "Dom" },
-] as const;
+interface DayDescriptor {
+  date: Date;
+  dateKey: string;
+  label: string;
+  shortLabel: string;
+  dayOfMonth: number;
+}
 
-type WeekDayKey = (typeof weekDays)[number]["key"];
+interface DateInterval {
+  start: Date;
+  end: Date;
+}
 
 interface Assignment {
   id: string;
@@ -65,7 +68,7 @@ interface Assignment {
   workerName: string;
   companyId: string;
   companyName: string;
-  hours: Record<WeekDayKey, string>;
+  hours: Record<string, string>;
 }
 
 interface ControlScheduleSavePayload {
@@ -118,6 +121,206 @@ const trimToNull = (value?: string | null): string | null => {
   }
   const trimmed = String(value).trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const pickFirstString = (...values: Array<unknown>): string | null => {
+  for (const value of values) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+};
+
+const normalizeParameterGroups = (payload: unknown): unknown[][] => {
+  if (Array.isArray(payload)) {
+    return payload.map((group) => {
+      if (Array.isArray(group)) {
+        return group;
+      }
+      if (group === null || group === undefined) {
+        return [];
+      }
+      return [group];
+    });
+  }
+
+  if (payload && typeof payload === "object") {
+    const container = payload as Record<string, unknown>;
+    const numericEntries: Array<[number, unknown[]]> = [];
+    let sequentialIndex = 0;
+
+    Object.entries(container).forEach(([rawKey, rawValue]) => {
+      const match = rawKey.match(/(\d+)/);
+      const indexCandidate = match ? Number(match[1]) : Number(rawKey);
+      const group = Array.isArray(rawValue)
+        ? rawValue
+        : rawValue === null || rawValue === undefined
+        ? []
+        : [rawValue];
+
+      if (Number.isFinite(indexCandidate)) {
+        numericEntries.push([indexCandidate, group]);
+      } else {
+        numericEntries.push([sequentialIndex, group]);
+        sequentialIndex += 1;
+      }
+    });
+
+    if (!numericEntries.length) {
+      return [];
+    }
+
+    numericEntries.sort((a, b) => a[0] - b[0]);
+
+    const highestIndex = numericEntries[numericEntries.length - 1][0];
+    const result: unknown[][] = Array.from({ length: highestIndex + 1 }, () => []);
+
+    numericEntries.forEach(([index, group]) => {
+      result[index] = group;
+    });
+
+    return result;
+  }
+
+  return [];
+};
+
+const fetchParameterLabels = async (
+  apiUrl: string,
+  token: string,
+  ids: string[]
+): Promise<Record<string, string>> => {
+  const trimmedIds = Array.from(
+    new Set(
+      ids
+        .map((id) => trimToNull(id))
+        .filter((id): id is string => Boolean(id))
+    )
+  );
+
+  if (!trimmedIds.length) {
+    return {};
+  }
+
+  const params = new URLSearchParams();
+  trimmedIds.forEach((id, index) => {
+    params.append(`Ids[${index}]`, id);
+  });
+
+  const endpoint = buildApiEndpoint(
+    apiUrl,
+    `/Parameter/GetByIds?${params.toString()}`
+  );
+
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (response.status === 204 || response.status === 404) {
+    return {};
+  }
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}`);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    console.warn("No se pudo parsear la respuesta de Parameter/GetByIds", error);
+    return {};
+  }
+
+  const groups = normalizeParameterGroups(payload);
+  const labelMap = new Map<string, string>();
+
+  const registerLabel = (idValue: string | null, labelValue: string | null) => {
+    const normalizedId = trimToNull(idValue);
+    const normalizedLabel = trimToNull(labelValue);
+    if (!normalizedId || !normalizedLabel) {
+      return;
+    }
+    labelMap.set(normalizedId, normalizedLabel);
+    labelMap.set(normalizedId.toLowerCase(), normalizedLabel);
+    labelMap.set(normalizedId.toUpperCase(), normalizedLabel);
+  };
+
+  groups.forEach((group, index) => {
+    const idForGroup = trimmedIds[index] ?? null;
+    if (idForGroup) {
+      const labelFromGroup = group
+        .map((entry) => {
+          if (typeof entry === "string") {
+            return trimToNull(entry);
+          }
+          if (entry && typeof entry === "object") {
+            const record = entry as Record<string, unknown>;
+            return pickFirstString(
+              record?.name,
+              record?.label,
+              record?.description,
+              record?.title,
+              record?.parameterName,
+              record?.parameterLabel,
+              record?.value
+            );
+          }
+          return null;
+        })
+        .find((value): value is string => Boolean(value));
+
+      if (labelFromGroup) {
+        registerLabel(idForGroup, labelFromGroup);
+      }
+    }
+
+    group.forEach((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+
+      const record = entry as Record<string, unknown>;
+      const recordId = pickFirstString(
+        record?.id,
+        record?.parameterId,
+        record?.parameter_id,
+        record?.guid,
+        record?.value,
+        record?.code,
+        record?.parameterGuid
+      );
+
+      const recordLabel = pickFirstString(
+        record?.name,
+        record?.label,
+        record?.description,
+        record?.title,
+        record?.parameterName,
+        record?.parameterLabel,
+        record?.displayName
+      );
+
+      registerLabel(recordId, recordLabel);
+    });
+  });
+
+  const result: Record<string, string> = {};
+  labelMap.forEach((label, key) => {
+    result[key] = label;
+  });
+
+  return result;
 };
 
 const INACTIVE_SITUATION_TOKENS = new Set([
@@ -411,6 +614,91 @@ const buildWhatsAppLink = (phone: string) => {
   return digitsOnly ? `https://wa.me/${digitsOnly}` : null;
 };
 
+const parseNumericValue = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.replace(/[^0-9,.-]/g, "").replace(/,/g, ".");
+    if (!normalized) {
+      return undefined;
+    }
+
+    const parsed = Number(normalized);
+    if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+};
+
+const euroFormatter = new Intl.NumberFormat("es-ES", {
+  style: "currency",
+  currency: "EUR",
+});
+
+const formatActiveStatus = (
+  isActive?: boolean,
+  situation?: number | null
+): string | null => {
+  if (typeof isActive === "boolean") {
+    return isActive ? "Alta" : "Baja";
+  }
+  if (typeof situation === "number") {
+    return situation === 1 ? "Baja" : "Alta";
+  }
+  return null;
+};
+
+const formatPersonalType = (value?: string | null): string | null => {
+  const normalized = trimToNull(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const lowered = normalized.toLowerCase();
+  if (["1", "weekly", "week", "semanal", "semana"].includes(lowered)) {
+    return "Semanal";
+  }
+  if (["0", "monthly", "month", "mensual", "mes"].includes(lowered)) {
+    return "Mensual";
+  }
+  if (["2", "biweekly", "quincenal", "quincena", "bi-weekly"].includes(lowered)) {
+    return "Quincenal";
+  }
+
+  return normalized;
+};
+
+const formatSituationLabel = (value?: number | null | string): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value === 1 ? "Baja" : "Alta";
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (trimmed === "1") {
+      return "Baja";
+    }
+
+    if (trimmed === "0") {
+      return "Alta";
+    }
+  }
+
+  return null;
+};
+
 const copyTextToClipboard = async (text: string): Promise<boolean> => {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return false;
@@ -462,6 +750,8 @@ interface WorkerInfoModalProps {
 interface WorkerContractListProps {
   companyName: string;
   contracts: WorkerCompanyContract[];
+  assignmentCount?: number;
+  contractCount?: number;
 }
 
 const formatMaybeDate = (value?: string | null) => {
@@ -485,26 +775,56 @@ const formatMaybeDate = (value?: string | null) => {
 const WorkerContractList: React.FC<WorkerContractListProps> = ({
   companyName,
   contracts,
+  assignmentCount,
+  contractCount,
 }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/50">
-      <div className="mb-3 flex items-center justify-between">
-        <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          {companyName}
-        </h5>
-        <span className="text-xs text-gray-500 dark:text-gray-400">
-          {contracts.length === 1
-            ? "1 contrato"
-            : `${contracts.length} contratos`}
-        </span>
-      </div>
-      <div className="space-y-3">
-        {contracts.map((contract, index) => {
-          const label = trimToNull(contract.label) ?? `Contrato ${index + 1}`;
-          const typeText = trimToNull(contract.typeLabel ?? contract.position);
-          const descriptionText = trimToNull(contract.description);
-          const startDate = formatMaybeDate(contract.startDate);
-          const endDate = formatMaybeDate(contract.endDate);
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+        aria-expanded={isOpen}
+      >
+        <div className="flex flex-col gap-1 text-left">
+          <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            {companyName}
+          </h5>
+          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <span>
+              {(contractCount ?? contracts.length) === 1
+                ? "1 contrato"
+                : `${contractCount ?? contracts.length} contratos`}
+            </span>
+            {typeof assignmentCount === "number" && assignmentCount > 0 && (
+              <span className="inline-flex items-center rounded-full bg-blue-200 px-2 py-0.5 font-semibold text-blue-800 dark:bg-blue-800/60 dark:text-blue-100">
+                Asignaciones {assignmentCount}
+              </span>
+            )}
+          </div>
+        </div>
+        <ChevronDown
+          size={16}
+          className={`text-gray-400 transition-transform ${
+            isOpen ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {isOpen && (
+        <div className="mt-3 max-h-48 space-y-3 overflow-y-auto pr-1">
+          {contracts.length === 0 ? (
+            <div className="rounded-md bg-white p-3 text-xs text-gray-500 shadow-sm dark:bg-gray-900 dark:text-gray-400">
+              Este trabajador no tiene contratos guardados para esta empresa.
+            </div>
+          ) : (
+            contracts.map((contract, index) => {
+              const label = trimToNull(contract.label) ?? `Contrato ${index + 1}`;
+              const typeText = trimToNull(contract.typeLabel ?? contract.position);
+              const descriptionText = trimToNull(contract.description);
+              const startDate = formatMaybeDate(contract.startDate);
+              const endDate = formatMaybeDate(contract.endDate);
           const statusText = trimToNull(contract.status);
 
           return (
@@ -552,9 +872,98 @@ const WorkerContractList: React.FC<WorkerContractListProps> = ({
                 </p>
               )}
             </div>
-          );
-        })}
-      </div>
+            );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface WorkerCompaniesAndContractsProps {
+  companies: Array<{ id: string; name: string; count: number }>;
+  contractsByCompany: Record<string, WorkerCompanyContract[]>;
+  companyStats?: Record<string, WorkerCompanyStats>;
+}
+
+const WorkerCompaniesAndContracts: React.FC<WorkerCompaniesAndContractsProps> = ({
+  companies,
+  contractsByCompany,
+  companyStats,
+}) => {
+  const entries = useMemo(() => {
+    const merged = new Map<
+      string,
+      {
+        assignmentCount: number;
+        contractCount: number;
+        contracts: WorkerCompanyContract[];
+      }
+    >();
+
+    companies.forEach((company) => {
+      const stats = companyStats?.[company.name];
+      merged.set(company.name, {
+        assignmentCount:
+          stats?.assignmentCount ?? company.count ?? stats?.contractCount ?? 0,
+        contractCount:
+          stats?.contractCount ?? contractsByCompany[company.name]?.length ?? 0,
+        contracts: contractsByCompany[company.name] ?? [],
+      });
+    });
+
+    Object.entries(contractsByCompany ?? {}).forEach(([companyName, contracts]) => {
+      const existing = merged.get(companyName);
+      if (existing) {
+        existing.contracts = contracts ?? [];
+        if (typeof existing.contractCount !== "number") {
+          existing.contractCount = contracts?.length ?? 0;
+        } else {
+          existing.contractCount = contracts?.length ?? existing.contractCount;
+        }
+      } else {
+        const stats = companyStats?.[companyName];
+        merged.set(companyName, {
+          assignmentCount: stats?.assignmentCount ?? 0,
+          contractCount: stats?.contractCount ?? contracts?.length ?? 0,
+          contracts: contracts ?? [],
+        });
+      }
+    });
+
+    const result = Array.from(merged.entries()).map(([companyName, data]) => ({
+      companyName,
+      assignmentCount: data.assignmentCount,
+      contractCount: data.contractCount,
+      contracts: data.contracts,
+    }));
+
+    result.sort((a, b) =>
+      a.companyName.localeCompare(b.companyName, "es", { sensitivity: "base" })
+    );
+
+    return result;
+  }, [companies, contractsByCompany, companyStats]);
+
+  if (!entries.length) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+        Empresas y contratos
+      </h4>
+      {entries.map((entry) => (
+        <WorkerContractList
+          key={entry.companyName}
+          companyName={entry.companyName}
+          contracts={entry.contracts}
+          assignmentCount={entry.assignmentCount}
+          contractCount={entry.contractCount}
+        />
+      ))}
     </div>
   );
 };
@@ -580,6 +989,108 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
     ? buildWhatsAppLink(state.data.phone)
     : null;
   const emailHref = state.data?.email ? `mailto:${state.data.email}` : null;
+
+  const generalInfo = useMemo(() => {
+    if (!state.data) {
+      return [] as Array<{ label: string; value: string }>;
+    }
+
+    const items: Array<{ label: string; value: string }> = [];
+    const addItem = (
+      label: string,
+      value: string | number | null | undefined,
+      options: { fallback?: string; always?: boolean } = {}
+    ) => {
+      const { fallback = "No disponible", always = false } = options;
+
+      let normalized: string | null = null;
+      if (typeof value === "number") {
+        normalized = Number.isFinite(value) ? String(value) : null;
+      } else if (typeof value === "string") {
+        normalized = trimToNull(value);
+      } else if (value !== null && value !== undefined) {
+        normalized = trimToNull(String(value));
+      }
+
+      if (normalized) {
+        items.push({ label, value: normalized });
+        return;
+      }
+
+      if (always) {
+        items.push({ label, value: fallback });
+      }
+    };
+
+    const dniDisplay = state.data.dni ? state.data.dni.toUpperCase() : state.data.dni;
+    addItem("DNI", dniDisplay, { always: true });
+
+    addItem("Dirección", state.data.address, { always: true });
+
+    const ibanDisplay = state.data.iban
+      ? state.data.iban.toUpperCase()
+      : state.data.iban;
+    addItem("IBAN", ibanDisplay, { always: true });
+
+    const categoryDisplay = state.data.category ?? state.data.categoryId;
+    addItem("Categoría", categoryDisplay, { always: true });
+
+    const subcategoryDisplay =
+      state.data.subcategory ?? state.data.subcategoryId;
+    addItem("Subcategoría", subcategoryDisplay, { always: true });
+
+    const staffTypeDisplay =
+      formatPersonalType(state.data.staffType) ??
+      trimToNull(state.data.staffType);
+    addItem("Tipo de personal", staffTypeDisplay, { always: true });
+
+    const birthDateDisplay =
+      formatMaybeDate(state.data.birthDate) ?? state.data.birthDate;
+    addItem("Fecha de nacimiento", birthDateDisplay, { always: true });
+
+    addItem("Seguridad Social", state.data.socialSecurity, { always: true });
+
+    const statusText = formatActiveStatus(
+      state.data.isActive,
+      state.data.situation ?? null
+    );
+    const statusLabel =
+      statusText ??
+      formatSituationLabel(state.data.situation) ??
+      (state.data.situation !== undefined && state.data.situation !== null
+        ? `Código ${state.data.situation}`
+        : null);
+    addItem("Estado", statusLabel, { always: true });
+
+    addItem("Departamento", state.data.department);
+    addItem("Puesto", state.data.position);
+
+    if (state.data.contractType) {
+      const contractLabel =
+        state.data.contractType === "full_time"
+          ? "Tiempo completo"
+          : state.data.contractType === "part_time"
+          ? "Tiempo parcial"
+          : state.data.contractType === "freelance"
+          ? "Freelance"
+          : state.data.contractType;
+      addItem("Tipo de contrato", contractLabel);
+    }
+
+    const formattedStart =
+      formatMaybeDate(state.data.startDate) ?? state.data.startDate;
+    addItem("Inicio", formattedStart);
+
+    if (typeof state.data.baseSalary === "number") {
+      addItem("Salario base", euroFormatter.format(state.data.baseSalary));
+    }
+
+    if (typeof state.data.hourlyRate === "number") {
+      addItem("Tarifa hora", euroFormatter.format(state.data.hourlyRate));
+    }
+
+    return items;
+  }, [state.data]);
 
   useEffect(() => {
     if (!copyFeedback) {
@@ -632,16 +1143,27 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
               {state.data?.name ?? state.workerName}
             </h3>
-            {state.isLoading ? (
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                Cargando información...
-              </p>
-            ) : state.error ? (
-              <p className="mt-2 text-sm text-red-600 dark:text-red-400">
-                {state.error}
-              </p>
-            ) : (
-              <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            aria-label="Cerrar información de trabajador"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="mt-4 max-h-[65vh] overflow-y-auto space-y-4 pr-1">
+          {state.isLoading ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Cargando información del trabajador...
+            </p>
+          ) : state.error ? (
+            <p className="text-sm text-red-600 dark:text-red-400">{state.error}</p>
+          ) : (
+            <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
+              <div className="space-y-2">
                 <div>
                   <span className="font-medium text-gray-700 dark:text-gray-200">
                     Email:
@@ -711,37 +1233,33 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
                     </span>
                   )}
                 </div>
-                {state.data?.companies && state.data.companies.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="font-medium text-gray-700 dark:text-gray-200">
-                      Empresas asignadas:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {state.data.companies.map((company) => (
-                        <span
-                          key={company.id}
-                          className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"
-                        >
-                          {company.name}
-                          <span className="rounded-full bg-blue-200 px-1.5 text-[10px] text-blue-700 dark:bg-blue-800/70 dark:text-blue-100">
-                            {company.count}
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            aria-label="Cerrar información de trabajador"
-          >
-            <X size={16} />
-          </button>
+
+              {generalInfo.length > 0 && (
+                <div className="grid gap-2 text-xs sm:grid-cols-2">
+                  {generalInfo.map((item) => (
+                    <div
+                      key={`${item.label}-${item.value}`}
+                      className="text-gray-600 dark:text-gray-300"
+                    >
+                      <span className="font-medium text-gray-700 dark:text-gray-200">
+                        {item.label}:
+                      </span>{" "}
+                      <span>{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {state.data && !state.isLoading && !state.error && (
+            <WorkerCompaniesAndContracts
+              companies={state.data.companies ?? []}
+              contractsByCompany={state.data.contractsByCompany ?? {}}
+              companyStats={state.data.companyStats}
+            />
+          )}
         </div>
 
         <div className="mt-6 flex flex-wrap gap-3">
@@ -773,34 +1291,6 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
             WhatsApp
           </Button>
         </div>
-
-        {state.data?.contractsByCompany &&
-          Object.values(state.data.contractsByCompany).some(
-            (contracts) => contracts && contracts.length > 0
-          ) && (
-            <div className="mt-6 space-y-3">
-              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                Contratos asociados
-              </h4>
-              {(state.data.companies.length > 0
-                ? state.data.companies.map((company) => company.name)
-                : Object.keys(state.data.contractsByCompany)
-              ).map((companyName) => {
-                const contracts =
-                  state.data?.contractsByCompany?.[companyName] ?? [];
-                if (!contracts.length) {
-                  return null;
-                }
-                return (
-                  <WorkerContractList
-                    key={companyName}
-                    companyName={companyName}
-                    contracts={contracts}
-                  />
-                );
-              })}
-            </div>
-          )}
       </div>
     </div>
   );
@@ -818,7 +1308,7 @@ interface SegmentsModalTarget {
   assignmentId: string;
   workerName: string;
   companyName: string;
-  dayKey: WeekDayKey;
+  dateKey: string;
   dayLabel: string;
   existingEntries: DayScheduleEntry[];
 }
@@ -839,6 +1329,27 @@ interface WorkerInfoData {
   phone?: string;
   companies: Array<{ id: string; name: string; count: number }>;
   contractsByCompany: Record<string, WorkerCompanyContract[]>;
+  role?: Worker["role"];
+  situation?: number | null;
+  isActive?: boolean;
+  department?: string;
+  position?: string;
+  baseSalary?: number;
+  hourlyRate?: number;
+  contractType?: Worker["contractType"];
+  startDate?: string;
+  dni?: string;
+  socialSecurity?: string;
+  birthDate?: string;
+  address?: string;
+  iban?: string;
+  category?: string;
+  categoryId?: string;
+  subcategory?: string;
+  subcategoryId?: string;
+  staffType?: string;
+  companyStats?: Record<string, WorkerCompanyStats>;
+  rawPayload?: Record<string, unknown> | null;
 }
 
 interface WorkerInfoModalState {
@@ -850,11 +1361,71 @@ interface WorkerInfoModalState {
   data?: WorkerInfoData | null;
 }
 
+const resolveWorkerParameterLabels = async (
+  info: WorkerInfoData,
+  apiUrl: string,
+  token: string
+): Promise<WorkerInfoData> => {
+  const pending: Array<{
+    id: string;
+    assign: (target: WorkerInfoData, label: string) => void;
+  }> = [];
+
+  const normalizedCategoryId = trimToNull(info.categoryId);
+  if (normalizedCategoryId && !trimToNull(info.category)) {
+    pending.push({
+      id: normalizedCategoryId,
+      assign: (target, label) => {
+        target.category = label;
+      },
+    });
+  }
+
+  const normalizedSubcategoryId = trimToNull(info.subcategoryId);
+  if (normalizedSubcategoryId && !trimToNull(info.subcategory)) {
+    pending.push({
+      id: normalizedSubcategoryId,
+      assign: (target, label) => {
+        target.subcategory = label;
+      },
+    });
+  }
+
+  if (!pending.length) {
+    return info;
+  }
+
+  const lookupIds = Array.from(new Set(pending.map((item) => item.id)));
+
+  try {
+    const labelMap = await fetchParameterLabels(apiUrl, token, lookupIds);
+    if (!Object.keys(labelMap).length) {
+      return info;
+    }
+
+    const next = { ...info };
+    pending.forEach(({ id, assign }) => {
+      const resolvedLabel =
+        labelMap[id] ??
+        labelMap[id.toLowerCase()] ??
+        labelMap[id.toUpperCase()];
+      if (resolvedLabel) {
+        assign(next, resolvedLabel);
+      }
+    });
+
+    return next;
+  } catch (error) {
+    console.error("No se pudieron resolver etiquetas de parámetros", error);
+    return info;
+  }
+};
+
 interface GroupView {
   id: string;
   name: string;
   assignments: Assignment[];
-  totals: Record<WeekDayKey, number>;
+  totals: Record<string, number>;
 }
 
 interface WorkerWeeklyDayData {
@@ -946,15 +1517,7 @@ const toInputNumberString = (value: unknown): string | undefined => {
 
 const DOUBLE_CLICK_TIMEOUT = 400;
 
-const createEmptyHours = (): Record<WeekDayKey, string> => ({
-  monday: "",
-  tuesday: "",
-  wednesday: "",
-  thursday: "",
-  friday: "",
-  saturday: "",
-  sunday: "",
-});
+const createEmptyHours = (): Record<string, string> => ({});
 
 const initialAssignments: Assignment[] = [
   {
@@ -1267,26 +1830,23 @@ const parseHour = (value: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const createEmptyTotals = (): Record<WeekDayKey, number> => ({
-  monday: 0,
-  tuesday: 0,
-  wednesday: 0,
-  thursday: 0,
-  friday: 0,
-  saturday: 0,
-  sunday: 0,
-});
+const createEmptyTotals = (dateKeys: string[]): Record<string, number> => {
+  const totals: Record<string, number> = {};
+  dateKeys.forEach((key) => {
+    totals[key] = 0;
+  });
+  return totals;
+};
 
 interface AssignmentTotalsContext {
   workerWeekData: Record<string, WorkerWeeklyData>;
-  weekDateMap: Record<WeekDayKey, string>;
 }
 
 const getManualHourValue = (
   assignment: Assignment,
-  dayKey: WeekDayKey
+  dateKey: string
 ): number | null => {
-  const rawValue = assignment.hours[dayKey];
+  const rawValue = assignment.hours[dateKey];
   if (typeof rawValue !== "string") {
     return null;
   }
@@ -1301,14 +1861,9 @@ const getManualHourValue = (
 
 const getTrackedHourValue = (
   assignment: Assignment,
-  dayKey: WeekDayKey,
+  dateKey: string,
   context: AssignmentTotalsContext
 ): number | null => {
-  const dateKey = context.weekDateMap[dayKey];
-  if (!dateKey) {
-    return null;
-  }
-
   const dayData = context.workerWeekData[assignment.workerId]?.days?.[dateKey];
   if (!dayData) {
     return null;
@@ -1324,37 +1879,43 @@ const getTrackedHourValue = (
 
 const resolveAssignmentHourValue = (
   assignment: Assignment,
-  dayKey: WeekDayKey,
+  dateKey: string,
   context: AssignmentTotalsContext
 ): number => {
-  const manual = getManualHourValue(assignment, dayKey);
+  const manual = getManualHourValue(assignment, dateKey);
   if (manual !== null) {
     return manual;
   }
 
-  const tracked = getTrackedHourValue(assignment, dayKey, context);
+  const tracked = getTrackedHourValue(assignment, dateKey, context);
   return tracked ?? 0;
 };
 
 const calculateRowTotal = (
   assignment: Assignment,
-  context: AssignmentTotalsContext
+  context: AssignmentTotalsContext,
+  dayDescriptors: DayDescriptor[]
 ): number =>
-  weekDays.reduce(
+  dayDescriptors.reduce(
     (total, day) =>
-      total + resolveAssignmentHourValue(assignment, day.key, context),
+      total + resolveAssignmentHourValue(assignment, day.dateKey, context),
     0
   );
 
 const calculateTotals = (
   items: Assignment[],
-  context: AssignmentTotalsContext
-): Record<WeekDayKey, number> => {
-  const totals = createEmptyTotals();
+  context: AssignmentTotalsContext,
+  dayDescriptors: DayDescriptor[]
+): Record<string, number> => {
+  const totals = createEmptyTotals(dayDescriptors.map((day) => day.dateKey));
 
   items.forEach((item) => {
-    weekDays.forEach((day) => {
-      totals[day.key] += resolveAssignmentHourValue(item, day.key, context);
+    dayDescriptors.forEach((day) => {
+      totals[day.dateKey] += resolveAssignmentHourValue(
+        item,
+        day.dateKey,
+        context
+      );
     });
   });
 
@@ -1557,10 +2118,64 @@ const getStartOfWeek = (date: Date): Date => {
   return start;
 };
 
-const addWeeks = (date: Date, weeks: number): Date => {
-  const next = new Date(date);
-  next.setDate(next.getDate() + weeks * 7);
-  return getStartOfWeek(next);
+const dayLabelFormatter = new Intl.DateTimeFormat("es-ES", {
+  weekday: "long",
+});
+
+const dayShortLabelFormatter = new Intl.DateTimeFormat("es-ES", {
+  weekday: "short",
+});
+
+const normalizeDayLabel = (value: string): string => {
+  const sanitized = value.replace(/\.$/, "");
+  if (!sanitized) {
+    return sanitized;
+  }
+  return sanitized.charAt(0).toUpperCase() + sanitized.slice(1);
+};
+
+const normalizeToStartOfDay = (date: Date): Date => {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const ensureRangeOrder = (start: Date, end: Date): { start: Date; end: Date } => {
+  if (start.getTime() <= end.getTime()) {
+    return { start, end };
+  }
+  return { start: end, end: start };
+};
+
+const buildDayDescriptors = (start: Date, end: Date): DayDescriptor[] => {
+  if (!(start instanceof Date) || !(end instanceof Date)) {
+    return [];
+  }
+
+  const normalizedStart = normalizeToStartOfDay(start);
+  const normalizedEnd = normalizeToStartOfDay(end);
+  const ordered = ensureRangeOrder(normalizedStart, normalizedEnd);
+
+  const descriptors: DayDescriptor[] = [];
+  let cursor = ordered.start;
+
+  while (cursor.getTime() <= ordered.end.getTime()) {
+    const current = new Date(cursor);
+    const label = normalizeDayLabel(dayLabelFormatter.format(current));
+    const shortLabel = normalizeDayLabel(dayShortLabelFormatter.format(current));
+
+    descriptors.push({
+      date: current,
+      dateKey: formatLocalDateKey(current),
+      label,
+      shortLabel,
+      dayOfMonth: current.getDate(),
+    });
+
+    cursor = addDays(cursor, 1);
+  }
+
+  return descriptors;
 };
 
 const weekRangeFormatter = new Intl.DateTimeFormat("es-ES", {
@@ -1569,13 +2184,18 @@ const weekRangeFormatter = new Intl.DateTimeFormat("es-ES", {
   year: "numeric",
 });
 
-const formatWeekRange = (start: Date): string => {
-  const startDate = new Date(start);
-  const endDate = new Date(start);
-  endDate.setDate(endDate.getDate() + 6);
+const formatDateRange = (start: Date, end: Date): string => {
+  const normalized = ensureRangeOrder(
+    normalizeToStartOfDay(start),
+    normalizeToStartOfDay(end)
+  );
 
-  const startLabel = weekRangeFormatter.format(startDate);
-  const endLabel = weekRangeFormatter.format(endDate);
+  const startLabel = weekRangeFormatter.format(normalized.start);
+  const endLabel = weekRangeFormatter.format(normalized.end);
+
+  if (startLabel === endLabel) {
+    return startLabel;
+  }
 
   return `${startLabel} - ${endLabel}`;
 };
@@ -1621,6 +2241,138 @@ const extractObservationText = (raw: unknown): string | undefined => {
   }
 
   return undefined;
+};
+
+const extractShiftDescription = (
+  shift: unknown,
+  fallback?: string
+): string | undefined => {
+  const observationText = extractObservationText(shift);
+  if (observationText) {
+    return observationText;
+  }
+
+  if (
+    shift &&
+    typeof shift === "object" &&
+    typeof (shift as { description?: unknown }).description === "string"
+  ) {
+    const directDescription = (shift as { description: string }).description.trim();
+    if (directDescription.length > 0) {
+      return directDescription;
+    }
+  }
+
+  if (typeof fallback === "string") {
+    const trimmedFallback = fallback.trim();
+    if (trimmedFallback.length > 0) {
+      return trimmedFallback;
+    }
+  }
+
+  return undefined;
+};
+
+const MOBILE_BREAKPOINT_QUERY = "(max-width: 640px)";
+const LONG_PRESS_DURATION_MS = 500;
+
+const useIsCompactLayout = (): boolean => {
+  const [isCompact, setIsCompact] = useState<boolean>(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQueryList = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsCompact(event.matches);
+    };
+
+    setIsCompact(mediaQueryList.matches);
+
+    if (typeof mediaQueryList.addEventListener === "function") {
+      mediaQueryList.addEventListener("change", handleChange);
+      return () => mediaQueryList.removeEventListener("change", handleChange);
+    }
+
+    mediaQueryList.addListener(handleChange);
+    return () => mediaQueryList.removeListener(handleChange);
+  }, []);
+
+  return isCompact;
+};
+
+interface MobileCellActionsTarget {
+  assignment: Assignment;
+  day: DayDescriptor;
+  displayLabel: string;
+  notes: DayNoteEntry[];
+}
+
+interface MobileCellActionsSheetProps {
+  target: MobileCellActionsTarget | null;
+  onClose: () => void;
+  onSelectNotes: (target: MobileCellActionsTarget) => void;
+  onSelectSegments: (target: MobileCellActionsTarget) => void;
+}
+
+const MobileCellActionsSheet: React.FC<MobileCellActionsSheetProps> = ({
+  target,
+  onClose,
+  onSelectNotes,
+  onSelectSegments,
+}) => {
+  if (!target) {
+    return null;
+  }
+
+  const { assignment, displayLabel } = target;
+
+  return (
+    <div className="fixed inset-0 z-[108] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl dark:bg-gray-900">
+        <div className="space-y-1">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+            Acciones rápidas
+          </h3>
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+            {assignment.workerName}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">{displayLabel}</p>
+        </div>
+        <div className="mt-5 space-y-2">
+          <Button
+            variant="secondary"
+            fullWidth
+            onClick={() => onSelectNotes(target)}
+            leftIcon={<NotebookPen size={16} />}
+          >
+            Ver notas del día
+          </Button>
+          <Button
+            variant="secondary"
+            fullWidth
+            onClick={() => onSelectSegments(target)}
+            leftIcon={<CalendarClock size={16} />}
+          >
+            Gestionar tramos horarios
+          </Button>
+          <Button variant="ghost" fullWidth onClick={onClose}>
+            Cancelar
+          </Button>
+        </div>
+        <p className="mt-4 text-center text-xs text-gray-400 dark:text-gray-500">
+          Mantén pulsada la celda para abrir este menú en pantallas compactas.
+        </p>
+      </div>
+    </div>
+  );
 };
 
 const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
@@ -1684,6 +2436,9 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
                     (shift as Record<string, unknown> | undefined)?.workedHours
                 ) ?? entryTotal;
 
+              const shiftDescription =
+                extractShiftDescription(shift, observationText) ?? "";
+
               return {
                 id:
                   shift.id ??
@@ -1693,7 +2448,7 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
                 start,
                 end,
                 total: shiftTotal ?? "",
-                description: observationText,
+                description: shiftDescription,
               } satisfies HourSegment;
             })
             .filter((segment): segment is HourSegment => Boolean(segment));
@@ -1828,15 +2583,20 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
         onClick={onClose}
         role="presentation"
       />
-      <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl dark:bg-gray-900">
-        <div className="flex flex-col gap-1 border-b border-gray-200 p-4 sm:p-5 dark:border-gray-700">
+      <div className="relative z-10 flex w-full max-h-[90vh] max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-xl dark:bg-gray-900">
+        <div className="flex flex-col gap-2 border-b border-gray-200 p-4 sm:p-5 dark:border-gray-700">
+          <div className="flex items-center justify-center">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              {dayLabel}
+            </h2>
+          </div>
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Tramos horarios
+                {companyName}
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                {workerName} · {dayLabel} · {companyName}
+                {workerName}
               </p>
             </div>
             <button
@@ -1849,7 +2609,7 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
           </div>
         </div>
 
-        <div className="space-y-4 p-4 sm:p-6">
+        <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
           <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-500/30 dark:bg-blue-900/20 dark:text-blue-100">
             Configura los tramos horarios para sumar las horas automáticamente
             en la celda seleccionada.
@@ -2042,18 +2802,51 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const companyLastClickRef = useRef<number | null>(null);
   const workerLastClickRef = useRef<number | null>(null);
   const [segmentsByAssignment, setSegmentsByAssignment] = useState<
-    Record<string, Record<WeekDayKey, HourSegment[]>>
+    Record<string, Record<string, HourSegment[]>>
   >({});
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [segmentModalTarget, setSegmentModalTarget] =
     useState<SegmentsModalTarget | null>(null);
   const [notesModalTarget, setNotesModalTarget] =
     useState<NotesModalTarget | null>(null);
-  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
-    getStartOfWeek(new Date())
-  );
+  const [selectedRange, setSelectedRange] = useState<DateInterval>(() => {
+    const start = getStartOfWeek(new Date());
+    const end = addDays(start, 6);
+    return { start, end };
+  });
   const [workerInfoModal, setWorkerInfoModal] =
     useState<WorkerInfoModalState | null>(null);
+  const isCompactLayout = useIsCompactLayout();
+  const longPressTimerRef = useRef<number | null>(null);
+  const [mobileCellActions, setMobileCellActions] =
+    useState<MobileCellActionsTarget | null>(null);
+
+  const clearMobileLongPressTimer = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      longPressTimerRef.current !== null
+    ) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const openMobileCellActions = useCallback(
+    (payload: MobileCellActionsTarget) => {
+      setMobileCellActions(payload);
+    },
+    []
+  );
+
+  const closeMobileCellActions = useCallback(() => {
+    setMobileCellActions(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearMobileLongPressTimer();
+    };
+  }, [clearMobileLongPressTimer]);
 
   const allowedWorkersFromGroups = useMemo<Set<string> | null>(() => {
     if (!selectedGroupIds.length || selectedGroupIds.includes("all")) {
@@ -2383,48 +3176,19 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     });
   }, [companyFilterOptions]);
 
-  const weekInfo = useMemo(() => {
-    const monday = new Date(currentWeekStart);
-    const dates: Record<WeekDayKey, string> = {
-      monday: "",
-      tuesday: "",
-      wednesday: "",
-      thursday: "",
-      friday: "",
-      saturday: "",
-      sunday: "",
-    };
-    const daysOfMonth: Record<WeekDayKey, number> = {
-      monday: 0,
-      tuesday: 0,
-      wednesday: 0,
-      thursday: 0,
-      friday: 0,
-      saturday: 0,
-      sunday: 0,
-    };
+  const visibleDays = useMemo(
+    () => buildDayDescriptors(selectedRange.start, selectedRange.end),
+    [selectedRange]
+  );
 
-    weekDays.forEach((day, index) => {
-      const current = new Date(monday);
-      current.setDate(monday.getDate() + index);
-      dates[day.key] = formatLocalDateKey(current);
-      daysOfMonth[day.key] = current.getDate();
-    });
-
-    return { dates, daysOfMonth };
-  }, [currentWeekStart]);
-
-  const weekDateMap = weekInfo.dates;
-  const weekDayNumbers = weekInfo.daysOfMonth;
-
-  const weekRangeLabel = useMemo(
-    () => formatWeekRange(currentWeekStart),
-    [currentWeekStart]
+  const rangeLabel = useMemo(
+    () => formatDateRange(selectedRange.start, selectedRange.end),
+    [selectedRange]
   );
 
   const totalsContext = useMemo(
-    () => ({ workerWeekData, weekDateMap }),
-    [workerWeekData, weekDateMap]
+    () => ({ workerWeekData }),
+    [workerWeekData]
   );
 
   useEffect(() => {
@@ -2449,18 +3213,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return;
     }
 
-    const start = new Date(currentWeekStart);
-    const fromDate = new Date(
-      start.getFullYear(),
-      start.getMonth(),
-      start.getDate(),
-      0,
-      0,
-      0,
-      0
-    );
-    const toDate = new Date(fromDate);
-    toDate.setDate(toDate.getDate() + 6);
+    const fromDate = normalizeToStartOfDay(selectedRange.start);
+    const toDate = normalizeToStartOfDay(selectedRange.end);
     toDate.setHours(23, 59, 59, 999);
 
     let isCancelled = false;
@@ -2532,18 +3286,47 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   }, [
     apiUrl,
     companyLookupMap,
-    currentWeekStart,
     externalJwt,
     requestedWorkerIds,
+    selectedRange,
     visibleWorkerIdsKey,
     workerNameById,
   ]);
 
-  const handleWeekChange = useCallback((step: number) => {
-    setCurrentWeekStart((previous) => addWeeks(previous, step));
+  const shiftSelectedRange = useCallback((step: number) => {
+    if (!Number.isFinite(step) || step === 0) {
+      return;
+    }
+
+    setSelectedRange((previous) => {
+      const length = Math.max(
+        differenceInCalendarDays(previous.end, previous.start) + 1,
+        1
+      );
+      const delta = step * length;
+      const nextStart = normalizeToStartOfDay(addDays(previous.start, delta));
+      const nextEnd = normalizeToStartOfDay(addDays(previous.end, delta));
+
+      return {
+        start: nextStart,
+        end: nextEnd,
+      };
+    });
   }, []);
 
+  const handleRangeSelect = useCallback(
+    (range: { from: Date; to: Date }) => {
+      const ordered = ensureRangeOrder(
+        normalizeToStartOfDay(range.from),
+        normalizeToStartOfDay(range.to)
+      );
+      setSelectedRange({ start: ordered.start, end: ordered.end });
+    },
+    []
+  );
+
   const companyGroups = useMemo<GroupView[]>(() => {
+    const dayKeys = visibleDays.map((day) => day.dateKey);
     const groups = new Map<string, GroupView>();
 
     visibleAssignments.forEach((assignment) => {
@@ -2552,7 +3335,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           id: assignment.companyId,
           name: assignment.companyName,
           assignments: [],
-          totals: createEmptyTotals(),
+          totals: createEmptyTotals(dayKeys),
         });
       }
 
@@ -2573,15 +3356,16 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         return {
           ...group,
           assignments: sortedAssignments,
-          totals: calculateTotals(sortedAssignments, totalsContext),
+          totals: calculateTotals(sortedAssignments, totalsContext, visibleDays),
         };
       })
       .sort((a, b) =>
         a.name.localeCompare(b.name, "es", { sensitivity: "base" })
       );
-  }, [totalsContext, visibleAssignments]);
+  }, [totalsContext, visibleAssignments, visibleDays]);
 
   const workerGroups = useMemo<GroupView[]>(() => {
+    const dayKeys = visibleDays.map((day) => day.dateKey);
     const groups = new Map<string, GroupView>();
 
     visibleAssignments.forEach((assignment) => {
@@ -2590,7 +3374,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           id: assignment.workerId,
           name: assignment.workerName,
           assignments: [],
-          totals: createEmptyTotals(),
+          totals: createEmptyTotals(dayKeys),
         });
       }
 
@@ -2611,13 +3395,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         return {
           ...group,
           assignments: sortedAssignments,
-          totals: calculateTotals(sortedAssignments, totalsContext),
+          totals: calculateTotals(sortedAssignments, totalsContext, visibleDays),
         };
       })
       .sort((a, b) =>
         a.name.localeCompare(b.name, "es", { sensitivity: "base" })
       );
-  }, [totalsContext, visibleAssignments]);
+  }, [totalsContext, visibleAssignments, visibleDays]);
 
   const currentGroups = viewMode === "company" ? companyGroups : workerGroups;
 
@@ -2651,7 +3435,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   }, [companyGroupsCollapsed, currentGroups, viewMode, workerGroupsCollapsed]);
 
   const handleHourChange = useCallback(
-    (assignmentId: string, dayKey: WeekDayKey, value: string) => {
+    (assignmentId: string, dateKey: string, value: string) => {
       setAssignments((prev) =>
         prev.map((assignment) =>
           assignment.id === assignmentId
@@ -2659,7 +3443,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 ...assignment,
                 hours: {
                   ...assignment.hours,
-                  [dayKey]: value,
+                  [dateKey]: value,
                 },
               }
             : assignment
@@ -2670,8 +3454,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   );
 
   const openSegmentsModal = useCallback(
-    (assignment: Assignment, dayKey: WeekDayKey, dayLabel: string) => {
-      const dateKey = weekDateMap[dayKey];
+    (assignment: Assignment, day: DayDescriptor, dayLabel: string) => {
+      const dateKey = day.dateKey;
       const dayData = workerWeekData[assignment.workerId]?.days?.[dateKey];
       const existingEntries = resolveEntriesForAssignment(dayData, assignment);
 
@@ -2679,12 +3463,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         assignmentId: assignment.id,
         workerName: assignment.workerName,
         companyName: assignment.companyName,
-        dayKey,
+        dateKey,
         dayLabel,
         existingEntries,
       });
     },
-    [weekDateMap, workerWeekData]
+    [workerWeekData]
   );
 
   const closeSegmentsModal = useCallback(() => {
@@ -2694,12 +3478,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const openNotesModal = useCallback(
     (
       assignment: Assignment,
-      dayKey: WeekDayKey,
+      day: DayDescriptor,
       dayLabel: string,
-      notes: DayNoteEntry[],
-      dateKey: string
+      notes: DayNoteEntry[]
     ) => {
-      const humanReadableDate = dateKey ? formatDate(dateKey) : undefined;
+      const humanReadableDate = day.dateKey ? formatDate(day.dateKey) : undefined;
 
       setNotesModalTarget({
         workerName: assignment.workerName,
@@ -2715,6 +3498,27 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const closeNotesModal = useCallback(() => {
     setNotesModalTarget(null);
   }, []);
+
+  const handleMobileNotesSelection = useCallback(
+    (target: MobileCellActionsTarget) => {
+      closeMobileCellActions();
+      openNotesModal(
+        target.assignment,
+        target.day,
+        target.displayLabel,
+        target.notes
+      );
+    },
+    [closeMobileCellActions, openNotesModal]
+  );
+
+  const handleMobileSegmentsSelection = useCallback(
+    (target: MobileCellActionsTarget) => {
+      closeMobileCellActions();
+      openSegmentsModal(target.assignment, target.day, target.displayLabel);
+    },
+    [closeMobileCellActions, openSegmentsModal]
+  );
 
   const resolveCompanyLabel = useCallback(
     (candidateId?: string | null) => {
@@ -2833,9 +3637,43 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         phone: normalizedPhone ?? undefined,
         companies,
         contractsByCompany,
+        role: worker.role,
+        situation: worker.situation ?? null,
+        isActive: worker.isActive,
+        department: trimToNull(worker.department) ?? undefined,
+        position: trimToNull(worker.position) ?? undefined,
+        baseSalary:
+          typeof worker.baseSalary === "number" ? worker.baseSalary : undefined,
+        hourlyRate:
+          typeof worker.hourlyRate === "number" ? worker.hourlyRate : undefined,
+        contractType: worker.contractType,
+        startDate: trimToNull(worker.startDate) ?? undefined,
+        dni: trimToNull(worker.dni) ?? undefined,
+        socialSecurity: trimToNull(worker.socialSecurity) ?? undefined,
+        birthDate: trimToNull(worker.birthDate) ?? undefined,
+        address: trimToNull(worker.address) ?? undefined,
+        iban: trimToNull(worker.iban) ?? undefined,
+        category: trimToNull(worker.category) ?? undefined,
+        categoryId: trimToNull(worker.categoryId) ?? undefined,
+        subcategory: trimToNull(worker.subcategory) ?? undefined,
+        subcategoryId: trimToNull(worker.subcategoryId) ?? undefined,
+        staffType: trimToNull(worker.staffType) ?? undefined,
+        companyStats: worker.companyStats,
+        rawPayload: null,
       };
     },
     []
+  );
+
+  const enrichWorkerInfoData = useCallback(
+    async (info: WorkerInfoData): Promise<WorkerInfoData> => {
+      if (!apiUrl || !externalJwt) {
+        return info;
+      }
+
+      return resolveWorkerParameterLabels(info, apiUrl, externalJwt);
+    },
+    [apiUrl, externalJwt]
   );
 
   const openWorkerInfoModal = useCallback(
@@ -2846,7 +3684,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       );
 
       if (existingWorker) {
-        const info = buildWorkerInfoFromWorker(existingWorker);
+        const baseInfo = buildWorkerInfoFromWorker(existingWorker);
+        const info = await enrichWorkerInfoData(baseInfo);
         setWorkerInfoModal({
           workerId: existingWorker.id,
           workerName: existingWorker.name,
@@ -2919,6 +3758,206 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         const phone = trimToNull(
           payload?.phone ?? payload?.telefon ?? payload?.telefono
         );
+        const role = trimToNull(payload?.role ?? payload?.workerRole) as
+          | Worker["role"]
+          | undefined;
+        const situationValue = parseNumericValue(
+          payload?.situation ?? payload?.workerSituation ?? payload?.status
+        );
+        const isActiveValue =
+          typeof payload?.isActive === "boolean"
+            ? payload.isActive
+            : situationValue !== undefined
+            ? situationValue !== 1
+            : undefined;
+        const department = trimToNull(
+          payload?.department ?? payload?.area ?? payload?.departmentName
+        );
+        const position = trimToNull(
+          payload?.position ?? payload?.jobTitle ?? payload?.roleName
+        );
+        const baseSalaryValue = parseNumericValue(
+          payload?.baseSalary ?? payload?.salary ?? payload?.amountBase
+        );
+        const hourlyRateValue = parseNumericValue(
+          payload?.hourlyRate ?? payload?.rate ?? payload?.amount ?? payload?.hoursPerWeek
+        );
+        const contractTypeValue = trimToNull(
+          payload?.contractType ?? payload?.employmentType ?? payload?.type
+        ) as Worker["contractType"] | undefined;
+        const startDateValue = trimToNull(
+          payload?.startDate ?? payload?.dateStart ?? payload?.beginDate
+        );
+        const dniValue = pickFirstString(
+          payload?.dni,
+          payload?.dniNumber,
+          payload?.documentNumber,
+          payload?.documento,
+          payload?.document,
+          payload?.nif,
+          payload?.nie,
+          payload?.taxId,
+          payload?.cif
+        );
+        const socialSecurityValue = pickFirstString(
+          payload?.socialSecurity,
+          payload?.socialSecurityNumber,
+          payload?.seguridadSocial,
+          payload?.ssn,
+          payload?.nss,
+          payload?.numSeguridadSocial
+        );
+        const birthDateValue = pickFirstString(
+          payload?.birthDate,
+          payload?.dateBirth,
+          payload?.fechaNacimiento,
+          payload?.bornDate,
+          payload?.dob
+        );
+        const addressValue = pickFirstString(
+          payload?.address,
+          payload?.direccion,
+          payload?.addressLine1,
+          payload?.street,
+          payload?.domicilio,
+          payload?.address1
+        );
+        const ibanValue = pickFirstString(
+          payload?.iban,
+          payload?.ibanNumber,
+          payload?.ibanProvider,
+          payload?.bankAccount,
+          payload?.accountNumber,
+          payload?.ccc
+        );
+        const parentIdValue = pickFirstString(
+          payload?.parentId,
+          payload?.parent,
+          payload?.parentParameterId,
+          payload?.parentParameter,
+          payload?.parentParameter_id,
+          payload?.parentParameterID,
+          payload?.parentGuid,
+          payload?.parentParameterGuid
+        );
+        const parentNameValue = pickFirstString(
+          payload?.parentName,
+          payload?.parentLabel,
+          payload?.parentDescription,
+          payload?.parentTitle,
+          payload?.parentParameterName,
+          payload?.parentParameterLabel,
+          payload?.parentParameterDescription
+        );
+        const categoryIdValue =
+          parentIdValue ??
+          pickFirstString(
+            payload?.categoryId,
+            payload?.category_id,
+            payload?.categoryParameterId,
+            payload?.parentCategoryId,
+            payload?.categoryGuid
+          );
+        const subcategoryIdValue = pickFirstString(
+          payload?.subcategoryId,
+          payload?.subCategoryId,
+          payload?.subcategory_id,
+          payload?.subCategory_id,
+          payload?.subcategoryGuid
+        );
+
+        const parameterRelations = Array.isArray(payload?.parameterRelations)
+          ? payload.parameterRelations
+          : [];
+
+        const labelCandidateIds = new Set<string>();
+
+        const registerLabelCandidate = (value?: string | null) => {
+          const normalized = trimToNull(value);
+          if (normalized) {
+            labelCandidateIds.add(normalized);
+          }
+        };
+
+        registerLabelCandidate(categoryIdValue);
+        registerLabelCandidate(subcategoryIdValue);
+
+        parameterRelations.forEach((relation: any) => {
+          const relationIdValue = pickFirstString(
+            relation?.parameterRelationId,
+            relation?.parameterRelationID,
+            relation?.relationId,
+            relation?.id
+          );
+          const relationCompanyIdValue = pickFirstString(
+            relation?.companyId,
+            relation?.company_id,
+            relation?.companyIdContract
+          );
+          registerLabelCandidate(relationIdValue);
+          registerLabelCandidate(relationCompanyIdValue);
+        });
+
+        let parameterLabelMap: Record<string, string> = {};
+        if (labelCandidateIds.size > 0) {
+          try {
+            parameterLabelMap = await fetchParameterLabels(
+              apiUrl,
+              externalJwt,
+              Array.from(labelCandidateIds)
+            );
+          } catch (labelError) {
+            console.warn(
+              "No se pudieron obtener etiquetas de parámetros",
+              labelError
+            );
+          }
+        }
+
+        const resolveParameterLabel = (value?: string | null) => {
+          const normalized = trimToNull(value);
+          if (!normalized) {
+            return null;
+          }
+          return (
+            parameterLabelMap[normalized] ??
+            parameterLabelMap[normalized.toLowerCase()] ??
+            parameterLabelMap[normalized.toUpperCase()] ??
+            null
+          );
+        };
+
+        const categoryName =
+          trimToNull(parentNameValue) ??
+          resolveParameterLabel(categoryIdValue) ??
+          pickFirstString(
+            payload?.categoryName,
+            payload?.category,
+            payload?.categoria,
+            payload?.categoryLabel
+          );
+
+        const subcategoryName =
+          resolveParameterLabel(subcategoryIdValue) ??
+          pickFirstString(
+            payload?.subcategoryName,
+            payload?.subcategory,
+            payload?.subCategory,
+            payload?.subcategoria,
+            payload?.subcategoryLabel
+          );
+
+        const staffTypeValue = pickFirstString(
+          payload?.staffType,
+          payload?.personalType,
+          payload?.personnelType,
+          payload?.movementType,
+          payload?.payrollType,
+          payload?.salaryPeriod,
+          payload?.tipoPersonal,
+          payload?.tipo_personal,
+          payload?.tipoDePersonal
+        );
 
         const companyAggregates = new Map<
           string,
@@ -2926,31 +3965,57 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         >();
         const contractsByCompany: Record<string, WorkerCompanyContract[]> = {};
 
-        if (Array.isArray(payload?.parameterRelations)) {
-          payload.parameterRelations.forEach((relation: any, index: number) => {
-            const relationId = trimToNull(relation?.parameterRelationId);
-            const normalizedId = normalizeKeyPart(
-              relationId ?? relation?.parameterRelationID
+        if (parameterRelations.length > 0) {
+          parameterRelations.forEach((relation: any, index: number) => {
+            const relationIdValue = pickFirstString(
+              relation?.parameterRelationId,
+              relation?.parameterRelationID,
+              relation?.relationId,
+              relation?.id
+            );
+            const relationCompanyIdValue = pickFirstString(
+              relation?.companyId,
+              relation?.company_id,
+              relation?.companyIdContract
             );
 
+            const normalizedRelationId = normalizeKeyPart(relationIdValue);
+            const normalizedCompanyId = normalizeKeyPart(relationCompanyIdValue);
+
+            const lookupLabel =
+              resolveParameterLabel(relationIdValue) ??
+              resolveParameterLabel(relationCompanyIdValue);
+
             const resolvedName =
-              resolveCompanyLabel(normalizedId) ??
-              resolveCompanyLabel(relationId) ??
+              lookupLabel ??
+              resolveCompanyLabel(normalizedRelationId) ??
+              resolveCompanyLabel(relationIdValue) ??
               trimToNull(relation?.companyName) ??
               trimToNull(relation?.parameterRelationName) ??
-              normalizedId ??
+              trimToNull(relation?.name) ??
+              normalizedRelationId ??
+              normalizedCompanyId ??
               `Empresa ${index + 1}`;
 
             const aggregateKey =
-              normalizedId ?? createGroupId(resolvedName ?? "empresa");
+              normalizedRelationId ??
+              normalizedCompanyId ??
+              createGroupId(resolvedName ?? `empresa-${index + 1}`);
+            const displayName = resolvedName ?? aggregateKey;
+
             const existingAggregate = companyAggregates.get(aggregateKey);
+            const nextCount = (existingAggregate?.count ?? 0) + 1;
+
             if (existingAggregate) {
-              existingAggregate.count += 1;
+              existingAggregate.count = nextCount;
+              if (displayName && existingAggregate.name !== displayName) {
+                existingAggregate.name = displayName;
+              }
             } else {
               companyAggregates.set(aggregateKey, {
                 id: aggregateKey,
-                name: resolvedName ?? aggregateKey,
-                count: 1,
+                name: displayName,
+                count: nextCount,
               });
             }
 
@@ -2958,7 +4023,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             const labelCandidate =
               trimToNull(relation?.contractName) ??
               trimToNull(relation?.name) ??
-              `Relación ${existingAggregate ? existingAggregate.count : 1}`;
+              `Relación ${nextCount}`;
 
             const descriptionCandidate = trimToNull(
               relation?.description ??
@@ -2981,7 +4046,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             const contractEntry: WorkerCompanyContract = {
               id:
                 trimToNull(relation?.id) ??
-                normalizedId ??
+                normalizedRelationId ??
                 `${aggregateKey}-${index}`,
               hasContract,
               relationType: Number.isFinite(Number(relation?.type))
@@ -2997,8 +4062,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 typeof relation?.amount === "number"
                   ? relation.amount
                   : undefined,
-              companyId: trimToNull(relation?.companyId) ?? undefined,
-              companyName: resolvedName ?? undefined,
+              companyId:
+                trimToNull(relationCompanyIdValue) ??
+                normalizedRelationId ??
+                undefined,
+              companyName: displayName,
               label: labelCandidate ?? undefined,
               description: descriptionCandidate ?? undefined,
               startDate: startDate ?? undefined,
@@ -3009,16 +4077,65 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               details: undefined,
             };
 
-            const bucket =
-              contractsByCompany[resolvedName ?? aggregateKey] ?? [];
+            const bucketKey = displayName;
+            const bucket = contractsByCompany[bucketKey] ?? [];
             bucket.push(contractEntry);
-            contractsByCompany[resolvedName ?? aggregateKey] = bucket;
+            contractsByCompany[bucketKey] = bucket;
+            if (bucketKey !== aggregateKey) {
+              contractsByCompany[aggregateKey] = bucket;
+            }
           });
         }
 
         const companies = Array.from(companyAggregates.values()).sort((a, b) =>
           a.name.localeCompare(b.name, "es", { sensitivity: "base" })
         );
+
+        const companyStatsFromApi: Record<string, WorkerCompanyStats> = {};
+        companies.forEach((company) => {
+          const contractList =
+            contractsByCompany[company.name] ??
+            contractsByCompany[company.id] ??
+            [];
+          companyStatsFromApi[company.name] = {
+            companyId: company.id,
+            contractCount: contractList.length,
+            assignmentCount: company.count,
+          };
+        });
+
+        const infoData: WorkerInfoData = {
+          id: trimToNull(payload?.id ?? workerId) ?? workerId,
+          name: trimToNull(payload?.name ?? workerName) ?? workerName,
+          email: email ?? undefined,
+          secondaryEmail: secondaryEmail ?? undefined,
+          phone: phone ?? undefined,
+          companies,
+          contractsByCompany,
+          role,
+          situation: situationValue ?? null,
+          isActive: isActiveValue,
+          department: department ?? undefined,
+          position: position ?? undefined,
+          baseSalary: baseSalaryValue,
+          hourlyRate: hourlyRateValue,
+          contractType: contractTypeValue,
+          startDate: startDateValue ?? undefined,
+          dni: trimToNull(dniValue?.toUpperCase() ?? null) ?? undefined,
+          socialSecurity: trimToNull(socialSecurityValue) ?? undefined,
+          birthDate: trimToNull(birthDateValue) ?? undefined,
+          address: trimToNull(addressValue) ?? undefined,
+          iban: trimToNull(ibanValue?.toUpperCase() ?? null) ?? undefined,
+          category: trimToNull(categoryName) ?? undefined,
+          categoryId: trimToNull(categoryIdValue) ?? undefined,
+          subcategory: trimToNull(subcategoryName) ?? undefined,
+          subcategoryId: trimToNull(subcategoryIdValue) ?? undefined,
+          staffType: trimToNull(staffTypeValue) ?? undefined,
+          companyStats: companyStatsFromApi,
+          rawPayload: payload ?? null,
+        };
+
+        const enrichedInfo = await enrichWorkerInfoData(infoData);
 
         setWorkerInfoModal((previous) => {
           if (!previous || previous.workerId !== workerId) {
@@ -3031,15 +4148,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             isOpen: true,
             isLoading: false,
             error: null,
-            data: {
-              id: trimToNull(payload?.id ?? workerId) ?? workerId,
-              name: trimToNull(payload?.name ?? workerName) ?? workerName,
-              email: email ?? undefined,
-              secondaryEmail: secondaryEmail ?? undefined,
-              phone: phone ?? undefined,
-              companies,
-              contractsByCompany,
-            },
+            data: enrichedInfo,
           };
         });
       } catch (error) {
@@ -3067,6 +4176,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       apiUrl,
       allWorkers,
       buildWorkerInfoFromWorker,
+      enrichWorkerInfoData,
       externalJwt,
       resolveCompanyLabel,
     ]
@@ -3108,7 +4218,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           ...(next[segmentModalTarget.assignmentId] ?? {}),
         };
 
-        assignmentSegments[segmentModalTarget.dayKey] = segments;
+        assignmentSegments[segmentModalTarget.dateKey] = segments;
         next[segmentModalTarget.assignmentId] = assignmentSegments;
 
         return next;
@@ -3120,7 +4230,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
       handleHourChange(
         segmentModalTarget.assignmentId,
-        segmentModalTarget.dayKey,
+        segmentModalTarget.dateKey,
         formattedValue
       );
 
@@ -3408,15 +4518,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     const payload: ControlScheduleSavePayload[] = [];
 
     visibleAssignments.forEach((assignment) => {
-      weekDays.forEach((day) => {
-        const dateKey = weekDateMap[day.key];
+      visibleDays.forEach((day) => {
+        const dateKey = day.dateKey;
         const parameterId = assignment.workerId.trim();
 
         if (!dateKey || !parameterId) {
           return;
         }
 
-        const raw = assignment.hours[day.key];
+        const raw = assignment.hours[dateKey];
         const trimmedValue = typeof raw === "string" ? raw.trim() : "";
         const hoursValue = trimmedValue ? parseHour(trimmedValue) : 0;
 
@@ -3431,8 +4541,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const assignmentSegments = segmentsByAssignment[assignment.id];
         const storedSegments = assignmentSegments
-          ? assignmentSegments[day.key]
+          ? assignmentSegments[dateKey]
           : undefined;
+
+        const primaryEntryRaw =
+          (primaryEntry as { raw?: unknown } | null | undefined)?.raw;
+        const primaryEntryObservation =
+          extractObservationText(primaryEntryRaw) ?? "";
 
         const fallbackSegments: HourSegment[] = primaryEntry?.workShifts
           ? primaryEntry.workShifts.map((shift) => ({
@@ -3440,7 +4555,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               start: shift.startTime ?? "",
               end: shift.endTime ?? "",
               total: shift.hours ? String(shift.hours) : "",
-              description: "",
+              description:
+                extractShiftDescription(shift, primaryEntryObservation) ?? "",
             }))
           : [];
 
@@ -3582,17 +4698,21 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     isSavingAll,
     segmentsByAssignment,
     visibleAssignments,
-    weekDateMap,
+    visibleDays,
     workerWeekData,
   ]);
 
   const weeklyTotals = useMemo(
-    () => calculateTotals(visibleAssignments, totalsContext),
-    [totalsContext, visibleAssignments]
+    () => calculateTotals(visibleAssignments, totalsContext, visibleDays),
+    [totalsContext, visibleAssignments, visibleDays]
   );
   const weeklyTotalHours = useMemo(
-    () => weekDays.reduce((total, day) => total + weeklyTotals[day.key], 0),
-    [weeklyTotals]
+    () =>
+      visibleDays.reduce(
+        (total, day) => total + (weeklyTotals[day.dateKey] ?? 0),
+        0
+      ),
+    [visibleDays, weeklyTotals]
   );
 
   const workerWeeklyTotals = useMemo(() => {
@@ -3633,8 +4753,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const renderGroupCard = useCallback(
     (group: GroupView) => {
       const isExpanded = expandedGroups.has(group.id);
-      const totalByGroup = weekDays.reduce(
-        (total, day) => total + group.totals[day.key],
+      const totalByGroup = visibleDays.reduce(
+        (total, day) => total + (group.totals[day.dateKey] ?? 0),
         0
       );
       return (
@@ -3684,17 +4804,17 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-8 gap-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">
-              {weekDays.map((day) => (
+            <div className="flex flex-wrap items-end justify-end gap-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">
+              {visibleDays.map((day) => (
                 <div
-                  key={`${group.id}-${day.key}`}
+                  key={`${group.id}-${day.dateKey}`}
                   className="flex flex-col items-end"
                 >
                   <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
                     {day.shortLabel}
                   </span>
                   <span className="text-sm text-gray-900 dark:text-white">
-                    {formatHours(group.totals[day.key])}
+                    {formatHours(group.totals[day.dateKey] ?? 0)}
                   </span>
                 </div>
               ))}
@@ -3718,12 +4838,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                       <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-300">
                         {viewMode === "company" ? "Trabajador" : "Empresa"}
                       </th>
-                      {weekDays.map((day) => (
+                      {visibleDays.map((day) => (
                         <th
-                          key={`${group.id}-${day.key}-header`}
+                          key={`${group.id}-${day.dateKey}-header`}
                           className="px-2 py-2 text-center font-medium text-gray-600 dark:text-gray-300"
                         >
-                          {day.label} {weekDayNumbers[day.key] ?? ""}
+                          {day.label} {day.dayOfMonth}
                         </th>
                       ))}
                       <th className="px-3 py-2 text-center font-medium text-gray-600 dark:text-gray-300">
@@ -3735,7 +4855,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     {group.assignments.map((assignment, index) => {
                       const rowTotal = calculateRowTotal(
                         assignment,
-                        totalsContext
+                        totalsContext,
+                        visibleDays
                       );
 
                       return (
@@ -3766,10 +4887,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               assignment.companyName
                             )}
                           </td>
-                          {weekDays.map((day) => {
+                          {visibleDays.map((day) => {
                             const trackedHours = getTrackedHourValue(
                               assignment,
-                              day.key,
+                              day.dateKey,
                               totalsContext
                             );
                             const trackedHoursValue =
@@ -3777,7 +4898,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                 ? hoursFormatter.format(trackedHours)
                                 : "";
 
-                            const currentValue = assignment.hours[day.key];
+                            const currentValue = assignment.hours[day.dateKey];
                             const hasManualValue =
                               typeof currentValue === "string" &&
                               currentValue.trim() !== "";
@@ -3786,11 +4907,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               : trackedHoursValue;
 
                             const existingSegments =
-                              segmentsByAssignment[assignment.id]?.[day.key] ??
+                              segmentsByAssignment[assignment.id]?.[
+                                day.dateKey
+                              ] ??
                               [];
                             const hasSegments = existingSegments.length > 0;
 
-                            const dateKey = weekDateMap[day.key];
+                            const dateKey = day.dateKey;
                             const dayData =
                               workerWeekData[assignment.workerId]?.days?.[
                                 dateKey
@@ -3804,6 +4927,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                 noteAppliesToAssignment(note, assignment)
                             );
                             const hasNotes = filteredNotes.length > 0;
+                            const displayLabel =
+                              formatDate(dateKey) ??
+                              `${day.label} ${day.dayOfMonth}`;
 
                             const highlightClass = hasSegments
                               ? "border-blue-300 focus:ring-blue-400"
@@ -3811,16 +4937,58 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                               ? "border-amber-300 focus:ring-amber-400"
                               : "";
 
+                            const handleLongPressStart = () => {
+                              if (!isCompactLayout || typeof window === "undefined") {
+                                return;
+                              }
+                              clearMobileLongPressTimer();
+                              longPressTimerRef.current = window.setTimeout(() => {
+                                longPressTimerRef.current = null;
+                                openMobileCellActions({
+                                  assignment,
+                                  day,
+                                  displayLabel,
+                                  notes: filteredNotes,
+                                });
+                              }, LONG_PRESS_DURATION_MS);
+                            };
+
+                            const handleLongPressEnd = () => {
+                              clearMobileLongPressTimer();
+                            };
+
+                            const handleCellDoubleClick = (
+                              event: React.MouseEvent<HTMLDivElement>
+                            ) => {
+                              if (!isCompactLayout) {
+                                return;
+                              }
+
+                              if (event.target instanceof HTMLInputElement) {
+                                return;
+                              }
+
+                              clearMobileLongPressTimer();
+                              openSegmentsModal(assignment, day, displayLabel);
+                            };
+
                             return (
                               <td
-                                key={`${assignment.id}-${day.key}`}
+                                key={`${assignment.id}-${day.dateKey}`}
                                 className={`px-2 py-2 ${
                                   hasNotes
                                     ? "bg-amber-50 dark:bg-amber-900/30"
                                     : ""
                                 }`}
                               >
-                                <div className="flex h-full w-full items-center justify-center rounded-lg px-1 py-1 text-center">
+                                <div
+                                  className="flex h-full w-full items-center justify-center rounded-lg px-1 py-1 text-center"
+                                  onPointerDown={handleLongPressStart}
+                                  onPointerUp={handleLongPressEnd}
+                                  onPointerLeave={handleLongPressEnd}
+                                  onPointerCancel={handleLongPressEnd}
+                                  onDoubleClick={handleCellDoubleClick}
+                                >
                                   <div className="flex items-center gap-1">
                                     <div className="relative">
                                       <button
@@ -3828,13 +4996,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                         onClick={() =>
                                           openNotesModal(
                                             assignment,
-                                            day.key,
-                                            day.label,
-                                            filteredNotes,
-                                            dateKey
+                                            day,
+                                            displayLabel,
+                                            filteredNotes
                                           )
                                         }
-                                        className={`absolute inset-y-0 left-1.5 z-10 flex items-center text-gray-300 transition hover:text-amber-600 focus:outline-none ${
+                                        className={`absolute inset-y-0 left-1.5 z-10 hidden items-center text-gray-300 transition hover:text-amber-600 focus:outline-none sm:flex ${
                                           hasNotes ? "text-amber-500" : ""
                                         }`}
                                         aria-label="Ver notas del día"
@@ -3850,23 +5017,24 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                         onChange={(event) =>
                                           handleHourChange(
                                             assignment.id,
-                                            day.key,
+                                            day.dateKey,
                                             event.target.value
                                           )
                                         }
-                                        className={`w-16 text-center pr-9 pl-7 ${highlightClass}`}
+                                        className={`w-24 text-center pr-3 pl-3 sm:w-20 sm:pr-9 sm:pl-7 ${highlightClass}`}
                                         placeholder="0"
+                                        title="Mantén pulsado para ver notas o tramos en pantallas compactas"
                                       />
                                       <button
                                         type="button"
                                         onClick={() =>
                                           openSegmentsModal(
                                             assignment,
-                                            day.key,
-                                            day.label
+                                            day,
+                                            displayLabel
                                           )
                                         }
-                                        className={`absolute inset-y-0 right-2 flex items-center text-gray-300 transition hover:text-blue-600 focus:outline-none ${
+                                        className={`absolute inset-y-0 right-2 hidden items-center text-gray-300 transition hover:text-blue-600 focus:outline-none sm:flex ${
                                           hasSegments ? "text-blue-600" : ""
                                         }`}
                                         aria-label="Configurar tramos horarios"
@@ -3894,12 +5062,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                         Total{" "}
                         {viewMode === "company" ? "empresa" : "trabajador"}
                       </td>
-                      {weekDays.map((day) => (
+                      {visibleDays.map((day) => (
                         <td
-                          key={`${group.id}-${day.key}-total`}
+                          key={`${group.id}-${day.dateKey}-total`}
                           className="px-2 py-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-200"
                         >
-                          {formatHours(group.totals[day.key])}
+                          {formatHours(group.totals[day.dateKey] ?? 0)}
                         </td>
                       ))}
                       <td className="px-3 py-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-200">
@@ -3917,13 +5085,18 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [
       expandedGroups,
       handleHourChange,
+      openNotesModal,
       openSegmentsModal,
       openWorkerInfoModal,
+      clearMobileLongPressTimer,
+      isCompactLayout,
+      openMobileCellActions,
       toggleGroupExpansion,
       viewMode,
       totalsContext,
       segmentsByAssignment,
-      weekDayNumbers,
+      visibleDays,
+      workerWeekData,
     ]
   );
 
@@ -4108,8 +5281,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         <Card>
           <CardHeader className="gap-3">
-            <div className="flex flex-wrap items-center gap-3 lg:gap-4">
-              <div className="order-1 flex w-full items-center justify-center gap-2 sm:w-auto lg:justify-start">
+            <div className="grid w-full grid-cols-1 items-center gap-3 lg:grid-cols-[1fr_auto_1fr] lg:gap-4">
+              <div className="flex items-center justify-center gap-2 lg:justify-start">
                 <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800">
                   {[
                     { value: "company", label: "Por empresa" },
@@ -4134,32 +5307,33 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   ))}
                 </div>
               </div>
-              <div className="order-2 flex w-full items-center justify-center gap-3 sm:order-2 sm:w-auto lg:flex-1">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-center gap-3 lg:justify-self-center">
+                <div className="flex flex-wrap items-center justify-center gap-2">
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => handleWeekChange(-1)}
+                    onClick={() => shiftSelectedRange(-1)}
                     leftIcon={<ChevronLeft size={16} />}
-                    aria-label="Semana anterior"
+                    aria-label="Rango anterior"
                   >
                     Anterior
                   </Button>
-                  <div className="w-55 rounded-lg border border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-200 whitespace-nowrap">
-                    {weekRangeLabel}
-                  </div>
+                  <DateRangePicker
+                    value={{ from: selectedRange.start, to: selectedRange.end }}
+                    onChange={handleRangeSelect}
+                  />
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => handleWeekChange(1)}
+                    onClick={() => shiftSelectedRange(1)}
                     rightIcon={<ChevronRight size={16} />}
-                    aria-label="Semana siguiente"
+                    aria-label="Rango siguiente"
                   >
                     Siguiente
                   </Button>
                 </div>
               </div>
-              <div className="order-3 flex w-full items-center justify-center sm:order-3 sm:w-auto lg:justify-end">
+              <div className="flex items-center justify-center lg:justify-end">
                 <Button
                   size="sm"
                   onClick={handleSaveAll}
@@ -4205,7 +5379,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           <Card>
             <CardHeader>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Horas por trabajador ({weekRangeLabel})
+                Horas por trabajador ({rangeLabel})
               </h2>
             </CardHeader>
             <CardContent>
@@ -4233,26 +5407,26 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             <CardContent className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                  Total semanal
+                  Total del período
                 </p>
                 <p className="text-3xl font-bold text-gray-900 dark:text-white">
                   {formatHours(weeklyTotalHours)}
                 </p>
                 <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Sumatoria de todas las horas registradas en la tabla.
+                  Sumatoria de todas las horas registradas en el intervalo seleccionado.
                 </p>
               </div>
-              <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-4 md:grid-cols-7 lg:w-auto">
-                {weekDays.map((day) => (
+              <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7">
+                {visibleDays.map((day) => (
                   <div
-                    key={`summary-${day.key}`}
+                    key={`summary-${day.dateKey}`}
                     className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm dark:border-gray-700 dark:bg-gray-900"
                   >
                     <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
                       {day.label}
                     </p>
                     <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                      {formatHours(weeklyTotals[day.key])}
+                      {formatHours(weeklyTotals[day.dateKey] ?? 0)}
                     </p>
                   </div>
                 ))}
@@ -4261,6 +5435,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           </Card>
         )}
       </div>
+      <MobileCellActionsSheet
+        target={mobileCellActions}
+        onClose={() => {
+          clearMobileLongPressTimer();
+          closeMobileCellActions();
+        }}
+        onSelectNotes={handleMobileNotesSelection}
+        onSelectSegments={handleMobileSegmentsSelection}
+      />
       <DayNotesModal
         isOpen={notesModalTarget !== null}
         workerName={notesModalTarget?.workerName ?? ""}
@@ -4278,7 +5461,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         initialSegments={
           segmentModalTarget
             ? segmentsByAssignment[segmentModalTarget.assignmentId]?.[
-                segmentModalTarget.dayKey
+                segmentModalTarget.dateKey
               ] ?? []
             : []
         }
