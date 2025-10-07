@@ -54,6 +54,7 @@ interface DayDescriptor {
   dateKey: string;
   label: string;
   shortLabel: string;
+  compactLabel: string;
   dayOfMonth: number;
 }
 
@@ -2145,6 +2146,13 @@ const normalizeDayLabel = (value: string): string => {
   return sanitized.charAt(0).toUpperCase() + sanitized.slice(1);
 };
 
+const buildCompactDayLabel = (label: string): string => {
+  if (!label) {
+    return "";
+  }
+  return label.charAt(0).toUpperCase();
+};
+
 const normalizeToStartOfDay = (date: Date): Date => {
   const result = new Date(date);
   result.setHours(0, 0, 0, 0);
@@ -2174,12 +2182,14 @@ const buildDayDescriptors = (start: Date, end: Date): DayDescriptor[] => {
     const current = new Date(cursor);
     const label = normalizeDayLabel(dayLabelFormatter.format(current));
     const shortLabel = normalizeDayLabel(dayShortLabelFormatter.format(current));
+    const compactLabel = buildCompactDayLabel(label);
 
     descriptors.push({
       date: current,
       dateKey: formatLocalDateKey(current),
       label,
       shortLabel,
+      compactLabel,
       dayOfMonth: current.getDate(),
     });
 
@@ -5067,7 +5077,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                           key={`${group.id}-${day.dateKey}-header`}
                           className="px-2 py-2 text-center font-medium text-gray-600 dark:text-gray-300"
                         >
-                          {day.label} {day.dayOfMonth}
+                          <span className="inline max-[1199px]:hidden">
+                            {day.label} {day.dayOfMonth}
+                          </span>
+                          <span className="hidden max-[1199px]:inline">
+                            {`${day.compactLabel}${day.dayOfMonth}`.trim()}
+                          </span>
                         </th>
                       ))}
                       <th className="px-3 py-2 text-center font-medium text-gray-600 dark:text-gray-300">
@@ -5563,7 +5578,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm dark:border-gray-700 dark:bg-gray-900"
                   >
                     <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                      {day.label}
+                      <span className="inline max-[1199px]:hidden">
+                        {day.label}
+                      </span>
+                      <span className="hidden max-[1199px]:inline">
+                        {day.compactLabel}
+                      </span>
                     </p>
                     <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
                       {formatHours(weeklyTotals[day.dateKey] ?? 0)}
