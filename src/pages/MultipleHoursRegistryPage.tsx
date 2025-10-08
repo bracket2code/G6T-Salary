@@ -2487,7 +2487,10 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
   useEffect(() => {
     if (isCompactLayout) {
       setShowIcons(false);
+      return;
     }
+
+    setShowIcons(true);
   }, [isCompactLayout]);
 
   const enableCompactInteractions = isCompactLayout || !showIcons;
@@ -5066,7 +5069,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           {isExpanded && (
             <CardContent className="pt-0">
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
+                <table className="min-w-full table-fixed divide-y divide-gray-200 text-sm dark:divide-gray-700">
+                  <colgroup>
+                    <col style={{ width: "18rem" }} />
+                    {visibleDays.map((day) => (
+                      <col key={`${group.id}-${day.dateKey}-col`} style={{ width: "11rem" }} />
+                    ))}
+                    <col style={{ width: "11rem" }} />
+                  </colgroup>
                   <thead className="bg-gray-50 dark:bg-gray-800/70">
                     <tr>
                       <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-300">
