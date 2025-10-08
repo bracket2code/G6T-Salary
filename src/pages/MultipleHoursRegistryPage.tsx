@@ -87,6 +87,65 @@ interface ControlScheduleSavePayload {
   }>;
 }
 
+type ControlScheduleShiftPayload = NonNullable<
+  ControlScheduleSavePayload["workShifts"]
+>[number];
+
+const HOURS_COMPARISON_EPSILON = 0.01;
+
+const areHourValuesEqual = (a: number, b: number): boolean =>
+  Math.abs(a - b) < HOURS_COMPARISON_EPSILON;
+
+const buildShiftPayload = (
+  segments: HourSegment[]
+): ControlScheduleShiftPayload[] =>
+  segments
+    .map((segment) => {
+      const workStart = (segment.start ?? "").trim();
+      const workEnd = (segment.end ?? "").trim();
+      if (!workStart || !workEnd) {
+        return null;
+      }
+
+      return {
+        id: segment.id?.trim() ?? "",
+        workStart,
+        workEnd,
+        observations: segment.description?.trim() ?? "",
+      };
+    })
+    .filter((shift): shift is ControlScheduleShiftPayload => Boolean(shift));
+
+const normalizeShiftsForComparison = (
+  shifts: ControlScheduleShiftPayload[]
+) =>
+  shifts.map((shift) => ({
+    start: shift.workStart,
+    end: shift.workEnd,
+    observations: shift.observations.trim(),
+  }));
+
+const areShiftArraysEqual = (
+  a: ControlScheduleShiftPayload[],
+  b: ControlScheduleShiftPayload[]
+): boolean => {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  const normalizedA = normalizeShiftsForComparison(a);
+  const normalizedB = normalizeShiftsForComparison(b);
+
+  return normalizedA.every((shift, index) => {
+    const other = normalizedB[index];
+    return (
+      shift.start === other.start &&
+      shift.end === other.end &&
+      shift.observations === other.observations
+    );
+  });
+};
+
 const UNASSIGNED_COMPANY_ID = "sin-empresa";
 const UNASSIGNED_COMPANY_LABEL = "Sin empresa asignada";
 
@@ -552,13 +611,6 @@ interface DayNotesModalProps {
   }) => void;
 }
 
-type EditableDayNote = {
-  id: string;
-  text: string;
-  isNew: boolean;
-  original?: DayNoteEntry;
-};
-
 const DayNotesModal: React.FC<DayNotesModalProps> = ({
   isOpen,
   workerId,
@@ -570,101 +622,80 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
   onClose,
   onSave,
 }) => {
-  const [editableNotes, setEditableNotes] = useState<EditableDayNote[]>([]);
-  const [removedNoteIds, setRemovedNoteIds] = useState<Set<string>>(
-    () => new Set()
-  );
+  const [editableNote, setEditableNote] = useState<{
+    id: string;
+    text: string;
+    isNew: boolean;
+    original?: DayNoteEntry;
+  } | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
-      setEditableNotes([]);
-      setRemovedNoteIds(new Set());
+      setEditableNote(null);
       return;
     }
 
-    setEditableNotes(
-      notes.map((note) => ({
-        id: note.id,
-        text: note.text ?? "",
+    if (notes.length > 0) {
+      const primary = notes[0];
+      setEditableNote({
+        id: primary.id,
+        text: primary.text ?? "",
         isNew: false,
-        original: note,
-      }))
-    );
-    setRemovedNoteIds(new Set());
+        original: primary,
+      });
+      return;
+    }
+
+    setEditableNote({
+      id: generateUuid(),
+      text: "",
+      isNew: true,
+    });
   }, [isOpen, notes]);
 
-  const normalizedInitialNotes = useMemo(
-    () =>
-      notes.map((note) => ({
-        id: note.id,
-        text: (note.text ?? "").trim(),
-      })),
+  const initialText = useMemo(
+    () => (notes[0]?.text ?? "").trim(),
     [notes]
   );
 
+  const trimmedCurrentText = useMemo(
+    () => (editableNote?.text ?? "").trim(),
+    [editableNote]
+  );
+
   const preparedState = useMemo(() => {
-    const deletionAccumulator = new Set(removedNoteIds);
-    const finalNotes: DayNoteEntry[] = [];
+    if (!editableNote) {
+      return {
+        finalNotes: [] as DayNoteEntry[],
+        deletedNoteIds: [] as string[],
+      };
+    }
 
-    editableNotes.forEach((note) => {
-      const trimmed = note.text.trim();
-      if (!trimmed.length) {
-        if (!note.isNew && note.original) {
-          deletionAccumulator.add(note.id);
+    if (!trimmedCurrentText.length) {
+      return {
+        finalNotes: [],
+        deletedNoteIds: editableNote.original ? [editableNote.original.id] : [],
+      };
+    }
+
+    const finalNote = editableNote.original
+      ? {
+          ...editableNote.original,
+          text: trimmedCurrentText,
         }
-        return;
-      }
-
-      if (note.original) {
-        finalNotes.push({
-          ...note.original,
-          text: trimmed,
-        });
-      } else {
-        finalNotes.push({
-          id: note.id,
-          text: trimmed,
-          origin: "note",
-        });
-      }
-    });
+      : {
+          id: editableNote.id,
+          text: trimmedCurrentText,
+          origin: "note" as DayNoteEntry["origin"],
+        };
 
     return {
-      finalNotes,
-      deletedNoteIds: Array.from(deletionAccumulator),
+      finalNotes: [finalNote],
+      deletedNoteIds: [],
     };
-  }, [editableNotes, removedNoteIds]);
+  }, [editableNote, trimmedCurrentText]);
 
-  const hasChanges = useMemo(() => {
-    const initialMap = new Map(
-      normalizedInitialNotes.map((note) => [note.id, note.text])
-    );
-    const finalMap = new Map(
-      preparedState.finalNotes.map((note) => [
-        note.id,
-        (note.text ?? "").trim(),
-      ])
-    );
-
-    if (initialMap.size !== finalMap.size) {
-      return true;
-    }
-
-    for (const [id, text] of finalMap) {
-      const original = initialMap.get(id);
-      if (!original || original !== text) {
-        return true;
-      }
-    }
-
-    for (const deletedId of preparedState.deletedNoteIds) {
-      if (initialMap.has(deletedId) && !finalMap.has(deletedId)) {
-        return true;
-      }
-    }
-
-    return false;
-  }, [normalizedInitialNotes, preparedState]);
+  const hasChanges = trimmedCurrentText !== initialText;
 
   const formattedLabel =
     dateLabel && dateLabel !== dayLabel
@@ -675,53 +706,8 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
     return null;
   }
 
-  const handleAddNote = () => {
-    setEditableNotes((prev) => [
-      ...prev,
-      {
-        id: generateUuid(),
-        text: "",
-        isNew: true,
-      },
-    ]);
-  };
-
-  const handleNoteChange = (id: string, value: string) => {
-    setEditableNotes((prev) =>
-      prev.map((note) =>
-        note.id === id
-          ? {
-              ...note,
-              text: value,
-            }
-          : note
-      )
-    );
-  };
-
-  const handleRemoveNote = (id: string) => {
-    setEditableNotes((prev) => {
-      const target = prev.find((note) => note.id === id);
-      if (!target) {
-        return prev;
-      }
-
-      setRemovedNoteIds((prevRemoved) => {
-        const next = new Set(prevRemoved);
-        if (!target.isNew && target.original) {
-          next.add(id);
-        } else {
-          next.delete(id);
-        }
-        return next;
-      });
-
-      return prev.filter((note) => note.id !== id);
-    });
-  };
-
   const handleSaveClick = () => {
-    if (!hasChanges) {
+    if (!editableNote || !hasChanges) {
       onClose();
       return;
     }
@@ -765,62 +751,35 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
           </button>
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-3">
             <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-              Notas registradas
+              Nota del día
             </p>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={handleAddNote}
-              leftIcon={<Plus size={16} />}
-            >
-              Añadir nota
-            </Button>
+            <textarea
+              value={editableNote?.text ?? ""}
+              onChange={(event) =>
+                setEditableNote((previous) =>
+                  previous
+                    ? {
+                        ...previous,
+                        text: event.target.value,
+                      }
+                    : {
+                        id: generateUuid(),
+                        text: event.target.value,
+                        isNew: true,
+                      }
+                )
+              }
+              rows={6}
+              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/40"
+              placeholder="Escribe la nota para este día..."
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Solo se permite una nota por día. Para eliminarla, deja el campo
+              vacío y guarda los cambios.
+            </p>
           </div>
-          {editableNotes.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400">
-              No hay notas registradas para este día. Usa “Añadir nota” para
-              crear una nueva.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {editableNotes.map((note, index) => (
-                <div
-                  key={note.id}
-                  className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                      Nota {index + 1}
-                      {!note.isNew && note.original?.origin !== "note" ? (
-                        <span className="ml-2 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                          importada
-                        </span>
-                      ) : null}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveNote(note.id)}
-                      className="inline-flex items-center gap-1 text-sm font-medium text-red-600 transition hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                    >
-                      <Trash2 size={14} />
-                      Quitar
-                    </button>
-                  </div>
-                  <textarea
-                    value={note.text}
-                    onChange={(event) =>
-                      handleNoteChange(note.id, event.target.value)
-                    }
-                    rows={4}
-                    className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/40"
-                    placeholder="Escribe la nota..."
-                  />
-                </div>
-              ))}
-            </div>
-          )}
         </div>
         <div className="flex flex-col gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-end">
           <Button variant="outline" onClick={onClose}>
@@ -5147,9 +5106,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return;
     }
 
-    type ControlScheduleShift =
-      ControlScheduleSavePayload["workShifts"][number];
-
     const payload: ControlScheduleSavePayload[] = [];
 
     visibleAssignments.forEach((assignment) => {
@@ -5163,7 +5119,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const raw = assignment.hours[dateKey];
         const trimmedValue = typeof raw === "string" ? raw.trim() : "";
-        const hoursValue = trimmedValue ? parseHour(trimmedValue) : 0;
+        const manualInputProvided = trimmedValue.length > 0;
+        const hoursValue = manualInputProvided ? parseHour(trimmedValue) : 0;
 
         const dayData = workerWeekData[assignment.workerId]?.days?.[dateKey];
         const existingEntries = resolveEntriesForAssignment(
@@ -5185,6 +5142,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         const primaryEntryObservation =
           extractObservationText(primaryEntryRaw) ?? "";
 
+        const existingHoursValue =
+          primaryEntry && typeof primaryEntry.hours === "number"
+            ? primaryEntry.hours
+            : 0;
+
         const fallbackSegments: HourSegment[] = primaryEntry?.workShifts
           ? primaryEntry.workShifts.map((shift) => ({
               id: shift.id?.trim() ?? "",
@@ -5195,34 +5157,52 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 extractShiftDescription(shift, primaryEntryObservation) ?? "",
             }))
           : [];
+        const fallbackShiftPayload = buildShiftPayload(fallbackSegments);
 
-        const segmentsSource =
-          storedSegments !== undefined ? storedSegments : fallbackSegments;
+        const storedShiftPayload =
+          storedSegments !== undefined
+            ? buildShiftPayload(storedSegments)
+            : undefined;
 
-        const workShifts = segmentsSource
-          .map((segment): ControlScheduleShift | null => {
-            const workStart = segment.start?.trim() ?? "";
-            const workEnd = segment.end?.trim() ?? "";
-            if (!workStart || !workEnd) {
-              return null;
-            }
+        const newShiftPayload =
+          storedSegments !== undefined
+            ? storedShiftPayload ?? []
+            : fallbackShiftPayload;
 
-            const shiftId = segment.id?.trim() ?? "";
-            return {
-              id: shiftId,
-              workStart,
-              workEnd,
-              observations: segment.description?.trim() ?? "",
-            };
-          })
-          .filter((shift): shift is ControlScheduleShift => Boolean(shift));
+        const segmentsChanged =
+          storedSegments !== undefined &&
+          !areShiftArraysEqual(fallbackShiftPayload, newShiftPayload);
 
-        const hasValueToSave = trimmedValue.length > 0 && hoursValue > 0;
-        const hasSegmentsDefined =
-          storedSegments !== undefined ? true : workShifts.length > 0;
-        const hasExistingEntry = Boolean(existingEntryId);
+        const removalViaSegments =
+          storedSegments !== undefined &&
+          (storedShiftPayload?.length ?? 0) === 0 &&
+          fallbackShiftPayload.length > 0;
 
-        if (!hasValueToSave && !hasSegmentsDefined && !hasExistingEntry) {
+        const shouldCreateEntry =
+          !primaryEntry &&
+          ((manualInputProvided && hoursValue > 0) ||
+            (storedSegments !== undefined &&
+              (storedShiftPayload?.length ?? 0) > 0));
+
+        const hoursChanged = primaryEntry
+          ? manualInputProvided
+            ? !areHourValuesEqual(existingHoursValue, hoursValue)
+            : false
+          : manualInputProvided && hoursValue > 0;
+
+        const isDeletion =
+          primaryEntry !== null &&
+          ((manualInputProvided && hoursValue <= 0 &&
+            (storedSegments !== undefined
+              ? (storedShiftPayload?.length ?? 0) === 0
+              : fallbackShiftPayload.length === 0)) ||
+            (!manualInputProvided && removalViaSegments));
+
+        const shouldUpdateEntry =
+          primaryEntry !== null &&
+          (hoursChanged || segmentsChanged || isDeletion);
+
+        if (!shouldCreateEntry && !shouldUpdateEntry) {
           return;
         }
 
@@ -5233,13 +5213,29 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           controlScheduleType: CONTROL_SCHEDULE_TYPE_MANUAL,
         };
 
-        if (hasValueToSave) {
-          payloadItem.value = hoursValue.toFixed(2);
+        if (manualInputProvided) {
+          payloadItem.value =
+            hoursValue > 0 ? hoursValue.toFixed(2) : "0";
+        } else if (isDeletion) {
+          payloadItem.value = "0";
+        } else if (
+          !primaryEntry &&
+          storedSegments !== undefined &&
+          (storedShiftPayload?.length ?? 0) > 0
+        ) {
+          const minutesFromSegments = calculateSegmentsTotalMinutes(
+            storedSegments
+          );
+          if (minutesFromSegments > 0) {
+            payloadItem.value = (minutesFromSegments / 60).toFixed(2);
+          }
         }
 
-        if (hasSegmentsDefined) {
-          payloadItem.workShifts = workShifts;
-        } else if (hasExistingEntry) {
+        if (isDeletion) {
+          payloadItem.workShifts = [];
+        } else if (newShiftPayload.length > 0) {
+          payloadItem.workShifts = newShiftPayload;
+        } else if (segmentsChanged && storedSegments !== undefined) {
           payloadItem.workShifts = [];
         }
 
@@ -5281,47 +5277,40 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         sanitizedEdited.map((note) => [note.id, note])
       );
 
-      sanitizedEdited.forEach((note) => {
-        const original = originalMap.get(note.id);
-        const originalText = (original?.text ?? "").trim();
-        if (!original || originalText !== note.text) {
-          payload.push({
-            id: original ? note.id : "",
-            dateTime: formatDateKeyToApiDateTime(dateKey),
-            parameterId: workerId,
-            controlScheduleType: CONTROL_SCHEDULE_TYPE_NOTE,
-            value: note.text,
-            companyId:
-              note.companyId &&
-              !isUnassignedCompany(
-                note.companyId,
-                note.companyName ?? ""
-              )
-                ? note.companyId
-                : undefined,
-          });
-        }
-      });
+      const baselineNote = normalizedBaseline[0];
+      const editedNote = normalizedCurrent[0];
 
-      originalMap.forEach((originalNote, noteId) => {
-        if (!editedMap.has(noteId)) {
-          payload.push({
-            id: noteId,
-            dateTime: formatDateKeyToApiDateTime(dateKey),
-            parameterId: workerId,
-            controlScheduleType: CONTROL_SCHEDULE_TYPE_NOTE,
-            value: "",
-            companyId:
-              originalNote.companyId &&
-              !isUnassignedCompany(
-                originalNote.companyId,
-                originalNote.companyName ?? ""
-              )
-                ? originalNote.companyId
-                : undefined,
-          });
-        }
-      });
+      if (!editedNote && baselineNote) {
+        payload.push({
+          id: baselineNote.id,
+          dateTime: formatDateKeyToApiDateTime(dateKey),
+          parameterId: workerId,
+          controlScheduleType: CONTROL_SCHEDULE_TYPE_NOTE,
+          value: "",
+        });
+        return;
+      }
+
+      if (editedNote && !baselineNote) {
+        payload.push({
+          id: "",
+          dateTime: formatDateKeyToApiDateTime(dateKey),
+          parameterId: workerId,
+          controlScheduleType: CONTROL_SCHEDULE_TYPE_NOTE,
+          value: editedNote.text,
+        });
+        return;
+      }
+
+      if (editedNote && baselineNote && editedNote.text !== baselineNote.text) {
+        payload.push({
+          id: baselineNote.id,
+          dateTime: formatDateKeyToApiDateTime(dateKey),
+          parameterId: workerId,
+          controlScheduleType: CONTROL_SCHEDULE_TYPE_NOTE,
+          value: editedNote.text,
+        });
+      }
     });
 
     if (payload.length === 0) {
