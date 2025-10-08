@@ -106,6 +106,8 @@ const UNASSIGNED_COMPANY_NAME_VARIANTS = new Set([
 const ALL_COMPANIES_OPTION_ID = "all-companies";
 const ALL_COMPANIES_OPTION_LABEL = "Todas las empresas";
 
+const CONTROL_SCHEDULE_TYPE_NOTE = 7;
+
 const getEffectiveCompanyIds = (ids: string[]): string[] => {
   if (!ids.length) {
     return ids;
@@ -180,7 +182,10 @@ const normalizeParameterGroups = (payload: unknown): unknown[][] => {
     numericEntries.sort((a, b) => a[0] - b[0]);
 
     const highestIndex = numericEntries[numericEntries.length - 1][0];
-    const result: unknown[][] = Array.from({ length: highestIndex + 1 }, () => []);
+    const result: unknown[][] = Array.from(
+      { length: highestIndex + 1 },
+      () => []
+    );
 
     numericEntries.forEach(([index, group]) => {
       result[index] = group;
@@ -199,9 +204,7 @@ const fetchParameterLabels = async (
 ): Promise<Record<string, string>> => {
   const trimmedIds = Array.from(
     new Set(
-      ids
-        .map((id) => trimToNull(id))
-        .filter((id): id is string => Boolean(id))
+      ids.map((id) => trimToNull(id)).filter((id): id is string => Boolean(id))
     )
   );
 
@@ -239,7 +242,10 @@ const fetchParameterLabels = async (
   try {
     payload = await response.json();
   } catch (error) {
-    console.warn("No se pudo parsear la respuesta de Parameter/GetByIds", error);
+    console.warn(
+      "No se pudo parsear la respuesta de Parameter/GetByIds",
+      error
+    );
     return {};
   }
 
@@ -499,6 +505,9 @@ const formatDateKeyToApiDateTime = (dateKey: string): string => {
   return `${year}-${month}-${day}T00:00:00+00:00`;
 };
 
+const buildNotesStateKey = (workerId: string, dateKey: string): string =>
+  `${workerId}::${dateKey}`;
+
 const buildApiEndpoint = (baseUrl: string, path: string): string => {
   const trimmedBase = baseUrl.trim().replace(/\/$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -527,45 +536,223 @@ const generateUuid = (): string => {
 
 interface DayNotesModalProps {
   isOpen: boolean;
+  workerId: string;
+  dateKey: string;
   workerName: string;
   companyName: string;
   dayLabel: string;
   dateLabel?: string;
   notes: DayNoteEntry[];
   onClose: () => void;
+  onSave: (payload: {
+    workerId: string;
+    dateKey: string;
+    notes: DayNoteEntry[];
+    deletedNoteIds: string[];
+  }) => void;
 }
+
+type EditableDayNote = {
+  id: string;
+  text: string;
+  isNew: boolean;
+  original?: DayNoteEntry;
+};
 
 const DayNotesModal: React.FC<DayNotesModalProps> = ({
   isOpen,
+  workerId,
+  dateKey,
   workerName,
-  companyName,
   dayLabel,
   dateLabel,
   notes,
   onClose,
+  onSave,
 }) => {
+  const [editableNotes, setEditableNotes] = useState<EditableDayNote[]>([]);
+  const [removedNoteIds, setRemovedNoteIds] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  useEffect(() => {
+    if (!isOpen) {
+      setEditableNotes([]);
+      setRemovedNoteIds(new Set());
+      return;
+    }
+
+    setEditableNotes(
+      notes.map((note) => ({
+        id: note.id,
+        text: note.text ?? "",
+        isNew: false,
+        original: note,
+      }))
+    );
+    setRemovedNoteIds(new Set());
+  }, [isOpen, notes]);
+
+  const normalizedInitialNotes = useMemo(
+    () =>
+      notes.map((note) => ({
+        id: note.id,
+        text: (note.text ?? "").trim(),
+      })),
+    [notes]
+  );
+
+  const preparedState = useMemo(() => {
+    const deletionAccumulator = new Set(removedNoteIds);
+    const finalNotes: DayNoteEntry[] = [];
+
+    editableNotes.forEach((note) => {
+      const trimmed = note.text.trim();
+      if (!trimmed.length) {
+        if (!note.isNew && note.original) {
+          deletionAccumulator.add(note.id);
+        }
+        return;
+      }
+
+      if (note.original) {
+        finalNotes.push({
+          ...note.original,
+          text: trimmed,
+        });
+      } else {
+        finalNotes.push({
+          id: note.id,
+          text: trimmed,
+          origin: "note",
+        });
+      }
+    });
+
+    return {
+      finalNotes,
+      deletedNoteIds: Array.from(deletionAccumulator),
+    };
+  }, [editableNotes, removedNoteIds]);
+
+  const hasChanges = useMemo(() => {
+    const initialMap = new Map(
+      normalizedInitialNotes.map((note) => [note.id, note.text])
+    );
+    const finalMap = new Map(
+      preparedState.finalNotes.map((note) => [
+        note.id,
+        (note.text ?? "").trim(),
+      ])
+    );
+
+    if (initialMap.size !== finalMap.size) {
+      return true;
+    }
+
+    for (const [id, text] of finalMap) {
+      const original = initialMap.get(id);
+      if (!original || original !== text) {
+        return true;
+      }
+    }
+
+    for (const deletedId of preparedState.deletedNoteIds) {
+      if (initialMap.has(deletedId) && !finalMap.has(deletedId)) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [normalizedInitialNotes, preparedState]);
+
+  const formattedLabel =
+    dateLabel && dateLabel !== dayLabel
+      ? `${dayLabel} · ${dateLabel}`
+      : dateLabel ?? dayLabel;
+
   if (!isOpen) {
     return null;
   }
 
+  const handleAddNote = () => {
+    setEditableNotes((prev) => [
+      ...prev,
+      {
+        id: generateUuid(),
+        text: "",
+        isNew: true,
+      },
+    ]);
+  };
+
+  const handleNoteChange = (id: string, value: string) => {
+    setEditableNotes((prev) =>
+      prev.map((note) =>
+        note.id === id
+          ? {
+              ...note,
+              text: value,
+            }
+          : note
+      )
+    );
+  };
+
+  const handleRemoveNote = (id: string) => {
+    setEditableNotes((prev) => {
+      const target = prev.find((note) => note.id === id);
+      if (!target) {
+        return prev;
+      }
+
+      setRemovedNoteIds((prevRemoved) => {
+        const next = new Set(prevRemoved);
+        if (!target.isNew && target.original) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+        return next;
+      });
+
+      return prev.filter((note) => note.id !== id);
+    });
+  };
+
+  const handleSaveClick = () => {
+    if (!hasChanges) {
+      onClose();
+      return;
+    }
+
+    onSave({
+      workerId,
+      dateKey,
+      notes: preparedState.finalNotes,
+      deletedNoteIds: preparedState.deletedNoteIds,
+    });
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-[104] flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
-        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-blue-600 dark:text-blue-300">
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-base font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-300">
               <NotebookPen size={16} />
               Notas del día
             </div>
-            <h3 className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+            <div className="flex flex-wrap items-baseline gap-3 text-gray-500 dark:text-gray-400">
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
+                {formattedLabel}
+              </span>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">
               {workerName}
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              {companyName}
-            </p>
-            <p className="text-xs text-gray-500 dark:text-gray-500">
-              {dayLabel}
-              {dateLabel ? ` · ${dateLabel}` : ""}
             </p>
           </div>
           <button
@@ -577,27 +764,74 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
             <X size={16} />
           </button>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
-          {notes.length === 0 ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              No hay notas disponibles para este día.
+        <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+              Notas registradas
             </p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleAddNote}
+              leftIcon={<Plus size={16} />}
+            >
+              Añadir nota
+            </Button>
+          </div>
+          {editableNotes.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400">
+              No hay notas registradas para este día. Usa “Añadir nota” para
+              crear una nueva.
+            </div>
           ) : (
-            <div className="space-y-3">
-              {notes.map((note) => (
+            <div className="space-y-4">
+              {editableNotes.map((note, index) => (
                 <div
                   key={note.id}
-                  className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 shadow-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                  className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800"
                 >
-                  {note.text}
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                      Nota {index + 1}
+                      {!note.isNew && note.original?.origin !== "note" ? (
+                        <span className="ml-2 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                          importada
+                        </span>
+                      ) : null}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveNote(note.id)}
+                      className="inline-flex items-center gap-1 text-sm font-medium text-red-600 transition hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                    >
+                      <Trash2 size={14} />
+                      Quitar
+                    </button>
+                  </div>
+                  <textarea
+                    value={note.text}
+                    onChange={(event) =>
+                      handleNoteChange(note.id, event.target.value)
+                    }
+                    rows={4}
+                    className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/40"
+                    placeholder="Escribe la nota..."
+                  />
                 </div>
               ))}
             </div>
           )}
         </div>
-        <div className="flex justify-end border-t border-gray-200 px-5 py-3 dark:border-gray-800">
+        <div className="flex flex-col gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-end">
           <Button variant="outline" onClick={onClose}>
-            Cerrar
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleSaveClick}
+            disabled={!hasChanges}
+            leftIcon={<Save size={16} />}
+          >
+            Guardar notas
           </Button>
         </div>
       </div>
@@ -666,14 +900,18 @@ const formatPersonalType = (value?: string | null): string | null => {
   if (["0", "monthly", "month", "mensual", "mes"].includes(lowered)) {
     return "Mensual";
   }
-  if (["2", "biweekly", "quincenal", "quincena", "bi-weekly"].includes(lowered)) {
+  if (
+    ["2", "biweekly", "quincenal", "quincena", "bi-weekly"].includes(lowered)
+  ) {
     return "Quincenal";
   }
 
   return normalized;
 };
 
-const formatSituationLabel = (value?: number | null | string): string | null => {
+const formatSituationLabel = (
+  value?: number | null | string
+): string | null => {
   if (value === null || value === undefined) {
     return null;
   }
@@ -821,59 +1059,62 @@ const WorkerContractList: React.FC<WorkerContractListProps> = ({
             </div>
           ) : (
             contracts.map((contract, index) => {
-              const label = trimToNull(contract.label) ?? `Contrato ${index + 1}`;
-              const typeText = trimToNull(contract.typeLabel ?? contract.position);
+              const label =
+                trimToNull(contract.label) ?? `Contrato ${index + 1}`;
+              const typeText = trimToNull(
+                contract.typeLabel ?? contract.position
+              );
               const descriptionText = trimToNull(contract.description);
               const startDate = formatMaybeDate(contract.startDate);
               const endDate = formatMaybeDate(contract.endDate);
-          const statusText = trimToNull(contract.status);
+              const statusText = trimToNull(contract.status);
 
-          return (
-            <div
-              key={`${contract.id}-${index}`}
-              className="rounded-md bg-white p-3 text-sm text-gray-700 shadow-sm dark:bg-gray-900 dark:text-gray-200"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium text-gray-900 dark:text-white">
-                  {label}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
-                      contract.hasContract
-                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
-                        : "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
-                    }`}
-                  >
-                    {contract.hasContract ? "Activo" : "Asignación"}
-                  </span>
-                  {statusText && (
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      {statusText}
+              return (
+                <div
+                  key={`${contract.id}-${index}`}
+                  className="rounded-md bg-white p-3 text-sm text-gray-700 shadow-sm dark:bg-gray-900 dark:text-gray-200"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      {label}
                     </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
+                          contract.hasContract
+                            ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
+                            : "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                        }`}
+                      >
+                        {contract.hasContract ? "Activo" : "Asignación"}
+                      </span>
+                      {statusText && (
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {statusText}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 grid gap-1 text-xs text-gray-600 dark:text-gray-400">
+                    {typeText && <span>{typeText}</span>}
+                    {(startDate || endDate) && (
+                      <span>
+                        {startDate ?? "¿"} – {endDate ?? "¿"}
+                      </span>
+                    )}
+                    {typeof contract.hourlyRate === "number" && (
+                      <span>Tarifa: {contract.hourlyRate.toFixed(2)} €/h</span>
+                    )}
+                  </div>
+
+                  {descriptionText && (
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      {descriptionText}
+                    </p>
                   )}
                 </div>
-              </div>
-
-              <div className="mt-2 grid gap-1 text-xs text-gray-600 dark:text-gray-400">
-                {typeText && <span>{typeText}</span>}
-                {(startDate || endDate) && (
-                  <span>
-                    {startDate ?? "¿"} – {endDate ?? "¿"}
-                  </span>
-                )}
-                {typeof contract.hourlyRate === "number" && (
-                  <span>Tarifa: {contract.hourlyRate.toFixed(2)} €/h</span>
-                )}
-              </div>
-
-              {descriptionText && (
-                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  {descriptionText}
-                </p>
-              )}
-            </div>
-            );
+              );
             })
           )}
         </div>
@@ -888,11 +1129,9 @@ interface WorkerCompaniesAndContractsProps {
   companyStats?: Record<string, WorkerCompanyStats>;
 }
 
-const WorkerCompaniesAndContracts: React.FC<WorkerCompaniesAndContractsProps> = ({
-  companies,
-  contractsByCompany,
-  companyStats,
-}) => {
+const WorkerCompaniesAndContracts: React.FC<
+  WorkerCompaniesAndContractsProps
+> = ({ companies, contractsByCompany, companyStats }) => {
   const entries = useMemo(() => {
     const merged = new Map<
       string,
@@ -914,24 +1153,27 @@ const WorkerCompaniesAndContracts: React.FC<WorkerCompaniesAndContractsProps> = 
       });
     });
 
-    Object.entries(contractsByCompany ?? {}).forEach(([companyName, contracts]) => {
-      const existing = merged.get(companyName);
-      if (existing) {
-        existing.contracts = contracts ?? [];
-        if (typeof existing.contractCount !== "number") {
-          existing.contractCount = contracts?.length ?? 0;
+    Object.entries(contractsByCompany ?? {}).forEach(
+      ([companyName, contracts]) => {
+        const existing = merged.get(companyName);
+        if (existing) {
+          existing.contracts = contracts ?? [];
+          if (typeof existing.contractCount !== "number") {
+            existing.contractCount = contracts?.length ?? 0;
+          } else {
+            existing.contractCount =
+              contracts?.length ?? existing.contractCount;
+          }
         } else {
-          existing.contractCount = contracts?.length ?? existing.contractCount;
+          const stats = companyStats?.[companyName];
+          merged.set(companyName, {
+            assignmentCount: stats?.assignmentCount ?? 0,
+            contractCount: stats?.contractCount ?? contracts?.length ?? 0,
+            contracts: contracts ?? [],
+          });
         }
-      } else {
-        const stats = companyStats?.[companyName];
-        merged.set(companyName, {
-          assignmentCount: stats?.assignmentCount ?? 0,
-          contractCount: stats?.contractCount ?? contracts?.length ?? 0,
-          contracts: contracts ?? [],
-        });
       }
-    });
+    );
 
     const result = Array.from(merged.entries()).map(([companyName, data]) => ({
       companyName,
@@ -1023,7 +1265,9 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
       }
     };
 
-    const dniDisplay = state.data.dni ? state.data.dni.toUpperCase() : state.data.dni;
+    const dniDisplay = state.data.dni
+      ? state.data.dni.toUpperCase()
+      : state.data.dni;
     addItem("DNI", dniDisplay, { always: true });
 
     addItem("Dirección", state.data.address, { always: true });
@@ -1161,7 +1405,9 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
               Cargando información del trabajador...
             </p>
           ) : state.error ? (
-            <p className="text-sm text-red-600 dark:text-red-400">{state.error}</p>
+            <p className="text-sm text-red-600 dark:text-red-400">
+              {state.error}
+            </p>
           ) : (
             <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
               <div className="space-y-2">
@@ -1315,6 +1561,8 @@ interface SegmentsModalTarget {
 }
 
 interface NotesModalTarget {
+  workerId: string;
+  dateKey: string;
   workerName: string;
   companyName: string;
   dayLabel: string;
@@ -2159,7 +2407,10 @@ const normalizeToStartOfDay = (date: Date): Date => {
   return result;
 };
 
-const ensureRangeOrder = (start: Date, end: Date): { start: Date; end: Date } => {
+const ensureRangeOrder = (
+  start: Date,
+  end: Date
+): { start: Date; end: Date } => {
   if (start.getTime() <= end.getTime()) {
     return { start, end };
   }
@@ -2181,7 +2432,9 @@ const buildDayDescriptors = (start: Date, end: Date): DayDescriptor[] => {
   while (cursor.getTime() <= ordered.end.getTime()) {
     const current = new Date(cursor);
     const label = normalizeDayLabel(dayLabelFormatter.format(current));
-    const shortLabel = normalizeDayLabel(dayShortLabelFormatter.format(current));
+    const shortLabel = normalizeDayLabel(
+      dayShortLabelFormatter.format(current)
+    );
     const compactLabel = buildCompactDayLabel(label);
 
     descriptors.push({
@@ -2278,7 +2531,9 @@ const extractShiftDescription = (
     typeof shift === "object" &&
     typeof (shift as { description?: unknown }).description === "string"
   ) {
-    const directDescription = (shift as { description: string }).description.trim();
+    const directDescription = (
+      shift as { description: string }
+    ).description.trim();
     if (directDescription.length > 0) {
       return directDescription;
     }
@@ -2301,14 +2556,20 @@ const HOUR_CELL_ICON_MIN_WIDTH = 136;
 
 const useIsCompactLayout = (): boolean => {
   const [isCompact, setIsCompact] = useState<boolean>(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
       return false;
     }
     return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
   });
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
       return;
     }
 
@@ -2364,10 +2625,14 @@ const MobileCellActionsSheet: React.FC<MobileCellActionsSheetProps> = ({
           <h3 className="text-base font-semibold text-gray-900 dark:text-white">
             Acciones rápidas
           </h3>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
-            {assignment.workerName}
-          </p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">{displayLabel}</p>
+          <div className="flex items-baseline justify-between gap-4">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+              {assignment.workerName}
+            </p>
+            <p className="text-sm font-medium text-gray-500 dark:text-gray-400 text-right">
+              {displayLabel}
+            </p>
+          </div>
         </div>
         <div className="mt-5 space-y-2">
           <Button
@@ -2376,7 +2641,7 @@ const MobileCellActionsSheet: React.FC<MobileCellActionsSheetProps> = ({
             onClick={() => onSelectNotes(target)}
             leftIcon={<NotebookPen size={16} />}
           >
-            Ver notas del día
+            Notas del día
           </Button>
           <Button
             variant="secondary"
@@ -2384,15 +2649,12 @@ const MobileCellActionsSheet: React.FC<MobileCellActionsSheetProps> = ({
             onClick={() => onSelectSegments(target)}
             leftIcon={<CalendarClock size={16} />}
           >
-            Gestionar turnos horarios
+            Turnos horarios
           </Button>
           <Button variant="ghost" fullWidth onClick={onClose}>
             Cancelar
           </Button>
         </div>
-        <p className="mt-4 text-center text-xs text-gray-400 dark:text-gray-500">
-          Mantén pulsada la celda para abrir este menú en pantallas compactas.
-        </p>
       </div>
     </div>
   );
@@ -2403,26 +2665,22 @@ interface HourEntryCellProps {
   day: DayDescriptor;
   displayLabel: string;
   inputValue: string;
-  hasNotes: boolean;
+  allNotes: DayNoteEntry[];
   hasSegments: boolean;
   highlightClass: string;
-  filteredNotes: DayNoteEntry[];
   onHourChange: (assignmentId: string, dateKey: string, value: string) => void;
   onOpenNotes: (
     assignment: Assignment,
     day: DayDescriptor,
     displayLabel: string,
-    notes: DayNoteEntry[]
+    notes?: DayNoteEntry[]
   ) => void;
   onOpenSegments: (
     assignment: Assignment,
     day: DayDescriptor,
     displayLabel: string
   ) => void;
-  onLongPressStart: (
-    enable: boolean,
-    payload: MobileCellActionsTarget
-  ) => void;
+  onLongPressStart: (enable: boolean, payload: MobileCellActionsTarget) => void;
   onLongPressEnd: () => void;
   onCellDoubleClick: (
     event: React.MouseEvent<HTMLDivElement>,
@@ -2439,10 +2697,9 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
   day,
   displayLabel,
   inputValue,
-  hasNotes,
+  allNotes,
   hasSegments,
   highlightClass,
-  filteredNotes,
   onHourChange,
   onOpenNotes,
   onOpenSegments,
@@ -2493,13 +2750,16 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
     setShowIcons(true);
   }, [isCompactLayout]);
 
+  const assignmentNotes = allNotes.filter((note) =>
+    noteAppliesToAssignment(note, assignment)
+  );
+  const hasNotes = assignmentNotes.length > 0;
+
   const enableCompactInteractions = isCompactLayout || !showIcons;
   const inputTitle = enableCompactInteractions
     ? "Mantén pulsado o haz doble clic para ver notas o turnos en pantallas compactas"
     : "Haz clic en los iconos para gestionar notas o turnos horarios";
-  const inputSizingClasses = showIcons
-    ? "w-28 pl-8 pr-10"
-    : "w-24 px-3";
+  const inputSizingClasses = showIcons ? "w-28 pl-8 pr-10" : "w-24 px-3";
 
   return (
     <div
@@ -2509,7 +2769,7 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
           assignment,
           day,
           displayLabel,
-          notes: filteredNotes,
+          notes: allNotes,
         })
       }
       onPointerUp={onLongPressEnd}
@@ -2531,12 +2791,12 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
             <button
               type="button"
               onClick={() =>
-                onOpenNotes(assignment, day, displayLabel, filteredNotes)
+                onOpenNotes(assignment, day, displayLabel, allNotes)
               }
               className={`absolute inset-y-0 left-1.5 z-10 flex items-center text-gray-300 transition hover:text-amber-600 focus:outline-none ${
                 hasNotes ? "text-amber-500" : ""
               }`}
-              aria-label="Ver notas del día"
+              aria-label="Notas del día"
               tabIndex={-1}
             >
               <NotebookPen size={14} />
@@ -2557,9 +2817,7 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
           {showIcons && (
             <button
               type="button"
-              onClick={() =>
-                onOpenSegments(assignment, day, displayLabel)
-              }
+              onClick={() => onOpenSegments(assignment, day, displayLabel)}
               className={`absolute inset-y-0 right-2 flex items-center text-gray-300 transition hover:text-blue-600 focus:outline-none ${
                 hasSegments ? "text-blue-600" : ""
               }`}
@@ -2737,9 +2995,35 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
     value: string
   ) => {
     setSegments((prev) =>
-      prev.map((segment) =>
-        segment.id === id ? { ...segment, [field]: value } : segment
-      )
+      prev.map((segment) => {
+        if (segment.id !== id) {
+          return segment;
+        }
+
+        const nextSegment = { ...segment, [field]: value };
+        if (field === "start" || field === "end") {
+          const startMinutes = parseTimeToMinutes(
+            field === "start" ? value : nextSegment.start
+          );
+          const endMinutes = parseTimeToMinutes(
+            field === "end" ? value : nextSegment.end
+          );
+          if (
+            startMinutes !== null &&
+            endMinutes !== null &&
+            endMinutes > startMinutes
+          ) {
+            const diffMinutes = endMinutes - startMinutes;
+            const hours = diffMinutes / 60;
+            const formatted = hours.toFixed(2);
+            nextSegment.total = formatted
+              .replace(/\.00$/, "")
+              .replace(/(\.\d)0$/, "$1");
+          }
+        }
+
+        return nextSegment;
+      })
     );
   };
 
@@ -2814,7 +3098,6 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-
           {segments.map((segment, index) => (
             <div
               key={segment.id}
@@ -3004,6 +3287,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [segmentsByAssignment, setSegmentsByAssignment] = useState<
     Record<string, Record<string, HourSegment[]>>
   >({});
+  const [noteDraftsByDay, setNoteDraftsByDay] = useState<
+    Record<string, DayNoteEntry[]>
+  >({});
+  const [noteOriginalsByDay, setNoteOriginalsByDay] = useState<
+    Record<string, DayNoteEntry[]>
+  >({});
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [segmentModalTarget, setSegmentModalTarget] =
     useState<SegmentsModalTarget | null>(null);
@@ -3022,10 +3311,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     useState<MobileCellActionsTarget | null>(null);
 
   const clearMobileLongPressTimer = useCallback(() => {
-    if (
-      typeof window !== "undefined" &&
-      longPressTimerRef.current !== null
-    ) {
+    if (typeof window !== "undefined" && longPressTimerRef.current !== null) {
       window.clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
@@ -3259,6 +3545,27 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return selectionWorkerIds.slice().sort().join("|");
   }, [selectionWorkerIds]);
 
+  const resolveDayNotes = useCallback(
+    (workerId: string, dateKey: string): DayNoteEntry[] => {
+      const key = buildNotesStateKey(workerId, dateKey);
+      if (noteDraftsByDay[key]) {
+        return noteDraftsByDay[key];
+      }
+      const dayData = workerWeekData[workerId]?.days?.[dateKey];
+      return dayData?.noteEntries ?? [];
+    },
+    [noteDraftsByDay, workerWeekData]
+  );
+
+  useEffect(() => {
+    setNoteDraftsByDay({});
+    setNoteOriginalsByDay({});
+  }, [
+    visibleWorkerIdsKey,
+    selectedRange.start.getTime(),
+    selectedRange.end.getTime(),
+  ]);
+
   const selectionCompanyIdsKey = useMemo(() => {
     const effective = getEffectiveCompanyIds(selectedCompanyIds);
     if (!effective.length) {
@@ -3386,10 +3693,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [selectedRange]
   );
 
-  const totalsContext = useMemo(
-    () => ({ workerWeekData }),
-    [workerWeekData]
-  );
+  const totalsContext = useMemo(() => ({ workerWeekData }), [workerWeekData]);
 
   useEffect(() => {
     if (!apiUrl || !externalJwt) {
@@ -3514,16 +3818,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     });
   }, []);
 
-  const handleRangeSelect = useCallback(
-    (range: { from: Date; to: Date }) => {
-      const ordered = ensureRangeOrder(
-        normalizeToStartOfDay(range.from),
-        normalizeToStartOfDay(range.to)
-      );
-      setSelectedRange({ start: ordered.start, end: ordered.end });
-    },
-    []
-  );
+  const handleRangeSelect = useCallback((range: { from: Date; to: Date }) => {
+    const ordered = ensureRangeOrder(
+      normalizeToStartOfDay(range.from),
+      normalizeToStartOfDay(range.to)
+    );
+    setSelectedRange({ start: ordered.start, end: ordered.end });
+  }, []);
 
   const companyGroups = useMemo<GroupView[]>(() => {
     const dayKeys = visibleDays.map((day) => day.dateKey);
@@ -3556,7 +3857,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         return {
           ...group,
           assignments: sortedAssignments,
-          totals: calculateTotals(sortedAssignments, totalsContext, visibleDays),
+          totals: calculateTotals(
+            sortedAssignments,
+            totalsContext,
+            visibleDays
+          ),
         };
       })
       .sort((a, b) =>
@@ -3595,7 +3900,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         return {
           ...group,
           assignments: sortedAssignments,
-          totals: calculateTotals(sortedAssignments, totalsContext, visibleDays),
+          totals: calculateTotals(
+            sortedAssignments,
+            totalsContext,
+            visibleDays
+          ),
         };
       })
       .sort((a, b) =>
@@ -3680,24 +3989,111 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       assignment: Assignment,
       day: DayDescriptor,
       dayLabel: string,
-      notes: DayNoteEntry[]
+      notes?: DayNoteEntry[]
     ) => {
-      const humanReadableDate = day.dateKey ? formatDate(day.dateKey) : undefined;
+      const effectiveNotes =
+        notes ?? resolveDayNotes(assignment.workerId, day.dateKey);
+
+      const humanReadableDate = day.dateKey
+        ? formatDate(day.dateKey)
+        : undefined;
 
       setNotesModalTarget({
+        workerId: assignment.workerId,
+        dateKey: day.dateKey,
         workerName: assignment.workerName,
         companyName: assignment.companyName,
         dayLabel,
         dateLabel: humanReadableDate,
-        notes,
+        notes: effectiveNotes,
       });
     },
-    []
+    [resolveDayNotes]
   );
 
   const closeNotesModal = useCallback(() => {
     setNotesModalTarget(null);
   }, []);
+
+  const handleNotesModalSave = useCallback(
+    (payload: {
+      workerId: string;
+      dateKey: string;
+      notes: DayNoteEntry[];
+      deletedNoteIds: string[];
+    }) => {
+      const key = buildNotesStateKey(payload.workerId, payload.dateKey);
+
+      const baseline =
+        noteOriginalsByDay[key] ??
+        workerWeekData[payload.workerId]?.days?.[payload.dateKey]
+          ?.noteEntries ??
+        [];
+
+      const normalize = (collection: DayNoteEntry[]) =>
+        collection
+          .map((note) => ({
+            id: note.id,
+            text: (note.text ?? "").trim(),
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+
+      const normalizedBaseline = normalize(baseline);
+      const normalizedCurrent = normalize(payload.notes);
+
+      const hasDifferences =
+        normalizedBaseline.length !== normalizedCurrent.length ||
+        normalizedCurrent.some((note, index) => {
+          const baselineNote = normalizedBaseline[index];
+          if (!baselineNote) {
+            return true;
+          }
+          return (
+            baselineNote.id !== note.id || baselineNote.text !== note.text
+          );
+        });
+
+      setNoteOriginalsByDay((prev) => {
+        if (prev[key]) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [key]: baseline,
+        };
+      });
+
+      setNoteDraftsByDay((prev) => {
+        if (!hasDifferences) {
+          if (!(key in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }
+        return {
+          ...prev,
+          [key]: payload.notes,
+        };
+      });
+
+      setNotesModalTarget((current) => {
+        if (
+          current &&
+          current.workerId === payload.workerId &&
+          current.dateKey === payload.dateKey
+        ) {
+          return {
+            ...current,
+            notes: payload.notes,
+          };
+        }
+        return current;
+      });
+    },
+    [noteOriginalsByDay, workerWeekData]
+  );
 
   const handleMobileNotesSelection = useCallback(
     (target: MobileCellActionsTarget) => {
@@ -4017,7 +4413,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           payload?.baseSalary ?? payload?.salary ?? payload?.amountBase
         );
         const hourlyRateValue = parseNumericValue(
-          payload?.hourlyRate ?? payload?.rate ?? payload?.amount ?? payload?.hoursPerWeek
+          payload?.hourlyRate ??
+            payload?.rate ??
+            payload?.amount ??
+            payload?.hoursPerWeek
         );
         const contractTypeValue = trimToNull(
           payload?.contractType ?? payload?.employmentType ?? payload?.type
@@ -4217,7 +4616,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             );
 
             const normalizedRelationId = normalizeKeyPart(relationIdValue);
-            const normalizedCompanyId = normalizeKeyPart(relationCompanyIdValue);
+            const normalizedCompanyId = normalizeKeyPart(
+              relationCompanyIdValue
+            );
 
             const lookupLabel =
               resolveParameterLabel(relationIdValue) ??
@@ -4480,26 +4881,23 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     setSelectedWorkerIds(workerIds);
   }, []);
 
-  const handleCompanySelectionChange = useCallback(
-    (values: string[]) => {
-      if (!values.length) {
-        setSelectedCompanyIds([ALL_COMPANIES_OPTION_ID]);
-        return;
-      }
+  const handleCompanySelectionChange = useCallback((values: string[]) => {
+    if (!values.length) {
+      setSelectedCompanyIds([ALL_COMPANIES_OPTION_ID]);
+      return;
+    }
 
-      const hasAll = values.includes(ALL_COMPANIES_OPTION_ID);
+    const hasAll = values.includes(ALL_COMPANIES_OPTION_ID);
 
-      if (hasAll && values.length > 1) {
-        setSelectedCompanyIds(
-          values.filter((value) => value !== ALL_COMPANIES_OPTION_ID)
-        );
-        return;
-      }
+    if (hasAll && values.length > 1) {
+      setSelectedCompanyIds(
+        values.filter((value) => value !== ALL_COMPANIES_OPTION_ID)
+      );
+      return;
+    }
 
-      setSelectedCompanyIds(values);
-    },
-    []
-  );
+    setSelectedCompanyIds(values);
+  }, []);
 
   const handleShowResults = useCallback(() => {
     setRequestedWorkerIds(() => [...selectionWorkerIds]);
@@ -4781,8 +5179,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           ? assignmentSegments[dateKey]
           : undefined;
 
-        const primaryEntryRaw =
-          (primaryEntry as { raw?: unknown } | null | undefined)?.raw;
+        const primaryEntryRaw = (
+          primaryEntry as { raw?: unknown } | null | undefined
+        )?.raw;
         const primaryEntryObservation =
           extractObservationText(primaryEntryRaw) ?? "";
 
@@ -4856,8 +5255,77 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       });
     });
 
+    Object.entries(noteDraftsByDay).forEach(([key, editedNotes]) => {
+      const [workerId, dateKey] = key.split("::");
+      if (!workerId || !dateKey) {
+        return;
+      }
+
+      const baseline =
+        noteOriginalsByDay[key] ??
+        workerWeekData[workerId]?.days?.[dateKey]?.noteEntries ??
+        [];
+
+      const originalMap = new Map(
+        baseline.map((note) => [note.id, note])
+      );
+
+      const sanitizedEdited = editedNotes
+        .map((note) => ({
+          ...note,
+          text: (note.text ?? "").trim(),
+        }))
+        .filter((note) => note.text.length > 0);
+
+      const editedMap = new Map(
+        sanitizedEdited.map((note) => [note.id, note])
+      );
+
+      sanitizedEdited.forEach((note) => {
+        const original = originalMap.get(note.id);
+        const originalText = (original?.text ?? "").trim();
+        if (!original || originalText !== note.text) {
+          payload.push({
+            id: original ? note.id : "",
+            dateTime: formatDateKeyToApiDateTime(dateKey),
+            parameterId: workerId,
+            controlScheduleType: CONTROL_SCHEDULE_TYPE_NOTE,
+            value: note.text,
+            companyId:
+              note.companyId &&
+              !isUnassignedCompany(
+                note.companyId,
+                note.companyName ?? ""
+              )
+                ? note.companyId
+                : undefined,
+          });
+        }
+      });
+
+      originalMap.forEach((originalNote, noteId) => {
+        if (!editedMap.has(noteId)) {
+          payload.push({
+            id: noteId,
+            dateTime: formatDateKeyToApiDateTime(dateKey),
+            parameterId: workerId,
+            controlScheduleType: CONTROL_SCHEDULE_TYPE_NOTE,
+            value: "",
+            companyId:
+              originalNote.companyId &&
+              !isUnassignedCompany(
+                originalNote.companyId,
+                originalNote.companyName ?? ""
+              )
+                ? originalNote.companyId
+                : undefined,
+          });
+        }
+      });
+    });
+
     if (payload.length === 0) {
-      alert("No hay horas registradas para guardar");
+      alert("No hay cambios de horas o notas para guardar");
       return;
     }
 
@@ -4918,6 +5386,60 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         throw new Error(errorMessage);
       }
 
+      if (Object.keys(noteDraftsByDay).length > 0) {
+        setWorkerWeekData((prev) => {
+          let changed = false;
+          const next = { ...prev };
+
+          Object.entries(noteDraftsByDay).forEach(([key, notes]) => {
+            const [workerId, dateKey] = key.split("::");
+            if (!workerId || !dateKey) {
+              return;
+            }
+
+            const workerData = next[workerId];
+            if (!workerData) {
+              return;
+            }
+
+            const existingDays = workerData.days ?? {};
+            const dayRecord = existingDays[dateKey];
+            const updatedDay: WorkerWeeklyDayData = dayRecord
+              ? {
+                  ...dayRecord,
+                  noteEntries: notes,
+                }
+              : {
+                  totalHours: 0,
+                  companyHours: {},
+                  entries: [],
+                  noteEntries: notes,
+                };
+
+            next[workerId] = {
+              ...workerData,
+              days: {
+                ...existingDays,
+                [dateKey]: updatedDay,
+              },
+            };
+            changed = true;
+          });
+
+          return changed ? next : prev;
+        });
+
+        setNoteOriginalsByDay((prev) => {
+          const next = { ...prev };
+          Object.entries(noteDraftsByDay).forEach(([key, notes]) => {
+            next[key] = notes;
+          });
+          return next;
+        });
+
+        setNoteDraftsByDay({});
+      }
+
       alert("Horas registradas exitosamente");
     } catch (error) {
       console.error("Error al guardar horas", error);
@@ -4933,6 +5455,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     apiUrl,
     externalJwt,
     isSavingAll,
+    noteDraftsByDay,
+    noteOriginalsByDay,
     segmentsByAssignment,
     visibleAssignments,
     visibleDays,
@@ -5073,7 +5597,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   <colgroup>
                     <col style={{ width: "18rem" }} />
                     {visibleDays.map((day) => (
-                      <col key={`${group.id}-${day.dateKey}-col`} style={{ width: "11rem" }} />
+                      <col
+                        key={`${group.id}-${day.dateKey}-col`}
+                        style={{ width: "11rem" }}
+                      />
                     ))}
                     <col style={{ width: "11rem" }} />
                   </colgroup>
@@ -5158,24 +5685,21 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                             const existingSegments =
                               segmentsByAssignment[assignment.id]?.[
                                 day.dateKey
-                              ] ??
-                              [];
+                              ] ?? [];
                             const hasSegments = existingSegments.length > 0;
 
                             const dateKey = day.dateKey;
-                            const dayData =
-                              workerWeekData[assignment.workerId]?.days?.[
-                                dateKey
-                              ];
-                            const filteredNotes = (
-                              dayData?.noteEntries ?? []
-                            ).filter(
+                            const dayNotes = resolveDayNotes(
+                              assignment.workerId,
+                              dateKey
+                            );
+                            const assignmentNotes = dayNotes.filter(
                               (note) =>
                                 typeof note?.text === "string" &&
                                 note.text.trim().length > 0 &&
                                 noteAppliesToAssignment(note, assignment)
                             );
-                            const hasNotes = filteredNotes.length > 0;
+                            const hasNotes = assignmentNotes.length > 0;
                             const displayLabel =
                               formatDate(dateKey) ??
                               `${day.label} ${day.dayOfMonth}`;
@@ -5200,10 +5724,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                   day={day}
                                   displayLabel={displayLabel}
                                   inputValue={inputValue}
-                                  hasNotes={hasNotes}
+                                  allNotes={dayNotes}
                                   hasSegments={hasSegments}
                                   highlightClass={highlightClass}
-                                  filteredNotes={filteredNotes}
                                   onHourChange={handleHourChange}
                                   onOpenNotes={openNotesModal}
                                   onOpenSegments={openSegmentsModal}
@@ -5578,7 +6101,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                   {formatHours(weeklyTotalHours)}
                 </p>
                 <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Sumatoria de todas las horas registradas en el intervalo seleccionado.
+                  Sumatoria de todas las horas registradas en el intervalo
+                  seleccionado.
                 </p>
               </div>
               <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7">
@@ -5616,12 +6140,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       />
       <DayNotesModal
         isOpen={notesModalTarget !== null}
+        workerId={notesModalTarget?.workerId ?? ""}
+        dateKey={notesModalTarget?.dateKey ?? ""}
         workerName={notesModalTarget?.workerName ?? ""}
         companyName={notesModalTarget?.companyName ?? ""}
         dayLabel={notesModalTarget?.dayLabel ?? ""}
         dateLabel={notesModalTarget?.dateLabel}
         notes={notesModalTarget?.notes ?? []}
         onClose={closeNotesModal}
+        onSave={handleNotesModalSave}
       />
       <HourSegmentsModal
         isOpen={segmentModalTarget !== null}
