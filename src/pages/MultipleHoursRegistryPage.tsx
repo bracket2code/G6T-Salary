@@ -6738,11 +6738,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         <Card>
           <CardHeader className="gap-3">
             <div className="grid w-full grid-cols-1 items-center gap-3 lg:grid-cols-[1fr_auto_1fr] lg:gap-4">
-              <div className="flex flex-col items-center justify-center gap-1 lg:items-start">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                  Vista
-                </span>
-                <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800">
+              <div className="flex items-center justify-center lg:justify-start">
+                <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
+                  <span
+                    className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400"
+                    aria-hidden="true"
+                  >
+                    Vista
+                  </span>
                   {[
                     {
                       value: "company" as const,
