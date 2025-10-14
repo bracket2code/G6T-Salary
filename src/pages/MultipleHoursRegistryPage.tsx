@@ -2714,6 +2714,47 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
   );
   const hasNotes = assignmentNotes.length > 0;
 
+  const handleInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+
+      const target = event.currentTarget;
+      const dayKey = target.dataset.dayKey;
+      if (!dayKey) {
+        return;
+      }
+
+      const escapedDayKey =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function"
+          ? CSS.escape(dayKey)
+          : dayKey.replace(/["\\]/g, "\\$&");
+
+      const inputs = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          `input[data-hour-input="true"][data-day-key="${escapedDayKey}"]`
+        )
+      );
+
+      const currentIndex = inputs.indexOf(target);
+      if (currentIndex === -1) {
+        return;
+      }
+
+      const direction = event.shiftKey ? -1 : 1;
+      const nextInput = inputs[currentIndex + direction];
+
+      if (nextInput) {
+        nextInput.focus();
+        nextInput.select?.();
+      }
+    },
+    []
+  );
+
   const enableCompactInteractions = isCompactLayout || !showIcons;
   const inputTitle = enableCompactInteractions
     ? "Mantén pulsado o haz doble clic para ver notas o turnos en pantallas compactas"
@@ -2769,6 +2810,9 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
             onChange={(event) =>
               onHourChange(assignment.id, day.dateKey, event.target.value)
             }
+            onKeyDown={handleInputKeyDown}
+            data-hour-input="true"
+            data-day-key={day.dateKey}
             className={`${inputSizingClasses} text-center ${highlightClass}`}
             placeholder="0"
             title={inputTitle}
@@ -5106,7 +5150,23 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return;
     }
 
-    const payload: ControlScheduleSavePayload[] = [];
+    const workersPayload = new Map<string, ControlScheduleSavePayload[]>();
+    const unassignedPayload: ControlScheduleSavePayload[] = [];
+    let totalPayloadItems = 0;
+
+    const addPayloadItem = (item: ControlScheduleSavePayload) => {
+      totalPayloadItems += 1;
+      const workerId = item.parameterId?.trim();
+      if (!workerId) {
+        unassignedPayload.push(item);
+        return;
+      }
+
+      if (!workersPayload.has(workerId)) {
+        workersPayload.set(workerId, []);
+      }
+      workersPayload.get(workerId)!.push(item);
+    };
 
     visibleAssignments.forEach((assignment) => {
       visibleDays.forEach((day) => {
@@ -5247,7 +5307,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           payloadItem.companyId = companyId;
         }
 
-        payload.push(payloadItem);
+        addPayloadItem(payloadItem);
       });
     });
 
@@ -5262,10 +5322,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         workerWeekData[workerId]?.days?.[dateKey]?.noteEntries ??
         [];
 
-      const originalMap = new Map(
-        baseline.map((note) => [note.id, note])
-      );
-
       const sanitizedEdited = editedNotes
         .map((note) => ({
           ...note,
@@ -5273,15 +5329,23 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         }))
         .filter((note) => note.text.length > 0);
 
-      const editedMap = new Map(
-        sanitizedEdited.map((note) => [note.id, note])
-      );
+      const normalize = (collection: DayNoteEntry[]) =>
+        collection
+          .map((note) => ({
+            id: note.id ?? "",
+            text: (note.text ?? "").trim(),
+          }))
+          .filter((note) => note.text.length > 0)
+          .sort((a, b) => a.id.localeCompare(b.id));
+
+      const normalizedBaseline = normalize(baseline);
+      const normalizedCurrent = normalize(sanitizedEdited);
 
       const baselineNote = normalizedBaseline[0];
       const editedNote = normalizedCurrent[0];
 
       if (!editedNote && baselineNote) {
-        payload.push({
+        addPayloadItem({
           id: baselineNote.id,
           dateTime: formatDateKeyToApiDateTime(dateKey),
           parameterId: workerId,
@@ -5292,7 +5356,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       }
 
       if (editedNote && !baselineNote) {
-        payload.push({
+        addPayloadItem({
           id: "",
           dateTime: formatDateKeyToApiDateTime(dateKey),
           parameterId: workerId,
@@ -5303,7 +5367,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       }
 
       if (editedNote && baselineNote && editedNote.text !== baselineNote.text) {
-        payload.push({
+        addPayloadItem({
           id: baselineNote.id,
           dateTime: formatDateKeyToApiDateTime(dateKey),
           parameterId: workerId,
@@ -5313,7 +5377,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       }
     });
 
-    if (payload.length === 0) {
+    if (totalPayloadItems === 0) {
       alert("No hay cambios de horas o notas para guardar");
       return;
     }
@@ -5323,56 +5387,72 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       return;
     }
 
+    const buildErrorMessage = async (response: Response) => {
+      let errorMessage = `Error ${response.status}`;
+      let responseText = "";
+
+      try {
+        responseText = await response.text();
+      } catch {
+        responseText = "";
+      }
+
+      if (responseText && responseText.trim().length > 0) {
+        try {
+          const data = JSON.parse(responseText);
+          if (typeof data === "string" && data.trim().length > 0) {
+            errorMessage = data;
+          } else if (data && typeof data === "object") {
+            const candidate =
+              (data as Record<string, unknown>).message ??
+              (data as Record<string, unknown>).error ??
+              (data as Record<string, unknown>).title ??
+              (data as Record<string, unknown>).detail;
+            if (typeof candidate === "string" && candidate.trim().length > 0) {
+              errorMessage = candidate;
+            } else {
+              errorMessage = JSON.stringify(data);
+            }
+          }
+        } catch {
+          errorMessage = responseText;
+        }
+      }
+
+      return errorMessage;
+    };
+
     setIsSavingAll(true);
 
     try {
       const endpoint = buildApiEndpoint(apiUrl, CONTROL_SCHEDULE_SAVE_PATH);
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${externalJwt}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
 
-      if (!response.ok) {
-        let errorMessage = `Error ${response.status}`;
-        let responseText = "";
+      if (unassignedPayload.length > 0) {
+        throw new Error(
+          "Hay registros sin trabajador asociado; no se enviaron los cambios."
+        );
+      }
 
-        try {
-          responseText = await response.text();
-        } catch {
-          responseText = "";
+      for (const workerPayload of workersPayload.values()) {
+        const orderedPayload = workerPayload
+          .slice()
+          .sort(
+            (a, b) => a.controlScheduleType - b.controlScheduleType
+          );
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${externalJwt}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(orderedPayload),
+        });
+
+        if (!response.ok) {
+          const errorMessage = await buildErrorMessage(response);
+          throw new Error(errorMessage);
         }
-
-        if (responseText && responseText.trim().length > 0) {
-          try {
-            const data = JSON.parse(responseText);
-            if (typeof data === "string" && data.trim().length > 0) {
-              errorMessage = data;
-            } else if (data && typeof data === "object") {
-              const candidate =
-                (data as Record<string, unknown>).message ??
-                (data as Record<string, unknown>).error ??
-                (data as Record<string, unknown>).title ??
-                (data as Record<string, unknown>).detail;
-              if (
-                typeof candidate === "string" &&
-                candidate.trim().length > 0
-              ) {
-                errorMessage = candidate;
-              } else {
-                errorMessage = JSON.stringify(data);
-              }
-            }
-          } catch {
-            errorMessage = responseText;
-          }
-        }
-
-        throw new Error(errorMessage);
       }
 
       if (Object.keys(noteDraftsByDay).length > 0) {

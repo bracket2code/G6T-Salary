@@ -1,3 +1,4 @@
+import { addMinutes } from "date-fns";
 import {
   DayHoursSummary,
   DayScheduleEntry,
@@ -8,7 +9,11 @@ import {
   WorkerCompanyContract,
   WorkerCompanyStats,
 } from "../types/salary";
-import { formatLocalDateKey, toLocalFromUtc, toUtcFromLocal } from "./timezone";
+import {
+  FIXED_TIMEZONE_OFFSET_MINUTES,
+  formatLocalDateKey,
+  toLocalFromUtc,
+} from "./timezone";
 
 interface ApiRequestOptions {
   apiUrl: string;
@@ -905,9 +910,14 @@ export const fetchWorkerHoursSummary = async (
     toDate = temp;
   }
 
+  const paddingMinutes = -FIXED_TIMEZONE_OFFSET_MINUTES;
+  // Ajustamos el rango para que el backend reciba 00:00-23:59 en horario local.
+  const requestFromDate = addMinutes(fromDate, paddingMinutes);
+  const requestToDate = addMinutes(toDate, paddingMinutes);
+
   const baseRequestPayload = {
-    from: toUtcFromLocal(fromDate).toISOString(),
-    to: toUtcFromLocal(toDate).toISOString(),
+    from: requestFromDate.toISOString(),
+    to: requestToDate.toISOString(),
     parametersId: [workerId],
     companiesId: [],
   };

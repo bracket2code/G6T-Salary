@@ -1,6 +1,8 @@
 import { addMinutes, format, parseISO, subMinutes } from 'date-fns';
 import { es } from 'date-fns/locale';
 
+export const FIXED_TIMEZONE_OFFSET_MINUTES = -120;
+
 export function formatDateLongGMT2(dateString: string | null | undefined): string {
   if (!dateString) return '-';
   
@@ -38,11 +40,11 @@ export function formatTimeGMT2(dateString: string | null | undefined): string {
 }
 
 export function toUtcFromLocal(date: Date): Date {
-  return addMinutes(date, date.getTimezoneOffset());
+  return addMinutes(date, FIXED_TIMEZONE_OFFSET_MINUTES);
 }
 
 export function toLocalFromUtc(date: Date): Date {
-  return subMinutes(date, date.getTimezoneOffset());
+  return subMinutes(date, FIXED_TIMEZONE_OFFSET_MINUTES);
 }
 
 export function formatLocalDateKey(date: Date): string {
