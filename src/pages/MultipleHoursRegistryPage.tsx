@@ -13,7 +13,9 @@ import {
   ChevronRight,
   RefreshCw,
   Users,
+  CalendarDays,
   CalendarClock,
+  Clock,
   Plus,
   Trash2,
   NotebookPen,
@@ -26,9 +28,11 @@ import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
-import type {
-  DayScheduleEntry,
-  DayNoteEntry,
+import {
+  WorkerHoursCalendar,
+  type DayScheduleEntry,
+  type DayNoteEntry,
+  type DayHoursSummary,
 } from "../components/WorkerHoursCalendar";
 import {
   Worker,
@@ -116,9 +120,7 @@ const buildShiftPayload = (
     })
     .filter((shift): shift is ControlScheduleShiftPayload => Boolean(shift));
 
-const normalizeShiftsForComparison = (
-  shifts: ControlScheduleShiftPayload[]
-) =>
+const normalizeShiftsForComparison = (shifts: ControlScheduleShiftPayload[]) =>
   shifts.map((shift) => ({
     start: shift.workStart,
     end: shift.workEnd,
@@ -653,10 +655,7 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
     });
   }, [isOpen, notes]);
 
-  const initialText = useMemo(
-    () => (notes[0]?.text ?? "").trim(),
-    [notes]
-  );
+  const initialText = useMemo(() => (notes[0]?.text ?? "").trim(), [notes]);
 
   const trimmedCurrentText = useMemo(
     () => (editableNote?.text ?? "").trim(),
@@ -3236,6 +3235,641 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
   );
 };
 
+interface IndividualWorkerCalendarState {
+  monthKey: string;
+  hoursByDate: Record<string, DayHoursSummary>;
+  isLoading: boolean;
+  error: string | null;
+}
+
+interface IndividualModeViewProps {
+  workers: Worker[];
+  activeIndex: number;
+  onActiveIndexChange: (index: number) => void;
+  apiUrl: string | null;
+  token: string | null;
+  companyLookup: Record<string, string>;
+}
+
+const formatDateKeyForIndividual = (date: Date): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(date.getDate()).padStart(2, "0")}`;
+
+const parseDateKey = (value: string): Date | null => {
+  const [year, month, day] = value.split("-").map((part) => Number(part));
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day)
+  ) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+};
+
+const buildCompanyLookupKey = (lookup: Record<string, string>): string =>
+  Object.entries(lookup)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([id, name]) => `${id}:${name}`)
+    .join("|");
+
+const IndividualModeView: React.FC<IndividualModeViewProps> = ({
+  workers,
+  activeIndex,
+  onActiveIndexChange,
+  apiUrl,
+  token,
+  companyLookup,
+}) => {
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
+  const [calendarDataByWorker, setCalendarDataByWorker] = useState<
+    Record<string, IndividualWorkerCalendarState>
+  >({});
+  const [selectedDayKeyByWorker, setSelectedDayKeyByWorker] = useState<
+    Record<string, string | null>
+  >({});
+
+  const calendarDataRef = useRef(calendarDataByWorker);
+  useEffect(() => {
+    calendarDataRef.current = calendarDataByWorker;
+  }, [calendarDataByWorker]);
+
+  const selectedDayKeyRef = useRef(selectedDayKeyByWorker);
+  useEffect(() => {
+    selectedDayKeyRef.current = selectedDayKeyByWorker;
+  }, [selectedDayKeyByWorker]);
+
+  const totalWorkers = workers.length;
+  const activeWorker = workers[activeIndex] ?? null;
+  const monthKey = useMemo(
+    () =>
+      `${calendarMonth.getFullYear()}-${String(
+        calendarMonth.getMonth() + 1
+      ).padStart(2, "0")}`,
+    [calendarMonth]
+  );
+  const companyLookupKey = useMemo(
+    () => buildCompanyLookupKey(companyLookup),
+    [companyLookup]
+  );
+
+  useEffect(() => {
+    if (!activeWorker) {
+      return;
+    }
+
+    const workerId = activeWorker.id;
+    const existingEntry = calendarDataRef.current[workerId];
+
+    if (!apiUrl || !token) {
+      if (!existingEntry || existingEntry.error === null) {
+        setCalendarDataByWorker((prev) => ({
+          ...prev,
+          [workerId]: {
+            monthKey,
+            hoursByDate: existingEntry?.hoursByDate ?? {},
+            isLoading: false,
+            error:
+              "Falta configuración de API o token para cargar el calendario.",
+          },
+        }));
+      }
+      return;
+    }
+
+    if (
+      existingEntry &&
+      existingEntry.monthKey === monthKey &&
+      !existingEntry.isLoading
+    ) {
+      if (!selectedDayKeyRef.current[workerId]) {
+        const dayKeys = Object.keys(existingEntry.hoursByDate ?? {});
+        const todayKey = formatDateKeyForIndividual(new Date());
+        const fallbackKey = dayKeys.includes(todayKey)
+          ? todayKey
+          : dayKeys.sort()[0] ?? formatDateKeyForIndividual(calendarMonth);
+        setSelectedDayKeyByWorker((prev) => ({
+          ...prev,
+          [workerId]: fallbackKey,
+        }));
+      }
+      return;
+    }
+
+    let isCancelled = false;
+
+    if (
+      existingEntry &&
+      existingEntry.monthKey === monthKey &&
+      existingEntry.isLoading
+    ) {
+      return;
+    }
+
+    setCalendarDataByWorker((prev) => ({
+      ...prev,
+      [workerId]: {
+        monthKey,
+        hoursByDate: existingEntry?.hoursByDate ?? {},
+        isLoading: true,
+        error: null,
+      },
+    }));
+
+    const loadData = async () => {
+      try {
+        const summary = await fetchWorkerHoursSummary({
+          apiUrl,
+          token,
+          workerId,
+          month: calendarMonth,
+          companyLookup,
+          includeNotes: true,
+        });
+
+        if (isCancelled) {
+          return;
+        }
+
+        setCalendarDataByWorker((prev) => ({
+          ...prev,
+          [workerId]: {
+            monthKey,
+            hoursByDate: summary.hoursByDate ?? {},
+            isLoading: false,
+            error: null,
+          },
+        }));
+
+        setSelectedDayKeyByWorker((prev) => {
+          if (prev[workerId]) {
+            return prev;
+          }
+
+          const dayKeys = Object.keys(summary.hoursByDate ?? {});
+          const todayKey = formatDateKeyForIndividual(new Date());
+
+          return {
+            ...prev,
+            [workerId]:
+              (dayKeys.includes(todayKey) ? todayKey : dayKeys.sort()[0]) ??
+              formatDateKeyForIndividual(calendarMonth),
+          };
+        });
+      } catch (error) {
+        console.error(
+          `No se pudo obtener el calendario para el trabajador ${workerId}`,
+          error
+        );
+        if (isCancelled) {
+          return;
+        }
+
+        setCalendarDataByWorker((prev) => ({
+          ...prev,
+          [workerId]: {
+            monthKey,
+            hoursByDate: existingEntry?.hoursByDate ?? {},
+            isLoading: false,
+            error:
+              "No se pudieron cargar los datos del calendario para este trabajador.",
+          },
+        }));
+      }
+    };
+
+    void loadData();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeWorker, apiUrl, token, calendarMonth, monthKey, companyLookupKey]);
+
+  useEffect(() => {
+    if (!activeWorker) {
+      return;
+    }
+
+    const workerId = activeWorker.id;
+    if (
+      selectedDayKeyRef.current[workerId] &&
+      calendarDataRef.current[workerId]?.monthKey === monthKey
+    ) {
+      return;
+    }
+
+    const dayKeys = Object.keys(
+      calendarDataRef.current[workerId]?.hoursByDate ?? {}
+    );
+    const todayKey = formatDateKeyForIndividual(new Date());
+    setSelectedDayKeyByWorker((prev) => ({
+      ...prev,
+      [workerId]:
+        (dayKeys.includes(todayKey) ? todayKey : dayKeys.sort()[0]) ??
+        formatDateKeyForIndividual(calendarMonth),
+    }));
+  }, [activeWorker, monthKey, calendarMonth]);
+
+  const setSelectedDayForWorker = useCallback(
+    (workerId: string, nextKey: string | null) => {
+      setSelectedDayKeyByWorker((prev) => ({
+        ...prev,
+        [workerId]: nextKey,
+      }));
+    },
+    []
+  );
+
+  const handleMonthChange = useCallback((next: Date) => {
+    const normalized = new Date(next.getFullYear(), next.getMonth(), 1);
+    setCalendarMonth(normalized);
+  }, []);
+
+  const handlePrevWorker = useCallback(() => {
+    if (totalWorkers <= 1) {
+      return;
+    }
+    const nextIndex =
+      (activeIndex - 1 + totalWorkers) % Math.max(totalWorkers, 1);
+    onActiveIndexChange(nextIndex);
+  }, [activeIndex, onActiveIndexChange, totalWorkers]);
+
+  const handleNextWorker = useCallback(() => {
+    if (totalWorkers <= 1) {
+      return;
+    }
+    const nextIndex = (activeIndex + 1) % Math.max(totalWorkers, 1);
+    onActiveIndexChange(nextIndex);
+  }, [activeIndex, onActiveIndexChange, totalWorkers]);
+
+  const calendarEntry =
+    activeWorker && calendarDataByWorker[activeWorker.id]
+      ? calendarDataByWorker[activeWorker.id]
+      : null;
+
+  const selectedDayKey =
+    activeWorker && selectedDayKeyByWorker[activeWorker.id]
+      ? selectedDayKeyByWorker[activeWorker.id]
+      : null;
+
+  const selectedDayDate = selectedDayKey ? parseDateKey(selectedDayKey) : null;
+  const selectedDaySummary =
+    selectedDayKey && calendarEntry
+      ? calendarEntry.hoursByDate[selectedDayKey] ?? null
+      : null;
+
+  const weekdayLabel = selectedDayDate
+    ? selectedDayDate.toLocaleDateString("es-ES", {
+        weekday: "long",
+      })
+    : null;
+  const dayFullLabel = selectedDayDate
+    ? selectedDayDate.toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
+    : null;
+
+  const groupedEntries = useMemo(() => {
+    if (!selectedDaySummary?.entries?.length) {
+      return [];
+    }
+
+    return selectedDaySummary.entries.map((entry) => {
+      const companyName =
+        entry.companyName?.trim() ||
+        companyLookup[entry.companyId ?? ""] ||
+        "Sin empresa";
+      const shifts =
+        entry.workShifts?.map((shift, index) => {
+          const start = shift.startTime ?? "";
+          const end = shift.endTime ?? "";
+          const label =
+            start && end
+              ? `${start} – ${end}`
+              : start
+              ? `Desde ${start}`
+              : end
+              ? `Hasta ${end}`
+              : `Tramo ${index + 1}`;
+          return {
+            id: shift.id ?? `${entry.id}-shift-${index + 1}`,
+            label,
+            observations:
+              typeof shift.observations === "string"
+                ? shift.observations.trim()
+                : "",
+            hours: typeof shift.hours === "number" ? shift.hours : undefined,
+          };
+        }) ?? [];
+
+      return {
+        id: entry.id,
+        companyName,
+        hours:
+          typeof entry.hours === "number" && Number.isFinite(entry.hours)
+            ? entry.hours
+            : 0,
+        description: entry.description?.trim() ?? "",
+        shifts,
+      };
+    });
+  }, [companyLookup, selectedDaySummary?.entries]);
+
+  const dayNotes = useMemo(() => {
+    if (!selectedDaySummary?.noteEntries?.length) {
+      return [];
+    }
+    return selectedDaySummary.noteEntries
+      .map((note) => note.text?.trim())
+      .filter((text): text is string => Boolean(text));
+  }, [selectedDaySummary?.noteEntries]);
+
+  const handleShiftDay = useCallback(
+    (delta: number) => {
+      if (!activeWorker || !selectedDayKey) {
+        return;
+      }
+      const current = parseDateKey(selectedDayKey);
+      if (!current) {
+        return;
+      }
+      const nextDate = new Date(current);
+      nextDate.setDate(current.getDate() + delta);
+      setSelectedDayForWorker(
+        activeWorker.id,
+        formatDateKeyForIndividual(nextDate)
+      );
+    },
+    [activeWorker, selectedDayKey, setSelectedDayForWorker]
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[auto_1fr_auto]">
+        <div className="flex justify-start">
+          {totalWorkers > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handlePrevWorker}
+              leftIcon={<ChevronLeft size={16} />}
+            >
+              Anterior
+            </Button>
+          )}
+        </div>
+        <div className="flex flex-col gap-1 text-center text-gray-600 dark:text-gray-300">
+          {activeWorker ? (
+            <>
+              <span className="text-xl font-semibold text-gray-900 dark:text-white">
+                {activeWorker.name}
+              </span>
+              <span className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                {`Trabajador ${activeIndex + 1} de ${totalWorkers}`}
+              </span>
+            </>
+          ) : (
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">
+              Sin trabajadores seleccionados
+            </span>
+          )}
+        </div>
+        <div className="flex justify-end">
+          {totalWorkers > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleNextWorker}
+              rightIcon={<ChevronRight size={16} />}
+            >
+              Siguiente
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {!activeWorker ? (
+        <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+          Selecciona uno o más trabajadores y pulsa “Mostrar resultados”.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center">
+                <h3 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
+                  <CalendarDays
+                    size={20}
+                    className="mr-2 text-blue-600 dark:text-blue-400"
+                  />
+                  Calendario de horas
+                </h3>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {calendarEntry?.error && (
+                <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+                  {calendarEntry.error}
+                </div>
+              )}
+              <WorkerHoursCalendar
+                worker={activeWorker}
+                selectedMonth={calendarMonth}
+                hoursByDate={calendarEntry?.hoursByDate ?? {}}
+                onMonthChange={handleMonthChange}
+                isLoading={calendarEntry?.isLoading}
+                hideTitle
+                selectedDayKey={selectedDayKey}
+                onSelectedDayChange={(dayKey) =>
+                  setSelectedDayForWorker(activeWorker.id, dayKey)
+                }
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <h3 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
+                  <Clock
+                    size={20}
+                    className="mr-2 text-blue-600 dark:text-blue-400"
+                  />
+                  Registro de horas
+                </h3>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => handleShiftDay(-1)}
+                    disabled={!selectedDayKey}
+                    aria-label="Día anterior"
+                  >
+                    <ChevronLeft size={18} />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => handleShiftDay(1)}
+                    disabled={!selectedDayKey}
+                    aria-label="Día siguiente"
+                  >
+                    <ChevronRight size={18} />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!selectedDayKey ? (
+                <div className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                  Selecciona un día en el calendario para ver el detalle.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-gray-700 dark:bg-gray-900/40">
+                    <span className="font-semibold text-gray-900 dark:text-gray-100">
+                      {dayFullLabel}
+                    </span>
+                    {weekdayLabel && (
+                      <span className="uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                        {weekdayLabel}
+                      </span>
+                    )}
+                    <span className="text-sm text-gray-600 dark:text-gray-300">
+                      Total registrado:{" "}
+                      <span className="font-semibold text-blue-600 dark:text-blue-300">
+                        {formatHours(selectedDaySummary?.totalHours ?? 0)}
+                      </span>
+                    </span>
+                  </div>
+
+                  {selectedDaySummary?.companies?.length ? (
+                    <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                      <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
+                        <thead className="bg-gray-50 dark:bg-gray-800">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-700 dark:text-gray-200">
+                              Empresa
+                            </th>
+                            <th className="px-3 py-2 text-right font-semibold text-gray-700 dark:text-gray-200">
+                              Horas
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                          {selectedDaySummary.companies.map((company) => (
+                            <tr
+                              key={`${selectedDayKey}-${
+                                company.companyId ?? company.name ?? "sin"
+                              }`}
+                            >
+                              <td className="px-3 py-2 text-gray-800 dark:text-gray-100">
+                                {company.name?.trim() ||
+                                  companyLookup[company.companyId ?? ""] ||
+                                  "Sin empresa"}
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium text-gray-800 dark:text-gray-100">
+                                {formatHours(company.hours)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-400">
+                      No hay horas registradas para este día.
+                    </div>
+                  )}
+
+                  {groupedEntries.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                        Detalle de registros
+                      </h4>
+                      {groupedEntries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-700 dark:bg-gray-900/40"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-gray-900 dark:text-gray-100">
+                              {entry.companyName}
+                            </span>
+                            <span className="font-semibold text-blue-600 dark:text-blue-300">
+                              {formatHours(entry.hours)}
+                            </span>
+                          </div>
+                          {entry.description && (
+                            <p className="mt-2 text-gray-600 dark:text-gray-300">
+                              {entry.description}
+                            </p>
+                          )}
+                          {entry.shifts.length > 0 && (
+                            <ul className="mt-2 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+                              {entry.shifts.map((shift) => (
+                                <li key={shift.id}>
+                                  <span className="font-medium text-gray-600 dark:text-gray-300">
+                                    {shift.label}
+                                  </span>
+                                  {shift.hours !== undefined && (
+                                    <span className="ml-2 text-gray-500 dark:text-gray-400">
+                                      ({formatHours(shift.hours)})
+                                    </span>
+                                  )}
+                                  {shift.observations && (
+                                    <span className="ml-2 italic text-gray-500 dark:text-gray-400">
+                                      {shift.observations}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {dayNotes.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                        Notas del día
+                      </h4>
+                      <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-300">
+                        {dayNotes.map((note, index) => (
+                          <li
+                            key={`${selectedDayKey}-note-${index}`}
+                            className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40"
+                          >
+                            {note}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const MultipleHoursRegistryPage: React.FC = () => {
   const { externalJwt } = useAuthStore();
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
@@ -3276,7 +3910,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     useState<boolean>(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [workersError, setWorkersError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"company" | "worker">("company");
+  const [viewMode, setViewMode] = useState<"company" | "worker" | "individual">(
+    "company"
+  );
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [companyGroupsCollapsed, setCompanyGroupsCollapsed] = useState(false);
   const [workerGroupsCollapsed, setWorkerGroupsCollapsed] = useState(false);
@@ -3285,6 +3921,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   >({});
   const [isLoadingWeekData, setIsLoadingWeekData] = useState(false);
   const [weekDataError, setWeekDataError] = useState<string | null>(null);
+  const [individualViewIndex, setIndividualViewIndex] = useState(0);
   const companyLastClickRef = useRef<number | null>(null);
   const workerLastClickRef = useRef<number | null>(null);
   const [segmentsByAssignment, setSegmentsByAssignment] = useState<
@@ -3531,6 +4168,24 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [requestedWorkerIds]
   );
 
+  useEffect(() => {
+    if (viewMode !== "individual") {
+      return;
+    }
+    if (!visibleWorkerIds.length) {
+      if (individualViewIndex !== 0) {
+        setIndividualViewIndex(0);
+      }
+      return;
+    }
+    setIndividualViewIndex((prev) => {
+      if (prev >= 0 && prev < visibleWorkerIds.length) {
+        return prev;
+      }
+      return visibleWorkerIds.length - 1;
+    });
+  }, [viewMode, visibleWorkerIds.length, individualViewIndex]);
+
   const visibleWorkerIdsKey = useMemo(() => {
     if (requestedWorkerIds === null) {
       return null;
@@ -3540,6 +4195,40 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     }
     return requestedWorkerIds.slice().sort().join("|");
   }, [requestedWorkerIds]);
+
+  useEffect(() => {
+    if (viewMode !== "individual") {
+      return;
+    }
+    setIndividualViewIndex(0);
+  }, [viewMode, visibleWorkerIdsKey]);
+
+  const individualWorkers = useMemo(() => {
+    if (!visibleWorkerIds.length) {
+      return [] as Worker[];
+    }
+    const map = new Map(allWorkers.map((worker) => [worker.id, worker]));
+    return visibleWorkerIds
+      .map((workerId) => map.get(workerId) ?? null)
+      .filter((worker): worker is Worker => worker !== null);
+  }, [allWorkers, visibleWorkerIds]);
+
+  const effectiveIndividualIndex = useMemo(() => {
+    if (!individualWorkers.length) {
+      return 0;
+    }
+    if (individualViewIndex < 0) {
+      return 0;
+    }
+    if (individualViewIndex >= individualWorkers.length) {
+      return individualWorkers.length - 1;
+    }
+    return individualViewIndex;
+  }, [individualViewIndex, individualWorkers.length]);
+
+  const handleIndividualIndexChange = useCallback((nextIndex: number) => {
+    setIndividualViewIndex(nextIndex);
+  }, []);
 
   const selectionWorkerIdsKey = useMemo(() => {
     if (!selectionWorkerIds.length) {
@@ -3915,7 +4604,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       );
   }, [totalsContext, visibleAssignments, visibleDays]);
 
-  const currentGroups = viewMode === "company" ? companyGroups : workerGroups;
+  const currentGroups =
+    viewMode === "company"
+      ? companyGroups
+      : viewMode === "worker"
+      ? workerGroups
+      : [];
 
   const collapseAllCurrentGroups = useCallback(() => {
     setExpandedGroups(new Set());
@@ -3927,7 +4621,11 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
   useEffect(() => {
     const isCollapsed =
-      viewMode === "company" ? companyGroupsCollapsed : workerGroupsCollapsed;
+      viewMode === "company"
+        ? companyGroupsCollapsed
+        : viewMode === "worker"
+        ? workerGroupsCollapsed
+        : false;
     if (isCollapsed) {
       return;
     }
@@ -4051,9 +4749,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           if (!baselineNote) {
             return true;
           }
-          return (
-            baselineNote.id !== note.id || baselineNote.text !== note.text
-          );
+          return baselineNote.id !== note.id || baselineNote.text !== note.text;
         });
 
       setNoteOriginalsByDay((prev) => {
@@ -5145,6 +5841,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     workerGroupsCollapsed,
   ]);
 
+  const handleIndividualButtonClick = useCallback(() => {
+    setViewMode("individual");
+    setCompanyGroupsCollapsed(false);
+    setWorkerGroupsCollapsed(false);
+    companyLastClickRef.current = null;
+    workerLastClickRef.current = null;
+  }, []);
+
   const handleSaveAll = useCallback(async () => {
     if (isSavingAll) {
       return;
@@ -5252,7 +5956,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const isDeletion =
           primaryEntry !== null &&
-          ((manualInputProvided && hoursValue <= 0 &&
+          ((manualInputProvided &&
+            hoursValue <= 0 &&
             (storedSegments !== undefined
               ? (storedShiftPayload?.length ?? 0) === 0
               : fallbackShiftPayload.length === 0)) ||
@@ -5274,8 +5979,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         };
 
         if (manualInputProvided) {
-          payloadItem.value =
-            hoursValue > 0 ? hoursValue.toFixed(2) : "0";
+          payloadItem.value = hoursValue > 0 ? hoursValue.toFixed(2) : "0";
         } else if (isDeletion) {
           payloadItem.value = "0";
         } else if (
@@ -5283,9 +5987,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           storedSegments !== undefined &&
           (storedShiftPayload?.length ?? 0) > 0
         ) {
-          const minutesFromSegments = calculateSegmentsTotalMinutes(
-            storedSegments
-          );
+          const minutesFromSegments =
+            calculateSegmentsTotalMinutes(storedSegments);
           if (minutesFromSegments > 0) {
             payloadItem.value = (minutesFromSegments / 60).toFixed(2);
           }
@@ -5436,9 +6139,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       for (const workerPayload of workersPayload.values()) {
         const orderedPayload = workerPayload
           .slice()
-          .sort(
-            (a, b) => a.controlScheduleType - b.controlScheduleType
-          );
+          .sort((a, b) => a.controlScheduleType - b.controlScheduleType);
         const response = await fetch(endpoint, {
           method: "POST",
           headers: {
@@ -6037,20 +6738,32 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         <Card>
           <CardHeader className="gap-3">
             <div className="grid w-full grid-cols-1 items-center gap-3 lg:grid-cols-[1fr_auto_1fr] lg:gap-4">
-              <div className="flex items-center justify-center gap-2 lg:justify-start">
+              <div className="flex flex-col items-center justify-center gap-1 lg:items-start">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Vista
+                </span>
                 <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1 dark:bg-gray-800">
                   {[
-                    { value: "company", label: "Por empresa" },
-                    { value: "worker", label: "Por trabajador" },
+                    {
+                      value: "company" as const,
+                      label: "Empresa",
+                      handler: handleCompanyButtonClick,
+                    },
+                    {
+                      value: "worker" as const,
+                      label: "Trabajador",
+                      handler: handleWorkerButtonClick,
+                    },
+                    {
+                      value: "individual" as const,
+                      label: "Individual",
+                      handler: handleIndividualButtonClick,
+                    },
                   ].map((option) => (
                     <button
                       key={option.value}
                       type="button"
-                      onClick={
-                        option.value === "company"
-                          ? handleCompanyButtonClick
-                          : handleWorkerButtonClick
-                      }
+                      onClick={option.handler}
                       className={`px-4 py-2 text-sm font-medium rounded-full transition ${
                         viewMode === option.value
                           ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
@@ -6116,7 +6829,22 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               </div>
             )}
 
-            {!hasRequestedResults ? (
+            {viewMode === "individual" ? (
+              !hasRequestedResults ? (
+                <div className="rounded-xl border border-dashed border-blue-200 bg-blue-50 p-12 text-center text-blue-700 dark:border-blue-400/40 dark:bg-blue-950/20 dark:text-blue-200">
+                  Pulsa "Mostrar resultados" para cargar los registros horarios.
+                </div>
+              ) : (
+                <IndividualModeView
+                  workers={individualWorkers}
+                  activeIndex={effectiveIndividualIndex}
+                  onActiveIndexChange={handleIndividualIndexChange}
+                  apiUrl={apiUrl ?? null}
+                  token={externalJwt ?? null}
+                  companyLookup={companyLookupMap}
+                />
+              )
+            ) : !hasRequestedResults ? (
               <div className="rounded-xl border border-dashed border-blue-200 bg-blue-50 p-12 text-center text-blue-700 dark:border-blue-400/40 dark:bg-blue-950/20 dark:text-blue-200">
                 Pulsa "Mostrar resultados" para cargar los registros horarios.
               </div>
