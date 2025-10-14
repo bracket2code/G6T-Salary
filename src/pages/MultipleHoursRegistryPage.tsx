@@ -6739,70 +6739,67 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           <CardHeader className="gap-3">
             <div className="grid w-full grid-cols-1 items-center gap-3 lg:grid-cols-[1fr_auto_1fr] lg:gap-4">
               <div className="flex items-center justify-center lg:justify-start">
-                <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
-                  <span
-                    className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400"
-                    aria-hidden="true"
-                  >
+                <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 shadow-sm dark:bg-gray-800">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-gray-500 dark:text-gray-400">
                     Vista
                   </span>
-                  {[
-                    {
-                      value: "company" as const,
-                      label: "Empresa",
-                      handler: handleCompanyButtonClick,
-                    },
-                    {
-                      value: "worker" as const,
-                      label: "Trabajador",
-                      handler: handleWorkerButtonClick,
-                    },
-                    {
-                      value: "individual" as const,
-                      label: "Individual",
-                      handler: handleIndividualButtonClick,
-                    },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={option.handler}
-                      className={`px-4 py-2 text-sm font-medium rounded-full transition ${
-                        viewMode === option.value
-                          ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
-                          : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      {
+                        value: "company" as const,
+                        label: "Empresa",
+                        handler: handleCompanyButtonClick,
+                      },
+                      {
+                        value: "worker" as const,
+                        label: "Trabajador",
+                        handler: handleWorkerButtonClick,
+                      },
+                      {
+                        value: "individual" as const,
+                        label: "Individual",
+                        handler: handleIndividualButtonClick,
+                      },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={option.handler}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-full transition ${
+                          viewMode === option.value
+                            ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
+                            : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="flex items-center justify-center gap-3 lg:justify-self-center">
-                <div className="flex flex-wrap items-center justify-center gap-2">
+                <div className="flex flex-wrap items-center justify-center gap-1.5">
                   <Button
-                    size="sm"
+                    size="icon"
                     variant="ghost"
                     onClick={() => shiftSelectedRange(-1)}
-                    leftIcon={<ChevronLeft size={16} />}
                     aria-label="Rango anterior"
-                    className="px-2 sm:px-3"
+                    className="h-9 w-7 rounded-md"
                   >
-                    <span className="hidden sm:inline">Anterior</span>
+                    <ChevronLeft size={18} />
                   </Button>
                   <DateRangePicker
                     value={{ from: selectedRange.start, to: selectedRange.end }}
                     onChange={handleRangeSelect}
                   />
                   <Button
-                    size="sm"
+                    size="icon"
                     variant="ghost"
                     onClick={() => shiftSelectedRange(1)}
-                    rightIcon={<ChevronRight size={16} />}
                     aria-label="Rango siguiente"
-                    className="px-2 sm:px-3"
+                    className="h-9 w-7 rounded-md"
                   >
-                    <span className="hidden sm:inline">Siguiente</span>
+                    <ChevronRight size={18} />
                   </Button>
                 </div>
               </div>
