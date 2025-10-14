@@ -32,7 +32,7 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
 }) => {
   return (
     <div
-      className={`px-4 sm:px-6 py-3 border-b border-gray-100 dark:border-gray-700 transition-colors duration-200 w-full max-w-full ${className}`}
+      className={`sm:px-4 py-3 border-b border-gray-100 dark:border-gray-700 transition-colors duration-200 w-full max-w-full ${className}`}
     >
       {children}
     </div>

@@ -13,7 +13,7 @@ export interface DayNoteEntry {
   companyId?: string;
   companyName?: string;
   text: string;
-  origin?: 'note' | 'description' | 'generated';
+  origin?: "note" | "description" | "generated";
   raw?: unknown;
 }
 
@@ -103,8 +103,9 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
   selectedDayKey,
   onSelectedDayChange,
 }) => {
-  const [internalSelectedDayKey, setInternalSelectedDayKey] =
-    useState<string | null>(null);
+  const [internalSelectedDayKey, setInternalSelectedDayKey] = useState<
+    string | null
+  >(null);
 
   const effectiveSelectedDayKey =
     selectedDayKey !== undefined ? selectedDayKey : internalSelectedDayKey;
@@ -258,7 +259,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
 
   return (
     <Card>
-      <CardHeader className="py-6">
+      <CardHeader>
         <div className="flex flex-col gap-2 pb-4">
           {!hideTitle && (
             <div className="flex w-full flex-col gap-1">
@@ -284,7 +285,7 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
             >
               <ChevronLeft size={16} />
             </Button>
-            <span className="text-lg font-semibold text-gray-700 dark:text-gray-300 min-w-[140px] text-center">
+            <span className="text-2xl font-semibold text-gray-700 dark:text-gray-300 min-w-[140px] text-center">
               {formatMonthTitle(selectedMonth)}
             </span>
             <Button
@@ -366,7 +367,8 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                         ? "ring-1 ring-blue-400"
                         : ""
                     } ${
-                      effectiveSelectedDayKey === day.dayKey && day.isCurrentMonth
+                      effectiveSelectedDayKey === day.dayKey &&
+                      day.isCurrentMonth
                         ? "ring-2 ring-blue-500"
                         : ""
                     }`}
@@ -469,7 +471,11 @@ export const WorkerHoursCalendar: React.FC<WorkerHoursCalendarProps> = ({
                   <h4 className="font-semibold">Notas del día</h4>
                   <ul className="mt-2 space-y-1 text-sm">
                     {selectedNotes.map((note, index) => (
-                      <li key={`${effectiveSelectedDayKey ?? 'day'}-note-${index}`}>
+                      <li
+                        key={`${
+                          effectiveSelectedDayKey ?? "day"
+                        }-note-${index}`}
+                      >
                         • {note}
                       </li>
                     ))}
