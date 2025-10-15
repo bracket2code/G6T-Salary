@@ -5068,7 +5068,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         setIsLoadingGroupOptions(false);
       } catch (groupError) {
         console.error(
-          "No se pudieron obtener los grupos para registro múltiple",
+          "No se pudieron obtener los grupos para registro",
           groupError
         );
         const fallbackIds = workers.map((worker) => worker.id);
@@ -5088,7 +5088,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
       setLastFetchTime(new Date());
     } catch (error) {
-      console.error("Error fetching workers para registro múltiple", error);
+      console.error("Error fetching workers para registro", error);
       setWorkersError("No se pudieron cargar los trabajadores");
       setAllWorkers([]);
       setAssignments(initialAssignments.map(withNormalizedCompany));
@@ -5926,7 +5926,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     <>
       <div className="space-y-6 w-full max-w-full min-w-0">
         <PageHeader
-          title="Registro Múltiple"
+          title="Registro"
           description="Registra y compara las horas semanales por empresa o trabajador sin perder los totales diarios."
         />
 

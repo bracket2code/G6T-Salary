@@ -19,8 +19,6 @@ export const Dashboard: React.FC = () => {
       case 'calculator':
         navigate('/calculator');
         break;
-      case 'multiple':
-        navigate('/multiple');
         break;
       case 'hours':
         navigate('/hours');
@@ -105,15 +103,6 @@ export const Dashboard: React.FC = () => {
               <p className="text-xs text-gray-600 dark:text-gray-400 text-center">Individual</p>
             </div>
 
-            <div 
-              className="flex-1 bg-white dark:bg-gray-800 rounded-xl shadow-sm border-0 p-4 cursor-pointer hover:shadow-md transition-all duration-200 flex flex-col items-center justify-center min-h-[80px]"
-              onClick={() => handleNavigateToSection('multiple')}
-            >
-              <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg mb-2">
-                <Users size={24} className="text-green-600 dark:text-green-400" />
-              </div>
-              <p className="text-xs text-gray-600 dark:text-gray-400 text-center">Múltiple</p>
-            </div>
 
             <div 
               className="flex-1 bg-white dark:bg-gray-800 rounded-xl shadow-sm border-0 p-4 cursor-pointer hover:shadow-md transition-all duration-200 flex flex-col items-center justify-center min-h-[80px]"
@@ -122,7 +111,7 @@ export const Dashboard: React.FC = () => {
               <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg mb-2">
                 <Clock size={24} className="text-purple-600 dark:text-purple-400" />
               </div>
-              <p className="text-xs text-gray-600 dark:text-gray-400 text-center">Horas</p>
+              <p className="text-xs text-gray-600 dark:text-gray-400 text-center">Horas Múltiple</p>
             </div>
 
             <div 
@@ -158,29 +147,12 @@ export const Dashboard: React.FC = () => {
 
           <Card 
             className="hover:shadow-lg transition-shadow duration-200 border-0 shadow-sm cursor-pointer"
-            onClick={() => handleNavigateToSection('multiple')}
-          >
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">Cálculo Múltiple</p>
-                  <p className="text-lg font-bold text-gray-900 dark:text-white">Varios</p>
-                </div>
-                <div className="p-2 sm:p-3 bg-green-100 dark:bg-green-900/30 rounded-lg">
-                  <Users size={20} className="text-green-600 dark:text-green-400" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card 
-            className="hover:shadow-lg transition-shadow duration-200 border-0 shadow-sm cursor-pointer"
             onClick={() => handleNavigateToSection('hours')}
           >
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">Registro Individual</p>
+                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">Registro</p>
                   <p className="text-lg font-bold text-gray-900 dark:text-white">Horas</p>
                 </div>
                 <div className="p-2 sm:p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
