@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useId,
+} from "react";
 import { Check, ChevronDown, Search, Users, X } from "lucide-react";
 import { Worker } from "../../types/salary";
 
@@ -31,6 +38,10 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const rawWorkerSearchId = useId();
+  const workerSearchInputId = `worker-search-${
+    rawWorkerSearchId.replace(/[^a-zA-Z0-9_-]/g, "") || "input"
+  }`;
 
   const workersById = useMemo(() => {
     const map = new Map<string, Worker>();
@@ -289,7 +300,10 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+      <label
+        htmlFor={workerSearchInputId}
+        className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+      >
         {label}
       </label>
 
@@ -323,6 +337,8 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
               </span>
             ))}
             <input
+              id={workerSearchInputId}
+              name={workerSearchInputId}
               type="text"
               value={searchQuery}
               onChange={handleInputChange}
@@ -471,6 +487,10 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const rawGroupSearchId = useId();
+  const groupSearchInputId = `group-search-${
+    rawGroupSearchId.replace(/[^a-zA-Z0-9_-]/g, "") || "input"
+  }`;
 
   const groupsById = useMemo(() => {
     const map = new Map<string, WorkerGroupOption>();
@@ -758,7 +778,10 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+      <label
+        htmlFor={groupSearchInputId}
+        className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+      >
         Grupos
       </label>
 
@@ -792,6 +815,8 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
               </span>
             ))}
             <input
+              id={groupSearchInputId}
+              name={groupSearchInputId}
               type="text"
               value={searchQuery}
               onChange={handleInputChange}
@@ -932,6 +957,16 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const rawCompanySearchId = useId();
+  const companySearchInputId = `company-search-${
+    rawCompanySearchId.replace(/[^a-zA-Z0-9_-]/g, "") || "input"
+  }`;
+  const trimmedCompanyLabel =
+    typeof label === "string" ? label.trim() : undefined;
+  const companySearchAriaLabel =
+    trimmedCompanyLabel && trimmedCompanyLabel.length > 0
+      ? trimmedCompanyLabel
+      : "Buscar empresa";
 
   const optionsByValue = useMemo(() => {
     const map = new Map<string, CompanySearchOption>();
@@ -1139,9 +1174,14 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        {label}
-      </label>
+      {trimmedCompanyLabel && (
+        <label
+          htmlFor={companySearchInputId}
+          className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+        >
+          {trimmedCompanyLabel}
+        </label>
+      )}
 
       <div
         className={`
@@ -1173,6 +1213,9 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
               </span>
             ))}
             <input
+              id={companySearchInputId}
+              name={companySearchInputId}
+              aria-label={companySearchAriaLabel}
               type="text"
               value={searchQuery}
               onChange={handleInputChange}

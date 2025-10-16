@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  useId,
 } from "react";
 import { addDays, differenceInCalendarDays } from "date-fns";
 import {
@@ -630,6 +631,15 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
     isNew: boolean;
     original?: DayNoteEntry;
   } | null>(null);
+  const rawNoteFieldId = useId();
+  const noteFieldId = `day-note-${
+    rawNoteFieldId.replace(/[^a-zA-Z0-9_-]/g, "") || "field"
+  }`;
+  const noteHelperId = `${noteFieldId}-helper`;
+  const noteFieldName = `day-note-${workerId}-${dateKey}`.replace(
+    /[^a-zA-Z0-9_-]/g,
+    "-"
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -751,10 +761,16 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
           <div className="space-y-3">
-            <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+            <label
+              htmlFor={noteFieldId}
+              className="block text-sm font-semibold text-gray-700 dark:text-gray-200"
+            >
               Nota del día
-            </p>
+            </label>
             <textarea
+              id={noteFieldId}
+              name={noteFieldName}
+              aria-describedby={noteHelperId}
               value={editableNote?.text ?? ""}
               onChange={(event) =>
                 setEditableNote((previous) =>
@@ -774,7 +790,10 @@ const DayNotesModal: React.FC<DayNotesModalProps> = ({
               className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/40"
               placeholder="Escribe la nota para este día..."
             />
-            <p className="text-xs text-gray-500 dark:text-gray-400">
+            <p
+              id={noteHelperId}
+              className="text-xs text-gray-500 dark:text-gray-400"
+            >
               Solo se permite una nota por día. Para eliminarla, deja el campo
               vacío y guarda los cambios.
             </p>
@@ -2668,6 +2687,28 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [showIcons, setShowIcons] = useState<boolean>(() => !isCompactLayout);
+  const hourInputIdBase = `hours-${assignment.id}-${day.dateKey}`.replace(
+    /[^a-zA-Z0-9_-]/g,
+    "-"
+  );
+  const hourInputId = hourInputIdBase.length ? hourInputIdBase : "hours-entry";
+  const hourInputName = hourInputId;
+  const companyNameTrimmed = assignment.companyName.trim();
+  const shouldIncludeCompany =
+    companyNameTrimmed.length > 0 &&
+    !UNASSIGNED_COMPANY_NAME_VARIANTS.has(companyNameTrimmed.toLowerCase());
+  const hourInputContext = [
+    assignment.workerName,
+    shouldIncludeCompany ? companyNameTrimmed : null,
+    displayLabel,
+  ].filter(
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0
+  );
+  const hourInputAriaLabel =
+    hourInputContext.length > 0
+      ? `Horas registradas para ${hourInputContext.join(" · ")}`
+      : "Horas registradas";
 
   useEffect(() => {
     const element = containerRef.current;
@@ -2802,6 +2843,8 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
             </button>
           )}
           <Input
+            id={hourInputId}
+            name={hourInputName}
             size="sm"
             type="text"
             inputMode="decimal"
@@ -2812,6 +2855,7 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
             onKeyDown={handleInputKeyDown}
             data-hour-input="true"
             data-day-key={day.dateKey}
+            aria-label={hourInputAriaLabel}
             className={`${inputSizingClasses} text-center ${highlightClass}`}
             placeholder="0"
             title={inputTitle}
@@ -3707,7 +3751,7 @@ const IndividualModeView: React.FC<IndividualModeViewProps> = ({
                     size={20}
                     className="mr-2 text-blue-600 dark:text-blue-400"
                   />
-                  Registro de horas
+                  Registro
                 </h3>
                 <div className="flex items-center gap-2">
                   <Button
@@ -3913,6 +3957,16 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<"company" | "worker" | "individual">(
     "company"
   );
+  const rawShowInactiveId = useId();
+  const showInactiveCheckboxId = `show-inactive-${
+    rawShowInactiveId.replace(/[^a-zA-Z0-9_-]/g, "") || "toggle"
+  }`;
+  const showInactiveCheckboxName = showInactiveCheckboxId;
+  const rawShowUnassignedId = useId();
+  const showUnassignedCheckboxId = `show-unassigned-${
+    rawShowUnassignedId.replace(/[^a-zA-Z0-9_-]/g, "") || "toggle"
+  }`;
+  const showUnassignedCheckboxName = showUnassignedCheckboxId;
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [companyGroupsCollapsed, setCompanyGroupsCollapsed] = useState(false);
   const [workerGroupsCollapsed, setWorkerGroupsCollapsed] = useState(false);
@@ -6561,7 +6615,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     <>
       <div className="space-y-6 w-full max-w-full min-w-0">
         <PageHeader
-          title="Registro Múltiple"
+          title="Registro"
           description="Registra y compara las horas semanales por empresa o trabajador sin perder los totales diarios."
         />
 
@@ -6627,8 +6681,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                 )}
 
                 <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600 dark:text-gray-300">
-                  <label className="flex items-center gap-2">
+                  <label
+                    htmlFor={showInactiveCheckboxId}
+                    className="flex items-center gap-2"
+                  >
                     <input
+                      id={showInactiveCheckboxId}
+                      name={showInactiveCheckboxName}
                       type="checkbox"
                       checked={showInactiveWorkers}
                       onChange={(event) =>
@@ -6639,8 +6698,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                     Mostrar todos (incluye bajas)
                   </label>
 
-                  <label className="flex items-center gap-2">
+                  <label
+                    htmlFor={showUnassignedCheckboxId}
+                    className="flex items-center gap-2"
+                  >
                     <input
+                      id={showUnassignedCheckboxId}
+                      name={showUnassignedCheckboxName}
                       type="checkbox"
                       checked={showUnassignedWorkers}
                       onChange={(event) =>
