@@ -15,12 +15,14 @@ import {
   Sigma,
   ChevronDown,
   Plus,
+  Clock,
 } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
+import { TextArea } from "../components/ui/TextArea";
 import {
   CompanySearchSelect,
   GroupSearchSelect,
@@ -29,8 +31,15 @@ import {
 } from "../components/worker/GroupSelectors";
 import { Worker } from "../types/salary";
 import { useAuthStore } from "../store/authStore";
-import { fetchWorkersData } from "../lib/salaryData";
+import {
+  fetchWorkerHoursSummary,
+  fetchWorkersData,
+} from "../lib/salaryData";
 import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
+import {
+  WorkerHoursCalendar,
+  type DayHoursSummary,
+} from "../components/WorkerHoursCalendar";
 
 interface WorkerCalculation {
   workerId: string;
@@ -40,6 +49,8 @@ interface WorkerCalculation {
   overtimeHours: string;
   bonuses: string;
   deductions: string;
+  period: "monthly" | "weekly" | "daily";
+  notes: string;
   results?: {
     grossSalary: number;
     netSalary: number;
@@ -60,6 +71,14 @@ interface WorkerOtherOperation {
   label: string;
   amount: string;
   type: WorkerOtherOperationType;
+}
+
+interface WorkerCalendarState {
+  month: Date;
+  hoursByDate: Record<string, DayHoursSummary>;
+  isLoading: boolean;
+  error: string | null;
+  hasLoaded: boolean;
 }
 
 const OTHER_OPERATION_TYPE_OPTIONS: Array<{
@@ -265,14 +284,47 @@ export const MultipleCalculatorPage: React.FC = () => {
     useState<boolean>(false);
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [workersError, setWorkersError] = useState<string | null>(null);
-  const [period, setPeriod] = useState("monthly");
   const [calculations, setCalculations] = useState<WorkerCalculation[]>([]);
   const [otherOperationsByWorker, setOtherOperationsByWorker] = useState<
     Record<string, WorkerOtherOperation[]>
   >({});
+  const [calendarByWorker, setCalendarByWorker] = useState<
+    Record<string, WorkerCalendarState>
+  >({});
   const [isCalcDataCollapsed, setIsCalcDataCollapsed] = useState(false);
+  const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
   const [isOtherOpsCollapsed, setIsOtherOpsCollapsed] = useState(false);
   const [isResultsCollapsed, setIsResultsCollapsed] = useState(false);
+
+  const createInitialMonth = () => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  };
+
+  const createDefaultCalendarState = (): WorkerCalendarState => ({
+    month: createInitialMonth(),
+    hoursByDate: {},
+    isLoading: false,
+    error: null,
+    hasLoaded: false,
+  });
+
+  const formatPeriodLabel = (value: WorkerCalculation["period"]) => {
+    switch (value) {
+      case "weekly":
+        return "Semanal";
+      case "daily":
+        return "Diario";
+      default:
+        return "Mensual";
+    }
+  };
+
+  const formatHoursValue = (value: number) =>
+    new Intl.NumberFormat("es-ES", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
 
   const rawShowInactiveId = useId();
   const showInactiveCheckboxId = `show-inactive-${
@@ -550,7 +602,11 @@ export const MultipleCalculatorPage: React.FC = () => {
         );
 
         if (existingCalc) {
-          return existingCalc;
+          return {
+            ...existingCalc,
+            period: existingCalc.period ?? "monthly",
+            notes: existingCalc.notes ?? "",
+          };
         }
 
         return {
@@ -563,6 +619,8 @@ export const MultipleCalculatorPage: React.FC = () => {
           overtimeHours: "0",
           bonuses: "0",
           deductions: "0",
+          period: "monthly",
+          notes: "",
         };
       })
     );
@@ -598,6 +656,153 @@ export const MultipleCalculatorPage: React.FC = () => {
       return changed ? next : previous;
     });
   }, [normalizedSelectedWorkerIds]);
+
+  useEffect(() => {
+    setCalendarByWorker((previous) => {
+      let changed = false;
+      const next: Record<string, WorkerCalendarState> = {};
+
+      normalizedSelectedWorkerIds.forEach((workerId) => {
+        const existing = previous[workerId];
+        if (existing) {
+          next[workerId] = existing;
+        } else {
+          next[workerId] = createDefaultCalendarState();
+          changed = true;
+        }
+      });
+
+      if (!changed) {
+        const previousKeys = Object.keys(previous);
+        if (previousKeys.length !== normalizedSelectedWorkerIds.length) {
+          changed = true;
+        } else {
+          for (const key of previousKeys) {
+            if (!(key in next)) {
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+
+      return changed ? next : previous;
+    });
+  }, [normalizedSelectedWorkerIds]);
+
+  const fetchCalendarForWorker = useCallback(
+    async (workerId: string, month: Date) => {
+      if (!apiUrl || !externalJwt) {
+        setCalendarByWorker((previous) => {
+          const current = previous[workerId] ?? createDefaultCalendarState();
+          return {
+            ...previous,
+            [workerId]: {
+              ...current,
+              month,
+              isLoading: false,
+              error: "Falta configuración de API o token",
+              hasLoaded: true,
+            },
+          };
+        });
+        return;
+      }
+
+      setCalendarByWorker((previous) => {
+        const current = previous[workerId] ?? createDefaultCalendarState();
+        return {
+          ...previous,
+          [workerId]: {
+            ...current,
+            month,
+            isLoading: true,
+            error: null,
+          },
+        };
+      });
+
+      try {
+        const summary = await fetchWorkerHoursSummary({
+          apiUrl,
+          token: externalJwt,
+          workerId,
+          month,
+          companyLookup: companyLookupMap,
+        });
+
+        setCalendarByWorker((previous) => ({
+          ...previous,
+          [workerId]: {
+            month,
+            hoursByDate: summary.hoursByDate,
+            isLoading: false,
+            error: null,
+            hasLoaded: true,
+          },
+        }));
+      } catch (error) {
+        console.error(
+          `Error fetching calendar for worker ${workerId}`,
+          error
+        );
+        const message =
+          error instanceof Error
+            ? error.message
+            : "No se pudieron cargar las horas";
+        setCalendarByWorker((previous) => {
+          const current = previous[workerId] ?? createDefaultCalendarState();
+          return {
+            ...previous,
+            [workerId]: {
+              ...current,
+              month,
+              isLoading: false,
+              error: message,
+              hasLoaded: true,
+            },
+          };
+        });
+      }
+    },
+    [apiUrl, externalJwt, companyLookupMap]
+  );
+
+  const handleCalendarMonthChange = useCallback(
+    (workerId: string, nextMonth: Date) => {
+      setCalendarByWorker((previous) => {
+        const current = previous[workerId] ?? createDefaultCalendarState();
+        return {
+          ...previous,
+          [workerId]: {
+            ...current,
+            month: nextMonth,
+            hasLoaded: false,
+          },
+        };
+      });
+      void fetchCalendarForWorker(workerId, nextMonth);
+    },
+    [fetchCalendarForWorker]
+  );
+
+  const handleCalendarRefresh = useCallback(
+    (workerId: string) => {
+      const currentMonth =
+        calendarByWorker[workerId]?.month ?? createInitialMonth();
+      void fetchCalendarForWorker(workerId, currentMonth);
+    },
+    [calendarByWorker, fetchCalendarForWorker]
+  );
+
+  useEffect(() => {
+    normalizedSelectedWorkerIds.forEach((workerId) => {
+      const state = calendarByWorker[workerId];
+      if (state && !state.hasLoaded && !state.isLoading) {
+        void fetchCalendarForWorker(workerId, state.month);
+      }
+    });
+  }, [normalizedSelectedWorkerIds, calendarByWorker, fetchCalendarForWorker]);
 
   const addOtherOperation = useCallback(
     (workerId: string, type: WorkerOtherOperationType) => {
@@ -1052,17 +1257,6 @@ export const MultipleCalculatorPage: React.FC = () => {
                 </p>
               )}
 
-              <Select
-                label="Período de Cálculo"
-                value={period}
-                onChange={setPeriod}
-                options={[
-                  { value: "monthly", label: "Mensual" },
-                  { value: "weekly", label: "Semanal" },
-                  { value: "daily", label: "Diario" },
-                ]}
-                fullWidth
-              />
             </div>
           </div>
 
@@ -1188,6 +1382,23 @@ export const MultipleCalculatorPage: React.FC = () => {
                         </Button>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <Select
+                          label="Período"
+                          value={calc.period}
+                          onChange={(value) =>
+                            updateCalculation(
+                              calc.workerId,
+                              "period",
+                              value
+                            )
+                          }
+                          options={[
+                            { value: "monthly", label: "Mensual" },
+                            { value: "weekly", label: "Semanal" },
+                            { value: "daily", label: "Diario" },
+                          ]}
+                          fullWidth
+                        />
                         <Input
                           type="number"
                           label="Sueldo Base (€)"
@@ -1259,6 +1470,20 @@ export const MultipleCalculatorPage: React.FC = () => {
                           fullWidth
                         />
                       </div>
+                      <TextArea
+                        label="Notas"
+                        value={calc.notes}
+                        onChange={(event) =>
+                          updateCalculation(
+                            calc.workerId,
+                            "notes",
+                            event.target.value
+                          )
+                        }
+                        placeholder="Notas adicionales para este cálculo..."
+                        rows={3}
+                        fullWidth
+                      />
                     </div>
                   );
                 })}
@@ -1270,9 +1495,104 @@ export const MultipleCalculatorPage: React.FC = () => {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
-                  <FileText
+                  <Clock size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
+                  Calendario de Horas
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setIsCalendarCollapsed((value) => !value)}
+                  className="p-1 rounded-md border border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+                  aria-label="Mostrar u ocultar calendario de horas"
+                >
+                  <ChevronDown
+                    size={18}
+                    className={`text-gray-600 dark:text-gray-300 transition-transform ${
+                      isCalendarCollapsed ? "" : "rotate-180"
+                    }`}
+                  />
+                </button>
+              </div>
+            </CardHeader>
+            {!isCalendarCollapsed && (
+              <CardContent className="space-y-5">
+                {calculations.map((calc) => {
+                  const calendarState =
+                    calendarByWorker[calc.workerId] ?? createDefaultCalendarState();
+                  const worker = allWorkers.find((w) => w.id === calc.workerId) ?? null;
+                  const monthLabel = calendarState.month.toLocaleDateString("es-ES", {
+                    month: "long",
+                    year: "numeric",
+                  });
+                  const hoursEntries = Object.values(calendarState.hoursByDate ?? {});
+                  const totalTrackedHours = hoursEntries.reduce(
+                    (acc, detail) => acc + (detail?.totalHours ?? 0),
+                    0
+                  );
+                  const totalTrackedDays = hoursEntries.reduce(
+                    (acc, detail) => (detail?.totalHours ? acc + 1 : acc),
+                    0
+                  );
+
+                  return (
+                    <div
+                      key={`calendar-${calc.workerId}`}
+                      className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900/40 space-y-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            {calc.workerName}
+                          </h3>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">
+                            Mes seleccionado: <span className="font-medium capitalize">{monthLabel}</span>
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Horas registradas: {formatHoursValue(totalTrackedHours)} · Días con registro: {totalTrackedDays}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleCalendarRefresh(calc.workerId)}
+                            disabled={calendarState.isLoading}
+                            leftIcon={<RefreshCw size={14} />}
+                          >
+                            Actualizar
+                          </Button>
+                        </div>
+                      </div>
+                      {calendarState.error && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/60 dark:bg-red-900/20 dark:text-red-200">
+                          {calendarState.error}
+                        </div>
+                      )}
+                      <div className="min-w-0 h-full text-xs">
+                        <WorkerHoursCalendar
+                          worker={worker}
+                          selectedMonth={calendarState.month}
+                          hoursByDate={calendarState.hoursByDate}
+                          onMonthChange={(date) =>
+                            handleCalendarMonthChange(calc.workerId, date)
+                          }
+                          isLoading={calendarState.isLoading}
+                          hideTitle
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            )}
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                  <Calculator
                     size={20}
-                    className="mr-2 text-purple-600 dark:text-purple-400"
+                    className="mr-2 text-yellow-600 dark:text-yellow-400"
                   />
                   Otras Operaciones
                 </h2>
@@ -1476,11 +1796,7 @@ export const MultipleCalculatorPage: React.FC = () => {
                                 <p className="text-sm text-gray-500 dark:text-gray-400">
                                   Período seleccionado:{" "}
                                   <span className="font-medium capitalize">
-                                    {period === "monthly"
-                                      ? "Mensual"
-                                      : period === "weekly"
-                                      ? "Semanal"
-                                      : "Diario"}
+                                    {formatPeriodLabel(calc.period)}
                                   </span>
                                 </p>
                               </div>
