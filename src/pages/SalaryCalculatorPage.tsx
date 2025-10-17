@@ -5297,10 +5297,9 @@ export const SalaryCalculatorPage: React.FC = () => {
             ) : (
               <WorkerSearchSelect
                 workers={allWorkers}
-                selectedWorkerIds={selectedWorkerId ? [selectedWorkerId] : []}
-                onSelectionChange={(ids) => setSelectedWorkerId(ids[0] ?? "")}
+                selectedWorkerId={selectedWorkerId}
+                onWorkerSelect={(id) => setSelectedWorkerId(id)}
                 placeholder="Buscar y seleccionar trabajador..."
-                multiSelect={false}
               />
             )}
 
