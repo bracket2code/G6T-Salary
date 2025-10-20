@@ -38,6 +38,7 @@ import {
 import {
   Worker,
   WorkerCompanyContract,
+  WorkerCompanyRelation,
   WorkerCompanyStats,
 } from "../types/salary";
 import { formatDate } from "../lib/utils";
@@ -1932,6 +1933,104 @@ const initialAssignments: Assignment[] = [
 const initialAssignmentWorkerIds = Array.from(
   new Set(initialAssignments.map((assignment) => assignment.workerId))
 );
+
+const sanitizeWorkerForRegistry = (worker: Worker): Worker => {
+  const normalizedCompanyNames = Array.isArray(worker.companyNames)
+    ? worker.companyNames
+        .map((name) => trimToNull(name))
+        .filter((name): name is string => Boolean(name))
+    : undefined;
+
+  const normalizedCompanyRelations = Array.isArray(worker.companyRelations)
+    ? worker.companyRelations
+        .filter(
+          (relation): relation is WorkerCompanyRelation =>
+            relation !== null && typeof relation === "object"
+        )
+        .map((relation) => ({
+          relationId: trimToNull(relation.relationId) ?? undefined,
+          companyId: trimToNull(relation.companyId) ?? undefined,
+          companyName: trimToNull(relation.companyName) ?? undefined,
+        }))
+    : undefined;
+
+  const normalizedCompanyContracts = worker.companyContracts
+    ? Object.fromEntries(
+        Object.entries(worker.companyContracts).map(
+          ([companyName, contracts]) => {
+            const sanitizedContracts = Array.isArray(contracts)
+              ? contracts
+                  .filter(
+                    (contract): contract is WorkerCompanyContract =>
+                      contract !== null && typeof contract === "object"
+                  )
+                  .map((contract) => ({
+                    id: contract.id,
+                    hasContract: Boolean(contract.hasContract),
+                    relationType: contract.relationType,
+                    typeLabel: trimToNull(contract.typeLabel) ?? undefined,
+                    hourlyRate: contract.hourlyRate,
+                    companyId: trimToNull(contract.companyId) ?? undefined,
+                    companyName: trimToNull(contract.companyName) ?? undefined,
+                    label: trimToNull(contract.label) ?? undefined,
+                    position: trimToNull(contract.position) ?? undefined,
+                    description: trimToNull(contract.description) ?? undefined,
+                    startDate: trimToNull(contract.startDate) ?? undefined,
+                    endDate: trimToNull(contract.endDate) ?? undefined,
+                    status: trimToNull(contract.status) ?? undefined,
+                    details: contract.details ?? undefined,
+                  }))
+              : [];
+            return [companyName, sanitizedContracts];
+          }
+        )
+      )
+    : undefined;
+
+  const normalizedCompanyStats = worker.companyStats
+    ? Object.fromEntries(
+        Object.entries(worker.companyStats).map(([key, stats]) => [
+          key,
+          { ...stats },
+        ])
+      )
+    : undefined;
+
+  return {
+    id: worker.id,
+    name: worker.name,
+    email: worker.email,
+    secondaryEmail: worker.secondaryEmail ?? null,
+    situation: worker.situation,
+    isActive: worker.isActive,
+    role: worker.role,
+    phone: worker.phone,
+    createdAt: worker.createdAt,
+    updatedAt: worker.updatedAt ?? null,
+    avatarUrl: worker.avatarUrl ?? null,
+    baseSalary: worker.baseSalary,
+    hourlyRate: worker.hourlyRate,
+    contractType: worker.contractType,
+    department: worker.department,
+    position: worker.position,
+    startDate: worker.startDate,
+    dni: worker.dni,
+    socialSecurity: worker.socialSecurity,
+    birthDate: worker.birthDate,
+    address: worker.address,
+    iban: worker.iban,
+    category: worker.category,
+    categoryId: worker.categoryId,
+    subcategory: worker.subcategory,
+    subcategoryId: worker.subcategoryId,
+    staffType: worker.staffType,
+    companies: worker.companies ?? null,
+    companyNames: normalizedCompanyNames,
+    companyContracts: normalizedCompanyContracts,
+    companyStats: normalizedCompanyStats,
+    companyRelations: normalizedCompanyRelations,
+  };
+};
 
 const generateAssignmentsFromWorkers = (
   workers: Worker[],
@@ -3950,6 +4049,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     initialAssignments.map(withNormalizedCompany)
   );
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
+  const [workerNameById, setWorkerNameById] = useState<Record<string, string>>(
+    {}
+  );
+  const [workerLookupById, setWorkerLookupById] = useState<
+    Record<string, Worker>
+  >({});
+  const [workerLookupByNormalizedId, setWorkerLookupByNormalizedId] =
+    useState<Record<string, Worker>>({});
   const [companyLookupMap, setCompanyLookupMap] = useState<
     Record<string, string>
   >(() => createDefaultCompanyLookupMap());
@@ -4029,6 +4136,38 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [mobileCellActions, setMobileCellActions] =
     useState<MobileCellActionsTarget | null>(null);
 
+  const assignmentIndexes = useMemo(() => {
+    const byWorker = new Map<string, Assignment[]>();
+    const byCompany = new Map<string, Assignment[]>();
+    const companyLabels = new Map<string, string>();
+
+    assignments.forEach((assignment) => {
+      if (!byWorker.has(assignment.workerId)) {
+        byWorker.set(assignment.workerId, []);
+      }
+      byWorker.get(assignment.workerId)!.push(assignment);
+
+      if (!byCompany.has(assignment.companyId)) {
+        byCompany.set(assignment.companyId, []);
+      }
+      byCompany.get(assignment.companyId)!.push(assignment);
+
+      if (!companyLabels.has(assignment.companyId)) {
+        companyLabels.set(assignment.companyId, assignment.companyName);
+      }
+    });
+
+    return {
+      byWorker,
+      byCompany,
+      companyLabels,
+    };
+  }, [assignments]);
+
+  const assignmentsByWorker = assignmentIndexes.byWorker;
+  const assignmentsByCompany = assignmentIndexes.byCompany;
+  const assignmentCompanyLabels = assignmentIndexes.companyLabels;
+
   const clearMobileLongPressTimer = useCallback(() => {
     if (typeof window !== "undefined" && longPressTimerRef.current !== null) {
       window.clearTimeout(longPressTimerRef.current);
@@ -4105,14 +4244,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     });
   }, [showInactiveWorkers, showUnassignedWorkers, workersMatchingGroups]);
 
-  const workerNameById = useMemo(() => {
-    const map: Record<string, string> = {};
-    allWorkers.forEach((worker) => {
-      map[worker.id] = worker.name;
-    });
-    return map;
-  }, [allWorkers]);
-
   const filteredWorkerIdSet = useMemo(
     () => new Set(filteredWorkers.map((worker) => worker.id)),
     [filteredWorkers]
@@ -4129,13 +4260,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const workersForSelect = filteredWorkers;
 
   const companyFilterOptions = useMemo(() => {
-    const labelMap = new Map<string, string>();
-
-    assignments.forEach((assignment) => {
-      if (!labelMap.has(assignment.companyId)) {
-        labelMap.set(assignment.companyId, assignment.companyName);
-      }
-    });
+    const labelMap = new Map<string, string>(assignmentCompanyLabels);
 
     Object.entries(companyLookupMap).forEach(([companyId, name]) => {
       if (!labelMap.has(companyId) && typeof name === "string") {
@@ -4158,22 +4283,32 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     }
 
     return entries;
-  }, [assignments, companyLookupMap]);
+  }, [assignmentCompanyLabels, companyLookupMap]);
 
   const selectionAssignments = useMemo(() => {
+    const collectAssignments = (workerIds: Iterable<string>): Assignment[] => {
+      const result: Assignment[] = [];
+      for (const workerId of workerIds) {
+        const entries = assignmentsByWorker.get(workerId);
+        if (entries && entries.length) {
+          result.push(...entries);
+        }
+      }
+      return result;
+    };
+
     let base: Assignment[];
 
     if (normalizedSelectedWorkers.length) {
-      const selectedSet = new Set(normalizedSelectedWorkers);
-      base = assignments.filter((assignment) =>
-        selectedSet.has(assignment.workerId)
-      );
+      base = collectAssignments(normalizedSelectedWorkers);
     } else if (!filteredWorkerIdSet.size) {
-      base = [] as Assignment[];
+      base = [];
     } else {
-      base = assignments.filter((assignment) =>
-        filteredWorkerIdSet.has(assignment.workerId)
-      );
+      base = collectAssignments(filteredWorkerIdSet.values());
+    }
+
+    if (!base.length) {
+      return base;
     }
 
     const effectiveSelectedCompanies =
@@ -4186,7 +4321,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     const companySet = new Set(effectiveSelectedCompanies);
     return base.filter((assignment) => companySet.has(assignment.companyId));
   }, [
-    assignments,
+    assignmentsByWorker,
     filteredWorkerIdSet,
     normalizedSelectedWorkers,
     selectedCompanyIds,
@@ -4210,15 +4345,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const hasRequestedResults = requestedWorkerIds !== null;
 
   const visibleAssignments = useMemo(() => {
-    if (requestedWorkerIds === null) {
+    if (requestedWorkerIds === null || !requestedWorkerIds.length) {
       return [] as Assignment[];
     }
 
-    if (!requestedWorkerIds.length) {
-      return [] as Assignment[];
-    }
-
-    const workerSet = new Set(requestedWorkerIds);
     const effectiveRequestedCompanies = requestedCompanyIds
       ? getEffectiveCompanyIds(requestedCompanyIds)
       : null;
@@ -4227,18 +4357,27 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         ? new Set(effectiveRequestedCompanies)
         : null;
 
-    return assignments.filter((assignment) => {
-      if (!workerSet.has(assignment.workerId)) {
-        return false;
+    const result: Assignment[] = [];
+    requestedWorkerIds.forEach((workerId) => {
+      const entries = assignmentsByWorker.get(workerId);
+      if (!entries || !entries.length) {
+        return;
       }
 
-      if (companySet && !companySet.has(assignment.companyId)) {
-        return false;
+      if (!companySet) {
+        result.push(...entries);
+        return;
       }
 
-      return true;
+      entries.forEach((assignment) => {
+        if (companySet.has(assignment.companyId)) {
+          result.push(assignment);
+        }
+      });
     });
-  }, [assignments, requestedCompanyIds, requestedWorkerIds]);
+
+    return result;
+  }, [assignmentsByWorker, requestedCompanyIds, requestedWorkerIds]);
 
   const visibleWorkerIds = useMemo(
     () => requestedWorkerIds ?? [],
@@ -4284,11 +4423,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     if (!visibleWorkerIds.length) {
       return [] as Worker[];
     }
-    const map = new Map(allWorkers.map((worker) => [worker.id, worker]));
     return visibleWorkerIds
-      .map((workerId) => map.get(workerId) ?? null)
+      .map((workerId) => workerLookupById[workerId] ?? null)
       .filter((worker): worker is Worker => worker !== null);
-  }, [allWorkers, visibleWorkerIds]);
+  }, [visibleWorkerIds, workerLookupById]);
 
   const effectiveIndividualIndex = useMemo(() => {
     if (!individualWorkers.length) {
@@ -4891,26 +5029,37 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
   const resolveCompanyLabel = useCallback(
     (candidateId?: string | null) => {
+      const candidates: string[] = [];
       const normalized = normalizeKeyPart(candidateId);
-      if (!normalized) {
-        return null;
+      if (normalized) {
+        candidates.push(normalized);
       }
 
-      if (companyLookupMap[normalized]) {
-        return companyLookupMap[normalized];
+      if (
+        typeof candidateId === "string" &&
+        candidateId.trim().length > 0 &&
+        (!normalized || normalized !== candidateId.trim())
+      ) {
+        candidates.push(candidateId.trim());
       }
 
-      const matchingAssignment = assignments.find(
-        (assignmentItem) =>
-          normalizeKeyPart(assignmentItem.companyId) === normalized
-      );
-      if (matchingAssignment) {
-        return matchingAssignment.companyName;
+      for (const key of candidates) {
+        const fromLookup = companyLookupMap[key];
+        if (fromLookup) {
+          return fromLookup;
+        }
+      }
+
+      for (const key of candidates) {
+        const entries = assignmentsByCompany.get(key);
+        if (entries && entries.length) {
+          return entries[0].companyName;
+        }
       }
 
       return null;
     },
-    [assignments, companyLookupMap]
+    [assignmentsByCompany, companyLookupMap]
   );
 
   const closeWorkerInfoModal = useCallback(() => {
@@ -5048,9 +5197,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const openWorkerInfoModal = useCallback(
     async (workerId: string, workerName: string) => {
       const normalizedTargetId = normalizeKeyPart(workerId) ?? workerId;
-      const existingWorker = allWorkers.find(
-        (worker) => normalizeKeyPart(worker.id) === normalizedTargetId
-      );
+      const existingWorker =
+        workerLookupByNormalizedId[normalizedTargetId] ??
+        workerLookupById[workerId];
 
       if (existingWorker) {
         const baseInfo = buildWorkerInfoFromWorker(existingWorker);
@@ -5553,11 +5702,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     },
     [
       apiUrl,
-      allWorkers,
       buildWorkerInfoFromWorker,
       enrichWorkerInfoData,
       externalJwt,
       resolveCompanyLabel,
+      workerLookupById,
+      workerLookupByNormalizedId,
     ]
   );
 
@@ -5666,6 +5816,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     if (!apiUrl || !externalJwt) {
       setWorkersError("Falta configuración de API o token");
       setAllWorkers([]);
+      setWorkerNameById({});
+      setWorkerLookupById({});
+      setWorkerLookupByNormalizedId({});
       setAssignments(initialAssignments.map(withNormalizedCompany));
       setGroupOptions([
         {
@@ -5689,18 +5842,42 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     setWorkersError(null);
 
     try {
-      const { workers, companyLookup, rawWorkers } = await fetchWorkersData({
+      const {
+        workers: fetchedWorkers,
+        companyLookup,
+        rawWorkers,
+      } = await fetchWorkersData({
         apiUrl,
         token: externalJwt,
         includeInactive: true,
       });
-      setAllWorkers(workers);
+
+      const compactWorkers = fetchedWorkers.map(sanitizeWorkerForRegistry);
+      const nameLookup: Record<string, string> = {};
+      const lookupById: Record<string, Worker> = {};
+      const lookupByNormalizedId: Record<string, Worker> = {};
+
+      compactWorkers.forEach((worker) => {
+        nameLookup[worker.id] = worker.name;
+        lookupById[worker.id] = worker;
+        const normalizedId = normalizeKeyPart(worker.id);
+        if (normalizedId) {
+          lookupByNormalizedId[normalizedId] = worker;
+        }
+        lookupByNormalizedId[worker.id] = worker;
+      });
+
+      setAllWorkers(compactWorkers);
+      setWorkerNameById(nameLookup);
+      setWorkerLookupById(lookupById);
+      setWorkerLookupByNormalizedId(lookupByNormalizedId);
+
       const normalizedLookup = normalizeCompanyLookupMap(companyLookup);
       setCompanyLookupMap(normalizedLookup);
       setIsLoadingCompanyOptions(false);
 
       const generatedAssignments = generateAssignmentsFromWorkers(
-        workers,
+        compactWorkers,
         normalizedLookup
       );
       if (generatedAssignments.length > 0) {
@@ -5713,7 +5890,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt, {
           preloadedWorkers: rawWorkers,
         });
-        const workerIdSet = new Set(workers.map((worker) => worker.id));
+        const workerIdSet = new Set(compactWorkers.map((worker) => worker.id));
 
         const sanitizedMembers: Record<string, string[]> = {};
         grouping.groups.forEach((group) => {
@@ -5722,7 +5899,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           );
           sanitizedMembers[group.id] = Array.from(new Set(members));
         });
-        sanitizedMembers.all = workers.map((worker) => worker.id);
+        sanitizedMembers.all = compactWorkers.map((worker) => worker.id);
 
         const options: WorkerGroupOption[] = [
           {
@@ -5731,7 +5908,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             description: grouping.groups.length
               ? "Incluye todos los grupos"
               : "No hay grupos disponibles",
-            memberCount: workers.length,
+            memberCount: compactWorkers.length,
           },
           ...grouping.groups
             .map((group) => {
@@ -5762,15 +5939,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           "No se pudieron obtener los grupos para registro múltiple",
           groupError
         );
-        const fallbackIds = workers.map((worker) => worker.id);
+        const fallbackIds = compactWorkers.map((worker) => worker.id);
         setGroupOptions([
           {
             id: "all",
             label: "Trabajadores",
-            description: workers.length
+            description: compactWorkers.length
               ? "Incluye todas las categorías"
               : "No hay grupos disponibles",
-            memberCount: workers.length,
+            memberCount: compactWorkers.length,
           },
         ]);
         setGroupMembersById({ all: fallbackIds });
@@ -5781,6 +5958,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       console.error("Error fetching workers para registro múltiple", error);
       setWorkersError("No se pudieron cargar los trabajadores");
       setAllWorkers([]);
+      setWorkerNameById({});
+      setWorkerLookupById({});
+      setWorkerLookupByNormalizedId({});
       setAssignments(initialAssignments.map(withNormalizedCompany));
       setGroupOptions([
         {
@@ -5929,6 +6109,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const raw = assignment.hours[dateKey];
         const trimmedValue = typeof raw === "string" ? raw.trim() : "";
+        const manualInputExists = Object.prototype.hasOwnProperty.call(
+          assignment.hours,
+          dateKey
+        );
         const manualInputProvided = trimmedValue.length > 0;
         const hoursValue = manualInputProvided ? parseHour(trimmedValue) : 0;
 
@@ -5988,6 +6172,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           (storedShiftPayload?.length ?? 0) === 0 &&
           fallbackShiftPayload.length > 0;
 
+        const manualInputRemoved =
+          manualInputExists &&
+          !manualInputProvided &&
+          primaryEntry !== null &&
+          (storedShiftPayload?.length ?? 0) === 0 &&
+          fallbackShiftPayload.length === 0;
+
         const shouldCreateEntry =
           !primaryEntry &&
           ((manualInputProvided && hoursValue > 0) ||
@@ -6007,6 +6198,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
             (storedSegments !== undefined
               ? (storedShiftPayload?.length ?? 0) === 0
               : fallbackShiftPayload.length === 0)) ||
+            manualInputRemoved ||
             (!manualInputProvided && removalViaSegments));
 
         const shouldUpdateEntry =
@@ -6311,9 +6503,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         const workerName =
           workerNameById[workerId] ??
-          visibleAssignments.find(
-            (assignment) => assignment.workerId === workerId
-          )?.workerName ??
+          workerLookupById[workerId]?.name ??
           workerId;
 
         return {
@@ -6325,7 +6515,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       .sort((a, b) =>
         a.workerName.localeCompare(b.workerName, "es", { sensitivity: "base" })
       );
-  }, [visibleAssignments, visibleWorkerIds, workerNameById, workerWeekData]);
+  }, [visibleWorkerIds, workerLookupById, workerNameById, workerWeekData]);
 
   const renderGroupCard = useCallback(
     (group: GroupView) => {
@@ -6490,12 +6680,17 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                 ? hoursFormatter.format(trackedHours)
                                 : "";
 
-                            const currentValue = assignment.hours[day.dateKey];
+                            const currentValue =
+                              assignment.hours[day.dateKey];
                             const hasManualValue =
-                              typeof currentValue === "string" &&
-                              currentValue.trim() !== "";
+                              Object.prototype.hasOwnProperty.call(
+                                assignment.hours,
+                                day.dateKey
+                              );
                             const inputValue = hasManualValue
-                              ? currentValue
+                              ? typeof currentValue === "string"
+                                ? currentValue
+                                : ""
                               : trackedHoursValue;
 
                             const existingSegments =
