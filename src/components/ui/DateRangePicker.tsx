@@ -72,18 +72,48 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     [value.from, value.to]
   );
 
+  const [draftRange, setDraftRange] = useState<DateRange>(selectedRange);
+  const [isSelectingEnd, setIsSelectingEnd] = useState(false);
+
+  useEffect(() => {
+    setDraftRange({ from: value.from, to: value.to });
+    setIsSelectingEnd(false);
+  }, [value.from, value.to]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setDraftRange({ from: value.from, to: value.to });
+      setIsSelectingEnd(false);
+    }
+  }, [isOpen, value.from, value.to]);
+
   const buttonLabel = useMemo(
     () => formatRangeLabel(value.from, value.to),
     [value.from, value.to]
   );
 
   const handleSelect = (range: DateRange | undefined) => {
-    if (!range?.from || !range?.to) {
+    if (!range?.from) {
+      setDraftRange({ from: undefined, to: undefined });
+      setIsSelectingEnd(false);
       return;
     }
 
-    onChange({ from: range.from, to: range.to });
+    if (!isSelectingEnd) {
+      setDraftRange({ from: range.from, to: undefined });
+      setIsSelectingEnd(true);
+      return;
+    }
+
+    const finalRange: DateRange = {
+      from: range.from,
+      to: range.to ?? range.from,
+    };
+
+    setDraftRange(finalRange);
+    onChange({ from: finalRange.from, to: finalRange.to });
     setIsOpen(false);
+    setIsSelectingEnd(false);
   };
 
   return (
@@ -101,10 +131,12 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           <DayPicker
             mode="range"
             locale={es}
-            defaultMonth={selectedRange.from ?? selectedRange.to ?? new Date()}
+            defaultMonth={
+              draftRange?.from ?? draftRange?.to ?? selectedRange.from ?? new Date()
+            }
             numberOfMonths={2}
             pagedNavigation
-            selected={selectedRange}
+            selected={draftRange}
             onSelect={handleSelect}
             disabled={disabled}
           />

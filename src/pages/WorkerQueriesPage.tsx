@@ -14,7 +14,6 @@ import {
   Mail,
   Building2,
   User,
-  RefreshCw,
   MessageCircle,
 } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
@@ -113,8 +112,6 @@ export const WorkerQueriesPage: React.FC = () => {
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
   const [showInactiveWorkers, setShowInactiveWorkers] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{
     type: "email" | "phone";
@@ -325,7 +322,6 @@ export const WorkerQueriesPage: React.FC = () => {
     if (!apiUrl || !externalJwt) {
       setWorkersError("Falta configuración de API o token");
       setAllWorkers([]);
-      setLastFetchTime(null);
       setIsLoading(false);
       return;
     }
@@ -475,7 +471,6 @@ export const WorkerQueriesPage: React.FC = () => {
       }
 
       setAllWorkers(workersWithGroups);
-      setLastFetchTime(new Date());
     } catch (error) {
       console.error("Error fetching workers:", error);
       setWorkersError("No se pudieron cargar los trabajadores");
@@ -484,12 +479,6 @@ export const WorkerQueriesPage: React.FC = () => {
       setIsLoading(false);
     }
   }, [apiUrl, externalJwt]);
-
-  const refreshWorkers = useCallback(async () => {
-    setIsRefreshing(true);
-    await fetchWorkers();
-    setIsRefreshing(false);
-  }, [fetchWorkers]);
 
   useEffect(() => {
     void fetchWorkers();
@@ -537,34 +526,14 @@ export const WorkerQueriesPage: React.FC = () => {
                 />
                 Selección de Grupo
               </h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                  Actualizado:{" "}
-                  {lastFetchTime
-                    ? lastFetchTime.toLocaleString("es-ES")
-                    : "Sin sincronizar"}
-                </div>
-                {selectedGroupSummary && (
+              {selectedGroupSummary && (
+                <div className="flex flex-wrap items-center gap-2">
                   <div className="inline-flex max-w-[255px] items-center rounded-xl border border-blue-200 dark:border-blue-500/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 text-sm text-blue-700 dark:text-blue-200">
                     {selectedGroupSummary.label}:{" "}
                     {selectedGroupSummary.memberCount}
                   </div>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={refreshWorkers}
-                  disabled={isRefreshing}
-                  leftIcon={
-                    <RefreshCw
-                      size={16}
-                      className={isRefreshing ? "animate-spin" : ""}
-                    />
-                  }
-                >
-                  Actualizar
-                </Button>
-              </div>
+                </div>
+              )}
             </div>
           </div>
         </CardHeader>

@@ -13,7 +13,6 @@ import {
   Clock,
   DollarSign,
   FileText,
-  RefreshCw,
   ChevronDown,
   ChevronUp,
   X,
@@ -202,8 +201,8 @@ const createEmptyOtherPaymentsState = (): OtherPaymentsState => ({
 });
 
 const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
-  { value: "bank", label: "Banco" },
   { value: "cash", label: "Efectivo" },
+  { value: "bank", label: "Banco" },
 ];
 
 type OtherPaymentFlow = "income" | "expense";
@@ -699,8 +698,6 @@ export const SalaryCalculatorPage: React.FC = () => {
   const [selectedWorkerId, setSelectedWorkerId] = useState("");
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [companyLookup, setCompanyLookup] = useState<Record<string, string>>(
     {}
   );
@@ -938,7 +935,7 @@ export const SalaryCalculatorPage: React.FC = () => {
       label: "",
       amount: "",
       companyKey: null,
-      paymentMethod: "bank",
+      paymentMethod: "cash",
     };
 
     setOtherPayments((prev) => ({
@@ -3890,7 +3887,6 @@ export const SalaryCalculatorPage: React.FC = () => {
           a.name.localeCompare(b.name, "es", { sensitivity: "base" })
         )
       );
-      setLastFetchTime(new Date());
 
       // Store in localStorage for offline access
       localStorage.setItem(
@@ -3982,7 +3978,6 @@ export const SalaryCalculatorPage: React.FC = () => {
             setCompanyLookup(parsed.companyLookup);
           }
           if (parsed.timestamp) {
-            setLastFetchTime(new Date(parsed.timestamp));
           }
         } catch (cacheError) {
           console.error("Error loading cached workers:", cacheError);
@@ -3991,12 +3986,6 @@ export const SalaryCalculatorPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const refreshWorkers = async () => {
-    setIsRefreshing(true);
-    await fetchAllWorkers();
-    setIsRefreshing(false);
   };
 
   const resetCalculation = () => {
@@ -4813,6 +4802,52 @@ export const SalaryCalculatorPage: React.FC = () => {
     applyAutoFillHoursForGroup,
   ]);
 
+  useEffect(() => {
+    const groups = companyContractStructure.groups;
+    if (!groups.length) {
+      return;
+    }
+
+    const groupsToEnable = groups.filter((group) => {
+      if (autoFillHoursMap[group.companyKey]) {
+        return false;
+      }
+      const calendarHours = getCalendarHoursForCompany(
+        group.companyId,
+        group.companyName
+      );
+      return Boolean(calendarHours && calendarHours > 0);
+    });
+
+    if (!groupsToEnable.length) {
+      return;
+    }
+
+    setAutoFillHoursMap((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      groupsToEnable.forEach((group) => {
+        if (!next[group.companyKey]) {
+          next[group.companyKey] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    groupsToEnable.forEach((group) => {
+      group.entries.forEach((entry) =>
+        manualHoursOverrideRef.current.delete(entry.contractKey)
+      );
+      applyAutoFillHoursForGroup(group);
+    });
+  }, [
+    autoFillHoursMap,
+    applyAutoFillHoursForGroup,
+    companyContractStructure.groups,
+    getCalendarHoursForCompany,
+  ]);
+
   const handleAutoFillHoursToggle = useCallback(
     (
       group: (typeof companyContractStructure)["groups"][number],
@@ -5255,7 +5290,7 @@ export const SalaryCalculatorPage: React.FC = () => {
         <Card className="h-full">
           <CardHeader>
             <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
                   <User
                     size={20}
@@ -5263,26 +5298,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                   />
                   Selección de Trabajador
                 </h2>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={refreshWorkers}
-                  disabled={isRefreshing}
-                  leftIcon={
-                    <RefreshCw
-                      size={16}
-                      className={isRefreshing ? "animate-spin" : ""}
-                    />
-                  }
-                >
-                  Actualizar
-                </Button>
               </div>
-              {lastFetchTime && (
-                <div className="inline-flex w-full items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                  Actualizado: {lastFetchTime.toLocaleString("es-ES")}
-                </div>
-              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -6486,11 +6502,7 @@ export const SalaryCalculatorPage: React.FC = () => {
                                   </Button>
                                 </div>
                               </div>
-                              {items.length === 0 ? (
-                                <p className="text-xs text-gray-500 dark:text-gray-400">
-                                  No hay registros en esta categoría.
-                                </p>
-                              ) : (
+                              {items.length > 0 && (
                                 <div className="space-y-3">
                                   {items.map((item) => (
                                     <div

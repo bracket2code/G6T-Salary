@@ -3950,9 +3950,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     useState<boolean>(true);
   const [isLoadingCompanyOptions, setIsLoadingCompanyOptions] =
     useState<boolean>(true);
-  const [isRefreshingWorkers, setIsRefreshingWorkers] =
-    useState<boolean>(false);
-  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"company" | "worker" | "individual">(
     "company"
@@ -5653,11 +5650,26 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   }, []);
 
   const handleShowResults = useCallback(() => {
-    setRequestedWorkerIds(() => [...selectionWorkerIds]);
+    const sortedWorkerIds = [...selectionWorkerIds].sort((a, b) => {
+      const nameA = workerNameById[a] ?? "";
+      const nameB = workerNameById[b] ?? "";
+      const comparison = nameA.localeCompare(nameB, "es", {
+        sensitivity: "base",
+        ignorePunctuation: true,
+      });
+
+      if (comparison !== 0) {
+        return comparison;
+      }
+
+      return a.localeCompare(b, "es", { sensitivity: "base" });
+    });
+
+    setRequestedWorkerIds(sortedWorkerIds);
     setRequestedCompanyIds(() => [
       ...getEffectiveCompanyIds(selectedCompanyIds),
     ]);
-  }, [selectedCompanyIds, selectionWorkerIds]);
+  }, [selectedCompanyIds, selectionWorkerIds, workerNameById]);
 
   const fetchWorkers = useCallback(async () => {
     if (!apiUrl || !externalJwt) {
@@ -5673,7 +5685,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         },
       ]);
       setGroupMembersById({ all: initialAssignmentWorkerIds });
-      setLastFetchTime(null);
       setCompanyLookupMap(createDefaultCompanyLookupMap());
       setIsLoadingGroupOptions(false);
       setIsLoadingCompanyOptions(false);
@@ -5775,7 +5786,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         setIsLoadingGroupOptions(false);
       }
 
-      setLastFetchTime(new Date());
     } catch (error) {
       console.error("Error fetching workers para registro múltiple", error);
       setWorkersError("No se pudieron cargar los trabajadores");
@@ -5790,7 +5800,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         },
       ]);
       setGroupMembersById({ all: initialAssignmentWorkerIds });
-      setLastFetchTime(null);
       setCompanyLookupMap(createDefaultCompanyLookupMap());
       setIsLoadingGroupOptions(false);
       setIsLoadingCompanyOptions(false);
@@ -5798,12 +5807,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       setIsLoadingWorkers(false);
     }
   }, [apiUrl, externalJwt]);
-
-  const refreshWorkers = useCallback(async () => {
-    setIsRefreshingWorkers(true);
-    await fetchWorkers();
-    setIsRefreshingWorkers(false);
-  }, [fetchWorkers]);
 
   useEffect(() => {
     void fetchWorkers();
@@ -6621,37 +6624,14 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
         <Card className="overflow-visible">
           <CardHeader>
-            <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
-              <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white pr-28 sm:pr-0">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
                 <Users
                   size={20}
                   className="mr-2 text-blue-600 dark:text-blue-400"
                 />
                 Selección de grupo
               </h2>
-              <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-                <div className="inline-flex max-w-[255px] items-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/80 px-3 py-1 text-sm text-gray-600 dark:text-gray-300">
-                  Actualizado:{" "}
-                  {lastFetchTime
-                    ? lastFetchTime.toLocaleString("es-ES")
-                    : "Sin sincronizar"}
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={refreshWorkers}
-                disabled={isRefreshingWorkers || isLoadingWorkers}
-                leftIcon={
-                  <RefreshCw
-                    size={16}
-                    className={isRefreshingWorkers ? "animate-spin" : ""}
-                  />
-                }
-                className="absolute right-0 top-0 sm:static sm:ml-2"
-              >
-                Actualizar
-              </Button>
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -6764,7 +6744,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
                 {workersError ||
                   (selectedGroupIds.includes("all")
-                    ? "No hay trabajadores sincronizados. Usa “Actualizar” para obtener los registros desde la API."
+                    ? "No hay trabajadores sincronizados. Recarga la página para obtener los registros desde la API."
                     : "No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.")}
               </div>
             ) : (

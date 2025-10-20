@@ -67,8 +67,11 @@ function App() {
           <Route index element={<Dashboard key={refreshDashboard} />} />
           <Route path="calculator" element={<SalaryCalculatorPage />} />
           <Route path="multiple" element={<MultipleCalculatorPage />} />
-          <Route path="hours" element={<Navigate to="hours/multiple" replace />} />
-          <Route path="hours/multiple" element={<MultipleHoursRegistryPage />} />
+          <Route path="hours" element={<MultipleHoursRegistryPage />} />
+          <Route path="hours/multiple" element={<Navigate to="/hours" replace />} />
+          <Route path="registro" element={<Navigate to="/hours" replace />} />
+          <Route path="log" element={<Navigate to="/hours" replace />} />
+          <Route path="timesheet" element={<Navigate to="/hours" replace />} />
           <Route path="queries" element={<WorkerQueriesPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="templates" element={<TemplatesPage />} />

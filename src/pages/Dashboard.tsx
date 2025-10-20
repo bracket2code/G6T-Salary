@@ -23,7 +23,7 @@ export const Dashboard: React.FC = () => {
         navigate("/multiple");
         break;
       case "hours":
-        navigate("/hours/multiple");
+        navigate("/hours");
         break;
       case "queries":
         navigate("/queries");

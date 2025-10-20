@@ -390,7 +390,8 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
     notes: "",
     companyContractInputs: {},
   });
-  const [autoFillHoursMap, setAutoFillHoursMap] = useState<Record<string, boolean>>({});
+  const [autoFillHoursMap, setAutoFillHoursMap] =
+    useState<Record<string, boolean>>({});
   const [expandedCompanyInputs, setExpandedCompanyInputs] = useState<Record<string, boolean>>({});
   const [isContractInputsOpen, setIsContractInputsOpen] = useState(true);
   const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(true);
@@ -746,6 +747,52 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
     getCalendarHoursForCompany,
   ]);
 
+  useEffect(() => {
+    const groups = companyContractStructure.groups;
+    if (!groups.length) {
+      return;
+    }
+
+    const groupsToEnable = groups.filter((group) => {
+      if (autoFillHoursMap[group.companyKey]) {
+        return false;
+      }
+      const calendarHoursForGroup = getCalendarHoursForCompany(
+        group.companyId,
+        group.companyName
+      );
+      return Boolean(calendarHoursForGroup && calendarHoursForGroup > 0);
+    });
+
+    if (!groupsToEnable.length) {
+      return;
+    }
+
+    setAutoFillHoursMap((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      groupsToEnable.forEach((group) => {
+        if (!next[group.companyKey]) {
+          next[group.companyKey] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    groupsToEnable.forEach((group) => {
+      group.entries.forEach((entry) =>
+        manualHoursOverrideRef.current.delete(entry.contractKey)
+      );
+      applyAutoFillHoursForGroup(group);
+    });
+  }, [
+    autoFillHoursMap,
+    applyAutoFillHoursForGroup,
+    companyContractStructure.groups,
+    getCalendarHoursForCompany,
+  ]);
+
   const handleAutoFillHoursToggle = useCallback(
     (
       group: CompanyContractStructure["groups"][number],
@@ -898,7 +945,7 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
         label: "",
         amount: "",
         companyKey: null,
-        paymentMethod: "bank",
+        paymentMethod: "cash",
       };
 
       updateOtherPayments((previous) => ({
@@ -1615,16 +1662,12 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
                         Añadir
                       </Button>
                     </div>
-                    {entries.length === 0 ? (
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        No hay registros.
-                      </p>
-                    ) : (
+                    {entries.length > 0 && (
                       <div className="space-y-2">
                         {entries.map((item) => (
                           <div
                             key={item.id}
-                            className="grid gap-3 items-end md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:items-center"
+                            className="grid gap-3 items-end md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:items-end"
                           >
                             <Input
                               label="Descripción"
@@ -1639,6 +1682,7 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
                               }
                               placeholder="Ej: Bono productividad"
                               fullWidth
+                              className="!py-2"
                             />
                             <Input
                               label="Importe (€)"
@@ -1653,6 +1697,7 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
                               }
                               placeholder="0"
                               fullWidth
+                              className="!py-2"
                             />
                             <Select
                               label="Forma de pago"
@@ -1666,10 +1711,11 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
                                 )
                               }
                               options={[
-                                { value: "bank", label: "Banco" },
                                 { value: "cash", label: "Efectivo" },
+                                { value: "bank", label: "Banco" },
                               ]}
                               fullWidth
+                              selectClassName="!py-2"
                             />
                             <Select
                               label="Empresa"
@@ -1690,12 +1736,13 @@ const WorkerCalculationModule: React.FC<WorkerCalculationModuleProps> = ({
                                 })),
                               ]}
                               fullWidth
+                              selectClassName="!py-2"
                             />
                             <button
                               type="button"
                               onClick={() => removeOtherPaymentItem(category, item.id)}
                               aria-label="Eliminar concepto"
-                              className="flex h-11 w-11 items-center justify-center rounded-lg border border-transparent text-gray-400 transition hover:text-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:text-gray-500 dark:hover:text-red-400 md:h-12 md:w-12"
+                              className="flex h-11 w-11 items-center justify-center rounded-lg border border-transparent text-gray-400 transition hover:text-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:text-gray-500 dark:hover:text-red-400"
                             >
                               <Trash2 size={18} />
                             </button>
