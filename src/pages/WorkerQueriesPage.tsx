@@ -118,7 +118,7 @@ export const WorkerQueriesPage: React.FC = () => {
     message: string;
     target?: string;
   } | null>(null);
-  const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
+  // Removed unused expandedCompany state
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
@@ -263,7 +263,7 @@ export const WorkerQueriesPage: React.FC = () => {
     setSelectedWorkerIds((prev) =>
       prev.filter((id) => filteredWorkerIdSet.has(id))
     );
-    setExpandedCompany(null);
+    // Removed unused setExpandedCompany call
   }, [filteredWorkerIdSet, selectedWorkerIds.length]);
 
   const handleEmailCopy = useCallback(
@@ -315,7 +315,6 @@ export const WorkerQueriesPage: React.FC = () => {
 
   const handleWorkerSelectionChange = useCallback((workerIds: string[]) => {
     setSelectedWorkerIds(workerIds);
-    setExpandedCompany(null);
   }, []);
 
   const fetchWorkers = useCallback(async () => {

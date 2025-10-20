@@ -1,8 +1,7 @@
-import React from 'react';
-import { PageHeader } from '../components/layout/PageHeader';
-import { Card, CardContent } from '../components/ui/Card';
-import { BarChart2, Download, DollarSign, Users, Clock } from 'lucide-react';
-import { Button } from '../components/ui/Button';
+import React from "react";
+import { PageHeader } from "../components/layout/PageHeader";
+import { Card, CardContent } from "../components/ui/Card";
+import { Download, DollarSign, Users, Clock } from "lucide-react";
 
 export const ReportsPage: React.FC = () => {
   return (

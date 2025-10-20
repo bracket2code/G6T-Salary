@@ -15,13 +15,12 @@ import { ThemeToggle } from "./ThemeToggle";
 import { useAuthStore } from "../../store/authStore";
 import { useSidebarStore } from "../../store/sidebarStore";
 import { Avatar } from "../ui/Avatar";
-import { Button } from "../ui/Button";
 
 const isMobile = () => window.innerWidth < 768;
 
 export const Sidebar: React.FC = () => {
   const { user, logout } = useAuthStore();
-  const { isOpen, close, toggle } = useSidebarStore();
+  const { isOpen, close } = useSidebarStore();
   const navigate = useNavigate();
   const location = useLocation();
 

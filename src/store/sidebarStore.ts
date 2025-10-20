@@ -1,7 +1,4 @@
-import { create } from 'zustand';
-
-interface SidebarState {
-}
+import { create } from "zustand";
 
 interface SidebarState {
   isOpen: boolean;

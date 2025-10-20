@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Worker } from "../types/salary";
-import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Avatar } from "../components/ui/Avatar";
-import { Calculator, Users, Clock, DollarSign, FileText } from "lucide-react";
+import { Calculator, Users, Clock, FileText } from "lucide-react";
 import { formatDate } from "../lib/utils";
 
 export const Dashboard: React.FC = () => {
@@ -13,8 +12,6 @@ export const Dashboard: React.FC = () => {
   const [recentWorkers, setRecentWorkers] = useState<Worker[]>([]);
 
   const handleNavigateToSection = (section: string) => {
-    const searchParams = new URLSearchParams();
-
     switch (section) {
       case "calculator":
         navigate("/calculator");

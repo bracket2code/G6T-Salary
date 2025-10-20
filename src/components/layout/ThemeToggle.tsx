@@ -1,34 +1,34 @@
-import React from 'react';
-import { Moon, Sun, Monitor } from 'lucide-react';
-import { useThemeStore } from '../../store/themeStore';
+import React from "react";
+import { Moon, Sun } from "lucide-react";
+import { useThemeStore } from "../../store/themeStore";
 
 export const ThemeToggle: React.FC = () => {
   const { theme, setTheme } = useThemeStore();
 
   // Listen for system theme changes
   React.useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
     const handleChange = () => {
-      setTheme(mediaQuery.matches ? 'dark' : 'light');
+      setTheme(mediaQuery.matches ? "dark" : "light");
     };
 
-    mediaQuery.addEventListener('change', handleChange);
+    mediaQuery.addEventListener("change", handleChange);
     handleChange(); // Initial check
 
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
   }, [setTheme]);
 
   // Apply theme changes
   React.useEffect(() => {
     const root = window.document.documentElement;
-    root.classList.toggle('dark', theme === 'dark');
+    root.classList.toggle("dark", theme === "dark");
   }, [theme]);
-  
+
   const handleToggle = () => {
-    setTheme(theme === 'light' ? 'dark' : 'light');
+    setTheme(theme === "light" ? "dark" : "light");
   };
-  
+
   return (
     <button
       onClick={handleToggle}
@@ -36,7 +36,7 @@ export const ThemeToggle: React.FC = () => {
       aria-label="Toggle theme"
       title={`Theme: ${theme}`}
     >
-      {theme === 'dark' ? (
+      {theme === "dark" ? (
         <Sun size={20} className="text-yellow-500" />
       ) : (
         <Moon size={20} className="text-gray-600" />

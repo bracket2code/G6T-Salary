@@ -77,6 +77,20 @@ interface Assignment {
   hours: Record<string, string>;
 }
 
+interface ParameterRelationPayload {
+  parameterRelationId?: string | null;
+  parameterRelationID?: string | null;
+  relationId?: string | null;
+  id?: string | null;
+  companyId?: string | null;
+  company_id?: string | null;
+  companyIdContract?: string | null;
+  companyName?: string | null;
+  parameterRelationName?: string | null;
+  name?: string | null;
+  [key: string]: unknown;
+}
+
 interface ControlScheduleSavePayload {
   id: string;
   dateTime: string;
@@ -1192,15 +1206,17 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
   state,
   onClose,
 }) => {
-  if (!state.isOpen) {
-    return null;
-  }
-
   const [copyFeedback, setCopyFeedback] = useState<{
     type: "email" | "phone";
     message: string;
     target?: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!state.isOpen) {
+      setCopyFeedback(null);
+    }
+  }, [state.isOpen]);
 
   const phoneHref = state.data?.phone
     ? sanitizeTelHref(state.data.phone)
@@ -1356,6 +1372,10 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
       window.open(whatsappHref, "_blank", "noopener,noreferrer");
     }
   }, [whatsappHref]);
+
+  if (!state.isOpen) {
+    return null;
+  }
 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 px-4">
@@ -3497,7 +3517,15 @@ const IndividualModeView: React.FC<IndividualModeViewProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [activeWorker, apiUrl, token, calendarMonth, monthKey, companyLookupKey]);
+  }, [
+    activeWorker,
+    apiUrl,
+    token,
+    calendarMonth,
+    monthKey,
+    companyLookup,
+    companyLookupKey,
+  ]);
 
   useEffect(() => {
     if (!activeWorker) {
@@ -4098,8 +4126,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     return selectedWorkerIds.filter((id) => filteredWorkerIdSet.has(id));
   }, [filteredWorkerIdSet, selectedWorkerIds]);
 
-  const selectedWorkerId = normalizedSelectedWorkers[0] ?? "";
-
   const workersForSelect = filteredWorkers;
 
   const companyFilterOptions = useMemo(() => {
@@ -4281,13 +4307,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     setIndividualViewIndex(nextIndex);
   }, []);
 
-  const selectionWorkerIdsKey = useMemo(() => {
-    if (!selectionWorkerIds.length) {
-      return "";
-    }
-    return selectionWorkerIds.slice().sort().join("|");
-  }, [selectionWorkerIds]);
-
   const resolveDayNotes = useCallback(
     (workerId: string, dateKey: string): DayNoteEntry[] => {
       const key = buildNotesStateKey(workerId, dateKey);
@@ -4300,52 +4319,16 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [noteDraftsByDay, workerWeekData]
   );
 
+  const selectedRangeStartMs = selectedRange.start.getTime();
+  const selectedRangeEndMs = selectedRange.end.getTime();
+
   useEffect(() => {
     setNoteDraftsByDay({});
     setNoteOriginalsByDay({});
   }, [
     visibleWorkerIdsKey,
-    selectedRange.start.getTime(),
-    selectedRange.end.getTime(),
-  ]);
-
-  const selectionCompanyIdsKey = useMemo(() => {
-    const effective = getEffectiveCompanyIds(selectedCompanyIds);
-    if (!effective.length) {
-      return "";
-    }
-    return effective.slice().sort().join("|");
-  }, [selectedCompanyIds]);
-
-  const requestedCompanyIdsKey = useMemo(() => {
-    if (requestedCompanyIds === null) {
-      return null;
-    }
-    const effective = getEffectiveCompanyIds(requestedCompanyIds);
-    if (!effective.length) {
-      return "";
-    }
-    return effective.slice().sort().join("|");
-  }, [requestedCompanyIds]);
-
-  const resultsAreStale = useMemo(() => {
-    if (requestedWorkerIds === null || requestedCompanyIds === null) {
-      return selectionWorkerIds.length > 0 || selectedCompanyIds.length > 0;
-    }
-
-    return (
-      visibleWorkerIdsKey !== selectionWorkerIdsKey ||
-      requestedCompanyIdsKey !== selectionCompanyIdsKey
-    );
-  }, [
-    requestedCompanyIds,
-    requestedCompanyIdsKey,
-    requestedWorkerIds,
-    selectedCompanyIds.length,
-    selectionCompanyIdsKey,
-    selectionWorkerIds.length,
-    selectionWorkerIdsKey,
-    visibleWorkerIdsKey,
+    selectedRangeStartMs,
+    selectedRangeEndMs,
   ]);
 
   useEffect(() => {
@@ -4655,12 +4638,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       );
   }, [totalsContext, visibleAssignments, visibleDays]);
 
-  const currentGroups =
-    viewMode === "company"
-      ? companyGroups
-      : viewMode === "worker"
-      ? workerGroups
-      : [];
+  const currentGroups = useMemo(() => {
+    if (viewMode === "company") {
+      return companyGroups;
+    }
+    if (viewMode === "worker") {
+      return workerGroups;
+    }
+    return [];
+  }, [companyGroups, viewMode, workerGroups]);
 
   const collapseAllCurrentGroups = useCallback(() => {
     setExpandedGroups(new Set());
@@ -5252,8 +5238,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
           payload?.subcategoryGuid
         );
 
-        const parameterRelations = Array.isArray(payload?.parameterRelations)
-          ? payload.parameterRelations
+        const parameterRelations: ParameterRelationPayload[] = Array.isArray(
+          payload?.parameterRelations
+        )
+          ? payload.parameterRelations.filter(
+              (relation): relation is ParameterRelationPayload =>
+                relation !== null && typeof relation === "object"
+            )
           : [];
 
         const labelCandidateIds = new Set<string>();
@@ -5268,7 +5259,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         registerLabelCandidate(categoryIdValue);
         registerLabelCandidate(subcategoryIdValue);
 
-        parameterRelations.forEach((relation: any) => {
+        parameterRelations.forEach((relation) => {
           const relationIdValue = pickFirstString(
             relation?.parameterRelationId,
             relation?.parameterRelationID,
@@ -5352,7 +5343,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         const contractsByCompany: Record<string, WorkerCompanyContract[]> = {};
 
         if (parameterRelations.length > 0) {
-          parameterRelations.forEach((relation: any, index: number) => {
+          parameterRelations.forEach((relation, index) => {
             const relationIdValue = pickFirstString(
               relation?.parameterRelationId,
               relation?.parameterRelationID,
@@ -5858,7 +5849,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     companyGroupsCollapsed,
     expandAllCurrentGroups,
     viewMode,
-    workerGroupsCollapsed,
   ]);
 
   const handleWorkerButtonClick = useCallback(() => {
@@ -5891,7 +5881,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
 
     workerLastClickRef.current = now;
   }, [
-    companyGroupsCollapsed,
     collapseAllCurrentGroups,
     expandAllCurrentGroups,
     viewMode,
@@ -6599,18 +6588,19 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     [
       expandedGroups,
       handleHourChange,
+      handleCellDoubleClick,
+      handleCellLongPressStart,
       openNotesModal,
       openSegmentsModal,
       openWorkerInfoModal,
       clearMobileLongPressTimer,
       isCompactLayout,
-      openMobileCellActions,
+      resolveDayNotes,
       toggleGroupExpansion,
       viewMode,
       totalsContext,
       segmentsByAssignment,
       visibleDays,
-      workerWeekData,
     ]
   );
 

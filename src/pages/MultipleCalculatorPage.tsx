@@ -1,16 +1,5 @@
-import React, {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-} from "react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  DollarSign,
-  Users,
-} from "lucide-react";
+import React, { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, DollarSign, Users } from "lucide-react";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -184,9 +173,9 @@ const MultipleCalculatorPage: React.FC = () => {
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
 
   const [allWorkers, setAllWorkers] = useState<Worker[]>([]);
-  const [companyLookupMap, setCompanyLookupMap] = useState<Record<string, string>>(
-    createDefaultCompanyLookupMap
-  );
+  const [companyLookupMap, setCompanyLookupMap] = useState<
+    Record<string, string>
+  >(createDefaultCompanyLookupMap);
   const [groupOptions, setGroupOptions] = useState<WorkerGroupOption[]>([
     {
       id: "all",
@@ -336,7 +325,6 @@ const MultipleCalculatorPage: React.FC = () => {
         setGroupMembersById({ all: fallbackIds });
         setIsLoadingGroupOptions(false);
       }
-
     } catch (error) {
       console.error("Error fetching workers para cálculo múltiple", error);
       setWorkersError("No se pudieron cargar los trabajadores");
@@ -446,8 +434,9 @@ const MultipleCalculatorPage: React.FC = () => {
 
     const companySet = new Set(effectiveSelectedCompanies);
     return workersAfterBasicFilters.filter((worker) => {
-      const workerCompanyIds =
-        workerCompanyIdsMap.get(worker.id) ?? [UNASSIGNED_COMPANY_ID];
+      const workerCompanyIds = workerCompanyIdsMap.get(worker.id) ?? [
+        UNASSIGNED_COMPANY_ID,
+      ];
       return workerCompanyIds.some((companyId) => companySet.has(companyId));
     });
   }, [
@@ -554,15 +543,11 @@ const MultipleCalculatorPage: React.FC = () => {
     options.unshift({
       value: ALL_COMPANIES_OPTION_ID,
       label: ALL_COMPANIES_OPTION_LABEL,
-      description: "Incluye todas las empresas",
+      // description: "Incluye todas las empresas",
     });
 
     return options;
-  }, [
-    companyLookupMap,
-    companyNameToId,
-    workersAfterBasicFilters,
-  ]);
+  }, [companyLookupMap, companyNameToId, workersAfterBasicFilters]);
 
   const handleShowResults = useCallback(() => {
     const baseIds =
@@ -685,7 +670,10 @@ const MultipleCalculatorPage: React.FC = () => {
         <CardHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
-              <Users size={20} className="mr-2 text-blue-600 dark:text-blue-400" />
+              <Users
+                size={20}
+                className="mr-2 text-blue-600 dark:text-blue-400"
+              />
               Selección de grupo
             </h2>
           </div>
@@ -799,8 +787,8 @@ const MultipleCalculatorPage: React.FC = () => {
           ) : workersForSelect.length === 0 ? (
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300">
               {workersError ||
-                  (selectedGroupIds.includes("all")
-                    ? "No hay trabajadores sincronizados. Recarga la página para obtener los registros desde la API."
+                (selectedGroupIds.includes("all")
+                  ? "No hay trabajadores sincronizados. Recarga la página para obtener los registros desde la API."
                   : "No hay trabajadores asignados a este grupo. Selecciona otro grupo o sincroniza nuevamente.")}
             </div>
           ) : (
@@ -836,10 +824,7 @@ const MultipleCalculatorPage: React.FC = () => {
           )}
 
           <div className="flex justify-center">
-            <Button
-              onClick={handleShowResults}
-              disabled={isLoadingWorkers}
-            >
+            <Button onClick={handleShowResults} disabled={isLoadingWorkers}>
               Mostrar resultados
             </Button>
           </div>
@@ -867,7 +852,8 @@ const MultipleCalculatorPage: React.FC = () => {
               No hay trabajadores disponibles
             </h3>
             <p className="text-gray-500 dark:text-gray-400">
-              Ajusta los filtros o selecciona uno o más trabajadores y pulsa “Mostrar resultados” para ver sus cálculos.
+              Ajusta los filtros o selecciona uno o más trabajadores y pulsa
+              “Mostrar resultados” para ver sus cálculos.
             </p>
           </CardContent>
         </Card>
