@@ -17,6 +17,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "buffer": "^6.0.3",
     "date-fns": "^3.6.0",
+    "events": "^3.3.0",
     "htmldocs": "^0.2.30",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.344.0",
@@ -24,6 +25,8 @@
     "react-day-picker": "^9.11.0",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.1",
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0",
     "zustand": "^4.5.7"
   },
   "devDependencies": {
