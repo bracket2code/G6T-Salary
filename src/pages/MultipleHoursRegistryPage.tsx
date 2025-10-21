@@ -20,11 +20,13 @@ import {
   Plus,
   Trash2,
   NotebookPen,
+  FileSpreadsheet,
   X,
   Mail,
   Phone,
   MessageCircle,
 } from "lucide-react";
+import { utils as XLSXUtils, writeFile as writeXLSXFile } from "xlsx-js-style";
 import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -2282,6 +2284,139 @@ const normalizeKeyPart = (value?: string | null) => {
   return trimmed;
 };
 
+const normalizeCompanyLabel = (value?: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\s+/g, " ");
+};
+
+const resolveHourlyRateFromWorker = (
+  worker: Worker | undefined,
+  assignment: Assignment,
+  companyLookup: Record<string, string>
+): number | undefined => {
+  if (!worker) {
+    return undefined;
+  }
+
+  const normalizedAssignmentName = normalizeCompanyLabel(
+    assignment.companyName
+  );
+  const normalizedAssignmentId = normalizeKeyPart(assignment.companyId);
+
+  const contractsByCompany = worker.companyContracts ?? {};
+  const candidateContracts: WorkerCompanyContract[] = [];
+
+  const lookupCompanyName = (id?: string | null): string | null => {
+    if (!id) {
+      return null;
+    }
+    const trimmed = id.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const direct = companyLookup[trimmed];
+    if (typeof direct === "string" && direct.trim().length > 0) {
+      return direct;
+    }
+
+    const normalizedId = normalizeKeyPart(trimmed);
+    if (normalizedId && normalizedId !== trimmed) {
+      const normalizedDirect = companyLookup[normalizedId];
+      if (
+        typeof normalizedDirect === "string" &&
+        normalizedDirect.trim().length > 0
+      ) {
+        return normalizedDirect;
+      }
+    }
+
+    return null;
+  };
+
+  Object.entries(contractsByCompany).forEach(([companyName, contractList]) => {
+    if (!Array.isArray(contractList) || contractList.length === 0) {
+      return;
+    }
+
+    const normalizedKeyName = normalizeCompanyLabel(companyName);
+    const matchesKeyName = Boolean(
+      normalizedAssignmentName &&
+        normalizedKeyName &&
+        normalizedAssignmentName === normalizedKeyName
+    );
+
+    contractList.forEach((contract) => {
+      if (!contract) {
+        return;
+      }
+
+      const normalizedContractName = normalizeCompanyLabel(
+        contract.companyName
+      );
+      const normalizedContractId = normalizeKeyPart(contract.companyId);
+      const lookupName = lookupCompanyName(contract.companyId);
+      const normalizedLookupName = normalizeCompanyLabel(lookupName);
+
+      const matchesId =
+        normalizedAssignmentId &&
+        normalizedContractId &&
+        normalizedAssignmentId === normalizedContractId;
+
+      const matchesName = Boolean(
+        normalizedAssignmentName &&
+          ((normalizedContractName &&
+            normalizedAssignmentName === normalizedContractName) ||
+            (normalizedLookupName &&
+              normalizedAssignmentName === normalizedLookupName) ||
+            matchesKeyName)
+      );
+
+      if (matchesId || matchesName) {
+        candidateContracts.push(contract);
+      }
+    });
+  });
+
+  const contractWithRate = candidateContracts.find(
+    (contract) =>
+      typeof contract.hourlyRate === "number" &&
+      Number.isFinite(contract.hourlyRate)
+  );
+
+  if (contractWithRate) {
+    return contractWithRate.hourlyRate;
+  }
+
+  if (
+    typeof worker.hourlyRate === "number" &&
+    Number.isFinite(worker.hourlyRate)
+  ) {
+    return worker.hourlyRate;
+  }
+
+  return undefined;
+};
+
+const roundToDecimals = (value: number, decimals = 2): number => {
+  if (!Number.isFinite(value)) {
+    return value;
+  }
+  const factor = 10 ** decimals;
+  const rounded = Math.round(value * factor) / factor;
+  return Object.is(rounded, -0) ? 0 : rounded;
+};
+
 const buildWorkerWeeklyData = (
   summary: WorkerHoursSummaryResult
 ): WorkerWeeklyData => {
@@ -4055,8 +4190,9 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   const [workerLookupById, setWorkerLookupById] = useState<
     Record<string, Worker>
   >({});
-  const [workerLookupByNormalizedId, setWorkerLookupByNormalizedId] =
-    useState<Record<string, Worker>>({});
+  const [workerLookupByNormalizedId, setWorkerLookupByNormalizedId] = useState<
+    Record<string, Worker>
+  >({});
   const [companyLookupMap, setCompanyLookupMap] = useState<
     Record<string, string>
   >(() => createDefaultCompanyLookupMap());
@@ -4463,11 +4599,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
   useEffect(() => {
     setNoteDraftsByDay({});
     setNoteOriginalsByDay({});
-  }, [
-    visibleWorkerIdsKey,
-    selectedRangeStartMs,
-    selectedRangeEndMs,
-  ]);
+  }, [visibleWorkerIdsKey, selectedRangeStartMs, selectedRangeEndMs]);
 
   useEffect(() => {
     setSelectedGroupIds((prev) => {
@@ -5953,7 +6085,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         setGroupMembersById({ all: fallbackIds });
         setIsLoadingGroupOptions(false);
       }
-
     } catch (error) {
       console.error("Error fetching workers para registro múltiple", error);
       setWorkersError("No se pudieron cargar los trabajadores");
@@ -6517,6 +6648,265 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       );
   }, [visibleWorkerIds, workerLookupById, workerNameById, workerWeekData]);
 
+  const canExport = hasRequestedResults && visibleAssignments.length > 0;
+
+  const handleExportExcel = useCallback(() => {
+    if (!hasRequestedResults || visibleAssignments.length === 0) {
+      alert("No hay datos para exportar en el rango seleccionado.");
+      return;
+    }
+
+    const workerAggregates = new Map<
+      string,
+      {
+        workerName: string;
+        rows: Array<{
+          companyName: string;
+          hours: number;
+          hourlyRate?: number;
+          amount?: number;
+        }>;
+        totalHours: number;
+        totalAmount: number;
+        hoursWithRate: number;
+      }
+    >();
+
+    const companyAggregates = new Map<
+      string,
+      {
+        companyName: string;
+        totalHours: number;
+        totalAmount: number;
+        hoursWithRate: number;
+      }
+    >();
+
+    visibleAssignments.forEach((assignment) => {
+      const workerName =
+        workerNameById[assignment.workerId] ?? assignment.workerName;
+      const totalHours = calculateRowTotal(
+        assignment,
+        totalsContext,
+        visibleDays
+      );
+
+      const hourlyRate = resolveHourlyRateFromWorker(
+        workerLookupById[assignment.workerId],
+        assignment,
+        companyLookupMap
+      );
+
+      const amount =
+        hourlyRate !== undefined ? totalHours * hourlyRate : undefined;
+
+      if (!workerAggregates.has(assignment.workerId)) {
+        workerAggregates.set(assignment.workerId, {
+          workerName,
+          rows: [],
+          totalHours: 0,
+          totalAmount: 0,
+          hoursWithRate: 0,
+        });
+      }
+
+      const workerEntry = workerAggregates.get(assignment.workerId)!;
+      workerEntry.rows.push({
+        companyName: assignment.companyName,
+        hours: totalHours,
+        hourlyRate,
+        amount,
+      });
+      workerEntry.totalHours += totalHours;
+      if (amount !== undefined && hourlyRate !== undefined) {
+        workerEntry.totalAmount += amount;
+        workerEntry.hoursWithRate += totalHours;
+      }
+
+      const companyKey =
+        normalizeKeyPart(assignment.companyId) ??
+        normalizeCompanyLabel(assignment.companyName) ??
+        assignment.companyName;
+
+      if (!companyAggregates.has(companyKey)) {
+        companyAggregates.set(companyKey, {
+          companyName: assignment.companyName,
+          totalHours: 0,
+          totalAmount: 0,
+          hoursWithRate: 0,
+        });
+      }
+
+      const companyEntry = companyAggregates.get(companyKey)!;
+      if (!companyEntry.companyName && assignment.companyName) {
+        companyEntry.companyName = assignment.companyName;
+      }
+      companyEntry.totalHours += totalHours;
+      if (amount !== undefined && hourlyRate !== undefined) {
+        companyEntry.totalAmount += amount;
+        companyEntry.hoursWithRate += totalHours;
+      }
+    });
+
+    if (workerAggregates.size === 0) {
+      alert("No hay datos para exportar en el rango seleccionado.");
+      return;
+    }
+
+    const sheetRows: Array<Array<string | number | null>> = [];
+
+    sheetRows.push(["CONTROL HORARIO POR EMPRESA"]);
+    sheetRows.push([`Del ${rangeLabel}`]);
+    sheetRows.push([]);
+    sheetRows.push(["EMPLEADO", "UBICACIÓN", "HORAS", "€/HORA", "IMPORTE €"]);
+
+    const sortedWorkers = Array.from(workerAggregates.values()).sort((a, b) =>
+      a.workerName.localeCompare(b.workerName, "es", {
+        sensitivity: "base",
+      })
+    );
+
+    sortedWorkers.forEach((worker) => {
+      worker.rows
+        .sort((a, b) =>
+          a.companyName.localeCompare(b.companyName, "es", {
+            sensitivity: "base",
+          })
+        )
+        .forEach((row, index) => {
+          sheetRows.push([
+            index === 0 ? worker.workerName : "",
+            row.companyName,
+            roundToDecimals(row.hours),
+            row.hourlyRate !== undefined
+              ? roundToDecimals(row.hourlyRate)
+              : null,
+            row.amount !== undefined ? roundToDecimals(row.amount) : null,
+          ]);
+        });
+
+      sheetRows.push([
+        "",
+        "TOTAL",
+        roundToDecimals(worker.totalHours),
+        worker.hoursWithRate > 0
+          ? roundToDecimals(worker.totalAmount / worker.hoursWithRate)
+          : null,
+        worker.hoursWithRate > 0 ? roundToDecimals(worker.totalAmount) : null,
+      ]);
+      sheetRows.push([]);
+    });
+
+    sheetRows.push([]);
+    sheetRows.push(["RESUMEN GENERAL"]);
+    sheetRows.push([
+      "UBICACIÓN",
+      "TOTAL HORAS",
+      "€/HORA MEDIO",
+      "TOTAL IMPORTE €",
+    ]);
+
+    const sortedCompanies = Array.from(companyAggregates.values()).sort(
+      (a, b) =>
+        a.companyName.localeCompare(b.companyName, "es", {
+          sensitivity: "base",
+        })
+    );
+
+    let generalTotalHours = 0;
+    let generalTotalAmount = 0;
+    let generalHoursWithRate = 0;
+
+    sortedCompanies.forEach((company) => {
+      generalTotalHours += company.totalHours;
+      generalTotalAmount += company.totalAmount;
+      generalHoursWithRate += company.hoursWithRate;
+
+      sheetRows.push([
+        company.companyName,
+        roundToDecimals(company.totalHours),
+        company.hoursWithRate > 0
+          ? roundToDecimals(company.totalAmount / company.hoursWithRate)
+          : null,
+        company.hoursWithRate > 0 ? roundToDecimals(company.totalAmount) : null,
+      ]);
+    });
+
+    sheetRows.push([
+      "TOTAL GENERAL",
+      roundToDecimals(generalTotalHours),
+      generalHoursWithRate > 0
+        ? roundToDecimals(generalTotalAmount / generalHoursWithRate)
+        : null,
+      generalHoursWithRate > 0 ? roundToDecimals(generalTotalAmount) : null,
+    ]);
+
+    const worksheet = XLSXUtils.aoa_to_sheet(sheetRows);
+    worksheet["!cols"] = [
+      { wch: 28 },
+      { wch: 22 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 16 },
+    ];
+    const merges = worksheet["!merges"] ?? [];
+    merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } });
+    merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 4 } });
+    worksheet["!merges"] = merges;
+
+    const ensureCell = (address: string) => {
+      if (!worksheet[address]) {
+        worksheet[address] = { t: "s", v: "" };
+      }
+      return worksheet[address];
+    };
+
+    const titleStyle = {
+      font: { sz: 24, bold: true },
+      alignment: { horizontal: "center", vertical: "center" },
+    } as const;
+    ["A1", "B1", "C1", "D1", "E1"].forEach((cell) => {
+      ensureCell(cell).s = { ...titleStyle };
+    });
+
+    const subtitleStyle = {
+      font: { sz: 18 },
+      alignment: { horizontal: "center", vertical: "center" },
+    } as const;
+    ["A2", "B2", "C2", "D2", "E2"].forEach((cell) => {
+      ensureCell(cell).s = { ...subtitleStyle };
+    });
+
+    worksheet["!rows"] = worksheet["!rows"] ?? [];
+    worksheet["!rows"][0] = { hpt: 36 };
+    worksheet["!rows"][1] = { hpt: 28 };
+
+    const workbook = XLSXUtils.book_new();
+    XLSXUtils.book_append_sheet(workbook, worksheet, "Resumen");
+
+    const fileName = `control-horario-${formatLocalDateKey(
+      selectedRange.start
+    )}-al-${formatLocalDateKey(selectedRange.end)}.xlsx`;
+
+    try {
+      writeXLSXFile(workbook, fileName, { cellStyles: true });
+    } catch (error) {
+      console.error("No se pudo generar el Excel", error);
+      alert("Ocurrió un error al generar el archivo de Excel.");
+    }
+  }, [
+    companyLookupMap,
+    hasRequestedResults,
+    rangeLabel,
+    selectedRange.end,
+    selectedRange.start,
+    totalsContext,
+    visibleAssignments,
+    visibleDays,
+    workerLookupById,
+    workerNameById,
+  ]);
+
   const renderGroupCard = useCallback(
     (group: GroupView) => {
       const isExpanded = expandedGroups.has(group.id);
@@ -6680,8 +7070,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                 ? hoursFormatter.format(trackedHours)
                                 : "";
 
-                            const currentValue =
-                              assignment.hours[day.dateKey];
+                            const currentValue = assignment.hours[day.dateKey];
                             const hasManualValue =
                               Object.prototype.hasOwnProperty.call(
                                 assignment.hours,
@@ -7114,6 +7503,20 @@ export const MultipleHoursRegistryPage: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {hasRequestedResults && (
+          <div className="flex justify-end">
+            <Button
+              className="bg-green-700 text-white hover:bg-white hover:text-green-700"
+              variant="outline"
+              leftIcon={<FileSpreadsheet size={16} />}
+              onClick={handleExportExcel}
+              disabled={!canExport}
+            >
+              Exportar Excel
+            </Button>
+          </div>
         )}
 
         {hasRequestedResults && (
