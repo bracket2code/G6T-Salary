@@ -6758,6 +6758,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       dataStartRow: number;
       dataEndRow: number;
       totalRow: number;
+      separatorRow?: number;
     }> = [];
 
     sheetRows.push(["CONTROL HORARIO POR EMPRESA"]);
@@ -6811,11 +6812,13 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         null,
       ]);
       sheetRows.push([]);
+      const separatorRowNumber = sheetRows.length;
 
       workerTotals.push({
         dataStartRow: workerDataStartRow,
         dataEndRow: workerDataEndRow,
         totalRow: workerTotalRow,
+        separatorRow: separatorRowNumber,
       });
     });
 
@@ -6891,6 +6894,88 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         alignment: {
           ...existingAlignment,
           horizontal: "center",
+          vertical: "center",
+        },
+      };
+    };
+    const applyLeftAlignment = (address: string) => {
+      const cell = ensureCell(address);
+      const existingStyle =
+        (cell.s as Record<string, unknown> | undefined) ?? {};
+      const existingAlignment =
+        (existingStyle.alignment as Record<string, unknown> | undefined) ??
+        {};
+      cell.s = {
+        ...existingStyle,
+        alignment: {
+          ...existingAlignment,
+          horizontal: "left",
+          vertical: "center",
+        },
+      };
+    };
+    const applyHeaderTheme = (address: string) => {
+      const cell = ensureCell(address);
+      const existingStyle =
+        (cell.s as Record<string, unknown> | undefined) ?? {};
+      const existingFont =
+        (existingStyle.font as Record<string, unknown> | undefined) ?? {};
+      cell.s = {
+        ...existingStyle,
+        font: {
+          ...existingFont,
+          color: { rgb: "FFFFFFFF" },
+          bold: true,
+        },
+        fill: {
+          patternType: "solid",
+          fgColor: { rgb: "FF4F81BD" },
+          bgColor: { rgb: "FF4F81BD" },
+        },
+      };
+    };
+    const applySeparatorFill = (address: string) => {
+      const cell = ensureCell(address);
+      const existingStyle =
+        (cell.s as Record<string, unknown> | undefined) ?? {};
+      cell.s = {
+        ...existingStyle,
+        fill: {
+          patternType: "solid",
+          fgColor: { rgb: "FFD9D9D9" },
+          bgColor: { rgb: "FFD9D9D9" },
+        },
+      };
+    };
+    const applyTotalHighlight = (address: string) => {
+      const cell = ensureCell(address);
+      const existingStyle =
+        (cell.s as Record<string, unknown> | undefined) ?? {};
+      cell.s = {
+        ...existingStyle,
+        fill: {
+          patternType: "solid",
+          fgColor: { rgb: "FFE3ECF8" },
+          bgColor: { rgb: "FFE3ECF8" },
+        },
+      };
+    };
+    const applyWorkerNameFill = (address: string) => {
+      const cell = ensureCell(address);
+      const existingStyle =
+        (cell.s as Record<string, unknown> | undefined) ?? {};
+      const existingFont =
+        (existingStyle.font as Record<string, unknown> | undefined) ?? {};
+      cell.s = {
+        ...existingStyle,
+        font: {
+          ...existingFont,
+          bold: true,
+        },
+        fill: {
+          patternType: "solid",
+          fgColor: { rgb: "FFE3ECF8" },
+          bgColor: { rgb: "FFE3ECF8" },
         },
       };
     };
@@ -6915,8 +7000,10 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       startRow: number,
       endRow: number
     ) => `$${column}$${startRow}:$${column}$${endRow}`;
+    const merges = worksheet["!merges"] ?? [];
 
-    workerTotals.forEach(({ dataStartRow, dataEndRow, totalRow }) => {
+    workerTotals.forEach(
+      ({ dataStartRow, dataEndRow, totalRow, separatorRow }, index) => {
       if (dataEndRow < dataStartRow) {
         return;
       }
@@ -6947,12 +7034,33 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       applyCurrencyFormat(`E${totalRow}`);
       applyCenterAlignment(`C${totalRow}`);
       applyCenterAlignment(`D${totalRow}`);
-    });
+      applyBoldStyle(`B${totalRow}`);
+      ["A", "B", "C", "D", "E"].forEach((column) =>
+        applyTotalHighlight(`${column}${totalRow}`)
+      );
+      if (totalRow > dataStartRow) {
+        merges.push({
+          s: { r: dataStartRow - 1, c: 0 },
+          e: { r: totalRow - 1, c: 0 },
+        });
+        applyLeftAlignment(`A${dataStartRow}`);
+        applyWorkerNameFill(`A${dataStartRow}`);
+      }
+      if (separatorRow && index < workerTotals.length - 1) {
+        ["A", "B", "C", "D", "E"].forEach((column) =>
+          applySeparatorFill(`${column}${separatorRow}`)
+        );
+      }
+    }
+    );
 
     const tableDataStartRow = tableHeaderRowNumber + 1;
     const tableDataEndRow = tableLastDataRowNumber;
-    applyCenterAlignment(`C${tableHeaderRowNumber}`);
-    applyCenterAlignment(`D${tableHeaderRowNumber}`);
+    ["A", "B", "C", "D", "E"].forEach((column) =>
+      applyHeaderTheme(`${column}${tableHeaderRowNumber}`)
+    );
+    applyLeftAlignment(`C${tableHeaderRowNumber}`);
+    applyLeftAlignment(`D${tableHeaderRowNumber}`);
     if (tableDataEndRow >= tableDataStartRow) {
       const companyRangeAbs = buildAbsoluteRange(
         "B",
@@ -6979,6 +7087,12 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       const summaryHeaderRow = summaryTitleRow + 1;
       const summaryDataStartRow = summaryHeaderRow + 1;
 
+      const summaryHeaderColumns = ["H", "I", "J", "K"] as const;
+      summaryHeaderColumns.forEach((column) => {
+        applyHeaderTheme(`${column}${summaryTitleRow}`);
+        applyHeaderTheme(`${column}${summaryHeaderRow}`);
+      });
+
       const summaryHeaders = [
         "UBICACIÓN",
         "TOTAL HORAS",
@@ -6986,21 +7100,40 @@ export const MultipleHoursRegistryPage: React.FC = () => {
         "TOTAL IMPORTE €",
       ] as const;
       summaryHeaders.forEach((header, index) => {
-        const column = String.fromCharCode("H".charCodeAt(0) + index);
+        const column = summaryHeaderColumns[index];
         const headerCell = ensureCell(`${column}${summaryHeaderRow}`);
         headerCell.t = "s";
         headerCell.v = header;
-        applyBoldStyle(`${column}${summaryHeaderRow}`);
-        applyCenterAlignment(`${column}${summaryHeaderRow}`);
+        if (column === "I" || column === "J") {
+          applyLeftAlignment(`${column}${summaryHeaderRow}`);
+        } else {
+          applyCenterAlignment(`${column}${summaryHeaderRow}`);
+        }
       });
 
       const summaryTitleCell = ensureCell(`H${summaryTitleRow}`);
       summaryTitleCell.t = "s";
       summaryTitleCell.v = "RESUMEN GENERAL";
+      const summaryTitleExistingStyle =
+        (summaryTitleCell.s as Record<string, unknown> | undefined) ?? {};
+      const summaryTitleFont =
+        (summaryTitleExistingStyle.font as Record<string, unknown> | undefined) ??
+        {};
+      const summaryTitleAlignment =
+        (summaryTitleExistingStyle.alignment as
+          | Record<string, unknown>
+          | undefined) ?? {};
       summaryTitleCell.s = {
-        ...(summaryTitleCell.s as Record<string, unknown> | undefined),
-        font: { bold: true, sz: 16 },
-        alignment: { horizontal: "center" },
+        ...summaryTitleExistingStyle,
+        font: {
+          ...summaryTitleFont,
+          bold: true,
+          sz: 16,
+        },
+        alignment: {
+          ...summaryTitleAlignment,
+          horizontal: "center",
+        },
       };
       const merges = worksheet["!merges"] ?? [];
       merges.push({
@@ -7039,6 +7172,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       totalLabelCell.t = "s";
       totalLabelCell.v = "TOTAL GENERAL";
       applyBoldStyle(`H${summaryTotalRow}`);
+      applyTotalHighlight(`H${summaryTotalRow}`);
 
       const totalHoursExpr = `SUMIFS(${hoursRangeAbs},${companyRangeAbs},"<>TOTAL",${companyRangeAbs},"<>")`;
       const totalAmountExpr = `SUMIFS(${amountRangeAbs},${rateRangeAbs},"<>")`;
@@ -7056,6 +7190,7 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       ["I", "J", "K"].forEach((column) => {
         applyBoldStyle(`${column}${summaryTotalRow}`);
         applyCenterAlignment(`${column}${summaryTotalRow}`);
+        applyTotalHighlight(`${column}${summaryTotalRow}`);
       });
       applyCurrencyFormat(`K${summaryTotalRow}`);
     }
@@ -7076,7 +7211,6 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       { wch: 12 }, // J
       { wch: 16 }, // K
     ];
-    const merges = worksheet["!merges"] ?? [];
     merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } });
     merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 4 } });
     worksheet["!merges"] = merges;
