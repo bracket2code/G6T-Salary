@@ -25,6 +25,7 @@ import {
   Mail,
   Phone,
   MessageCircle,
+  MessageSquareWarning,
 } from "lucide-react";
 import { utils as XLSXUtils, writeFile as writeXLSXFile } from "xlsx-js-style";
 import { PageHeader } from "../components/layout/PageHeader";
@@ -2299,15 +2300,11 @@ const normalizeCompanyLabel = (value?: string | null): string | null => {
     .replace(/\s+/g, " ");
 };
 
-const resolveHourlyRateFromWorker = (
-  worker: Worker | undefined,
+const collectContractsMatchingAssignment = (
+  worker: Worker,
   assignment: Assignment,
   companyLookup: Record<string, string>
-): number | undefined => {
-  if (!worker) {
-    return undefined;
-  }
-
+): WorkerCompanyContract[] => {
   const normalizedAssignmentName = normalizeCompanyLabel(
     assignment.companyName
   );
@@ -2379,7 +2376,7 @@ const resolveHourlyRateFromWorker = (
             normalizedAssignmentName === normalizedContractName) ||
             (normalizedLookupName &&
               normalizedAssignmentName === normalizedLookupName) ||
-            matchesKeyName)
+          matchesKeyName)
       );
 
       if (matchesId || matchesName) {
@@ -2387,6 +2384,24 @@ const resolveHourlyRateFromWorker = (
       }
     });
   });
+
+  return candidateContracts;
+};
+
+const resolveHourlyRateFromWorker = (
+  worker: Worker | undefined,
+  assignment: Assignment,
+  companyLookup: Record<string, string>
+): number | undefined => {
+  if (!worker) {
+    return undefined;
+  }
+
+  const candidateContracts = collectContractsMatchingAssignment(
+    worker,
+    assignment,
+    companyLookup
+  );
 
   const contractWithRate = candidateContracts.find(
     (contract) =>
@@ -2406,6 +2421,26 @@ const resolveHourlyRateFromWorker = (
   }
 
   return undefined;
+};
+
+const hasCompanyHourlyRate = (
+  worker: Worker | undefined,
+  assignment: Assignment,
+  companyLookup: Record<string, string>
+): boolean => {
+  if (!worker) {
+    return false;
+  }
+
+  return collectContractsMatchingAssignment(
+    worker,
+    assignment,
+    companyLookup
+  ).some(
+    (contract) =>
+      typeof contract.hourlyRate === "number" &&
+      Number.isFinite(contract.hourlyRate)
+  );
 };
 
 const roundToDecimals = (value: number, decimals = 2): number => {
@@ -7384,6 +7419,15 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                         totalsContext,
                         visibleDays
                       );
+                      const workerRecord =
+                        workerLookupById[assignment.workerId];
+                      const showHourlyWarning = workerRecord
+                        ? !hasCompanyHourlyRate(
+                            workerRecord,
+                            assignment,
+                            companyLookupMap
+                          )
+                        : false;
 
                       return (
                         <tr
@@ -7407,10 +7451,44 @@ export const MultipleHoursRegistryPage: React.FC = () => {
                                 className="inline-flex w-full cursor-pointer select-none items-center justify-start gap-2 rounded-md px-2 py-1 text-left transition hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:hover:bg-blue-900/30"
                                 title="Doble clic para ver detalles"
                               >
-                                {assignment.workerName}
+                                <span className="truncate">
+                                  {assignment.workerName}
+                                </span>
+                                {showHourlyWarning ? (
+                                  <span
+                                    className="inline-flex items-center text-rose-400 dark:text-rose-300"
+                                    title="Sin precio por hora asignado"
+                                  >
+                                    <MessageSquareWarning
+                                      size={16}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="sr-only">
+                                      Sin precio por hora asignado
+                                    </span>
+                                  </span>
+                                ) : null}
                               </button>
                             ) : (
-                              assignment.companyName
+                              <div className="flex items-center gap-2">
+                                <span className="truncate">
+                                  {assignment.companyName}
+                                </span>
+                                {showHourlyWarning ? (
+                                  <span
+                                    className="inline-flex items-center text-rose-400 dark:text-rose-300"
+                                    title="Sin precio por hora asignado"
+                                  >
+                                    <MessageSquareWarning
+                                      size={16}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="sr-only">
+                                      Sin precio por hora asignado
+                                    </span>
+                                  </span>
+                                ) : null}
+                              </div>
                             )}
                           </td>
                           {visibleDays.map((day) => {
@@ -7539,6 +7617,8 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       totalsContext,
       segmentsByAssignment,
       visibleDays,
+      workerLookupById,
+      companyLookupMap,
     ]
   );
 
