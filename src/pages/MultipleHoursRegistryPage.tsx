@@ -6754,48 +6754,89 @@ export const MultipleHoursRegistryPage: React.FC = () => {
     }
 
     const sheetRows: Array<Array<string | number | null>> = [];
+    const workerTotals: Array<{
+      dataStartRow: number;
+      dataEndRow: number;
+      totalRow: number;
+    }> = [];
 
     sheetRows.push(["CONTROL HORARIO POR EMPRESA"]);
     sheetRows.push([`Del ${rangeLabel}`]);
     sheetRows.push([]);
+    const tableHeaderRowNumber = sheetRows.length + 1;
     sheetRows.push(["EMPLEADO", "UBICACIÓN", "HORAS", "€/HORA", "IMPORTE €"]);
 
-    const sortedWorkers = Array.from(workerAggregates.values()).sort((a, b) =>
-      a.workerName.localeCompare(b.workerName, "es", {
-        sensitivity: "base",
-      })
+    const sortedWorkers = Array.from(workerAggregates.values()).sort(
+      (a, b) =>
+        a.workerName.localeCompare(b.workerName, "es", {
+          sensitivity: "base",
+        })
     );
 
     sortedWorkers.forEach((worker) => {
-      worker.rows
+      const rowsWithHours = worker.rows
+        .filter(
+          (row) => Math.abs(row.hours) >= HOURS_COMPARISON_EPSILON
+        )
         .sort((a, b) =>
           a.companyName.localeCompare(b.companyName, "es", {
             sensitivity: "base",
           })
-        )
-        .forEach((row, index) => {
-          sheetRows.push([
-            index === 0 ? worker.workerName : "",
-            row.companyName,
-            roundToDecimals(row.hours),
-            row.hourlyRate !== undefined
-              ? roundToDecimals(row.hourlyRate)
-              : null,
-            row.amount !== undefined ? roundToDecimals(row.amount) : null,
-          ]);
-        });
+        );
+
+      if (rowsWithHours.length === 0) {
+        return;
+      }
+
+      const workerDataStartRow = sheetRows.length + 1;
+
+      rowsWithHours.forEach((row, index) => {
+        sheetRows.push([
+          index === 0 ? worker.workerName : "",
+          row.companyName,
+          roundToDecimals(row.hours),
+          row.hourlyRate !== undefined ? roundToDecimals(row.hourlyRate) : null,
+          null,
+        ]);
+      });
+
+      const workerDataEndRow = sheetRows.length;
+      const workerTotalRow = sheetRows.length + 1;
 
       sheetRows.push([
         "",
         "TOTAL",
-        roundToDecimals(worker.totalHours),
-        worker.hoursWithRate > 0
-          ? roundToDecimals(worker.totalAmount / worker.hoursWithRate)
-          : null,
-        worker.hoursWithRate > 0 ? roundToDecimals(worker.totalAmount) : null,
+        null,
+        null,
+        null,
       ]);
       sheetRows.push([]);
+
+      workerTotals.push({
+        dataStartRow: workerDataStartRow,
+        dataEndRow: workerDataEndRow,
+        totalRow: workerTotalRow,
+      });
     });
+
+    const tableLastDataRowNumber = (() => {
+      for (let index = sheetRows.length; index > tableHeaderRowNumber; index -= 1) {
+        const row = sheetRows[index - 1];
+        const hasValue = row.some((value) => {
+          if (value === null || value === undefined) {
+            return false;
+          }
+          if (typeof value === "number") {
+            return true;
+          }
+          return String(value).trim().length > 0;
+        });
+        if (hasValue) {
+          return index;
+        }
+      }
+      return tableHeaderRowNumber;
+    })();
 
     sheetRows.push([]);
     sheetRows.push(["RESUMEN GENERAL"]);
@@ -6806,42 +6847,161 @@ export const MultipleHoursRegistryPage: React.FC = () => {
       "TOTAL IMPORTE €",
     ]);
 
-    const sortedCompanies = Array.from(companyAggregates.values()).sort(
-      (a, b) =>
+    const summaryRows: Array<{
+      rowNumber: number;
+      companyName: string;
+    }> = [];
+
+    const sortedCompanies = Array.from(companyAggregates.values())
+      .filter(
+        (company) =>
+          Math.abs(company.totalHours) >= HOURS_COMPARISON_EPSILON
+      )
+      .sort((a, b) =>
         a.companyName.localeCompare(b.companyName, "es", {
           sensitivity: "base",
         })
-    );
-
-    let generalTotalHours = 0;
-    let generalTotalAmount = 0;
-    let generalHoursWithRate = 0;
+      );
 
     sortedCompanies.forEach((company) => {
-      generalTotalHours += company.totalHours;
-      generalTotalAmount += company.totalAmount;
-      generalHoursWithRate += company.hoursWithRate;
-
       sheetRows.push([
         company.companyName,
-        roundToDecimals(company.totalHours),
-        company.hoursWithRate > 0
-          ? roundToDecimals(company.totalAmount / company.hoursWithRate)
-          : null,
-        company.hoursWithRate > 0 ? roundToDecimals(company.totalAmount) : null,
+        null,
+        null,
+        null,
       ]);
+
+      summaryRows.push({
+        rowNumber: sheetRows.length,
+        companyName: company.companyName,
+      });
     });
+
+    const summaryTotalRow = sheetRows.length + 1;
 
     sheetRows.push([
       "TOTAL GENERAL",
-      roundToDecimals(generalTotalHours),
-      generalHoursWithRate > 0
-        ? roundToDecimals(generalTotalAmount / generalHoursWithRate)
-        : null,
-      generalHoursWithRate > 0 ? roundToDecimals(generalTotalAmount) : null,
+      null,
+      null,
+      null,
     ]);
 
     const worksheet = XLSXUtils.aoa_to_sheet(sheetRows);
+    const setCellFormula = (address: string, formula: string) => {
+      const cell = (worksheet[address] ?? {}) as Record<string, unknown>;
+      cell.f = formula;
+      delete cell.v;
+      delete cell.w;
+      worksheet[address] = cell as any;
+    };
+    const applyCurrencyFormat = (address: string) => {
+      const cell = (worksheet[address] ?? {}) as Record<string, unknown>;
+      const existingStyle =
+        (cell.s as Record<string, unknown> | undefined) ?? {};
+      cell.s = {
+        ...existingStyle,
+        numFmt: '"€"#,##0.00',
+      };
+      worksheet[address] = cell as any;
+    };
+    const buildRange = (column: string, startRow: number, endRow: number) =>
+      `${column}${startRow}:${column}${endRow}`;
+    const buildAbsoluteRange = (
+      column: string,
+      startRow: number,
+      endRow: number
+    ) => `$${column}$${startRow}:$${column}$${endRow}`;
+
+    workerTotals.forEach(({ dataStartRow, dataEndRow, totalRow }) => {
+      if (dataEndRow < dataStartRow) {
+        return;
+      }
+      const hoursRange = buildRange("C", dataStartRow, dataEndRow);
+      const rateRange = buildRange("D", dataStartRow, dataEndRow);
+      const amountRange = buildRange("E", dataStartRow, dataEndRow);
+      for (let rowIndex = dataStartRow; rowIndex <= dataEndRow; rowIndex += 1) {
+        setCellFormula(
+          `E${rowIndex}`,
+          `IF(OR(C${rowIndex}="",D${rowIndex}=""),"",C${rowIndex}*D${rowIndex})`
+        );
+        applyCurrencyFormat(`E${rowIndex}`);
+      }
+      const amountWithRateExpr = `SUMIFS(${amountRange},${rateRange},"<>")`;
+      const hoursWithRateExpr = `SUMIFS(${hoursRange},${rateRange},"<>")`;
+
+      setCellFormula(`C${totalRow}`, `SUM(${hoursRange})`);
+      setCellFormula(
+        `D${totalRow}`,
+        `IF(${hoursWithRateExpr}=0,"",ROUND(${amountWithRateExpr}/${hoursWithRateExpr},2))`
+      );
+      setCellFormula(
+        `E${totalRow}`,
+        `IF(${amountWithRateExpr}=0,"",${amountWithRateExpr})`
+      );
+      applyCurrencyFormat(`E${totalRow}`);
+    });
+
+    const tableDataStartRow = tableHeaderRowNumber + 1;
+    const tableDataEndRow = tableLastDataRowNumber;
+    if (tableDataEndRow >= tableDataStartRow) {
+      const companyRangeAbs = buildAbsoluteRange(
+        "B",
+        tableDataStartRow,
+        tableDataEndRow
+      );
+      const hoursRangeAbs = buildAbsoluteRange(
+        "C",
+        tableDataStartRow,
+        tableDataEndRow
+      );
+      const rateRangeAbs = buildAbsoluteRange(
+        "D",
+        tableDataStartRow,
+        tableDataEndRow
+      );
+      const amountRangeAbs = buildAbsoluteRange(
+        "E",
+        tableDataStartRow,
+        tableDataEndRow
+      );
+
+      summaryRows.forEach(({ rowNumber, companyName }) => {
+        const escapedCompanyName = companyName.replace(/"/g, '""');
+        const hoursSumExpr = `SUMIFS(${hoursRangeAbs},${companyRangeAbs},"${escapedCompanyName}")`;
+        const amountSumExpr = `SUMIFS(${amountRangeAbs},${companyRangeAbs},"${escapedCompanyName}",${rateRangeAbs},"<>")`;
+        const hoursWithRateExpr = `SUMIFS(${hoursRangeAbs},${companyRangeAbs},"${escapedCompanyName}",${rateRangeAbs},"<>")`;
+
+        setCellFormula(`B${rowNumber}`, hoursSumExpr);
+        setCellFormula(
+          `C${rowNumber}`,
+          `IF(${hoursWithRateExpr}=0,"",ROUND(${amountSumExpr}/${hoursWithRateExpr},2))`
+        );
+        setCellFormula(
+          `D${rowNumber}`,
+          `IF(${amountSumExpr}=0,"",${amountSumExpr})`
+        );
+        applyCurrencyFormat(`D${rowNumber}`);
+      });
+
+      const totalHoursExpr = `SUMIFS(${hoursRangeAbs},${companyRangeAbs},"<>TOTAL",${companyRangeAbs},"<>")`;
+      const totalAmountExpr = `SUMIFS(${amountRangeAbs},${rateRangeAbs},"<>")`;
+      const totalHoursWithRateExpr = `SUMIFS(${hoursRangeAbs},${rateRangeAbs},"<>")`;
+
+      setCellFormula(`B${summaryTotalRow}`, `${totalHoursExpr}`);
+      setCellFormula(
+        `C${summaryTotalRow}`,
+        `IF(${totalHoursWithRateExpr}=0,"",ROUND(${totalAmountExpr}/${totalHoursWithRateExpr},2))`
+      );
+      setCellFormula(
+        `D${summaryTotalRow}`,
+        `IF(${totalAmountExpr}=0,"",${totalAmountExpr})`
+      );
+      applyCurrencyFormat(`D${summaryTotalRow}`);
+    }
+
+    worksheet["!autofilter"] = {
+      ref: `A${tableHeaderRowNumber}:E${tableLastDataRowNumber}`,
+    };
     worksheet["!cols"] = [
       { wch: 28 },
       { wch: 22 },
