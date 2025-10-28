@@ -15,7 +15,7 @@
   html, body, #root {
     height: 100vh;
     height: 100dvh; /* Dynamic viewport height for mobile */
-    overflow-x: hidden;
+    overflow: hidden;
     margin: 0;
     padding: 0;
   }

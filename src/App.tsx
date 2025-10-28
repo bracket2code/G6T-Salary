@@ -6,7 +6,7 @@ import { LoginPage } from './pages/LoginPage';
 import { Dashboard } from './pages/Dashboard';
 import { SalaryCalculatorPage } from './pages/SalaryCalculatorPage';
 import { MultipleCalculatorPage } from './pages/MultipleCalculatorPage';
-import { MultipleHoursRegistryPage } from './pages/MultipleHoursRegistryPage';
+import { HoursRegistryPage } from './pages/HoursRegistryPage';
 import { WorkerQueriesPage } from './pages/WorkerQueriesPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ProfilePage } from './pages/ProfilePage';
@@ -67,7 +67,7 @@ function App() {
           <Route index element={<Dashboard key={refreshDashboard} />} />
           <Route path="calculator" element={<SalaryCalculatorPage />} />
           <Route path="multiple" element={<MultipleCalculatorPage />} />
-          <Route path="hours" element={<MultipleHoursRegistryPage />} />
+          <Route path="hours" element={<HoursRegistryPage />} />
           <Route path="hours/multiple" element={<Navigate to="/hours" replace />} />
           <Route path="registro" element={<Navigate to="/hours" replace />} />
           <Route path="log" element={<Navigate to="/hours" replace />} />

@@ -981,13 +981,6 @@ interface WorkerInfoModalProps {
   onClose: () => void;
 }
 
-interface WorkerContractListProps {
-  companyName: string;
-  contracts: WorkerCompanyContract[];
-  assignmentCount?: number;
-  contractCount?: number;
-}
-
 const formatMaybeDate = (value?: string | null) => {
   const normalized = trimToNull(value);
   if (!normalized) {
@@ -1004,118 +997,6 @@ const formatMaybeDate = (value?: string | null) => {
   }
 
   return normalized;
-};
-
-const WorkerContractList: React.FC<WorkerContractListProps> = ({
-  companyName,
-  contracts,
-  assignmentCount,
-  contractCount,
-}) => {
-  const [isOpen, setIsOpen] = useState(false);
-
-  return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/50">
-      <button
-        type="button"
-        onClick={() => setIsOpen((prev) => !prev)}
-        className="flex w-full items-center justify-between gap-3 text-left"
-        aria-expanded={isOpen}
-      >
-        <div className="flex flex-col gap-1 text-left">
-          <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-            {companyName}
-          </h5>
-          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-            <span>
-              {(contractCount ?? contracts.length) === 1
-                ? "1 contrato"
-                : `${contractCount ?? contracts.length} contratos`}
-            </span>
-            {typeof assignmentCount === "number" && assignmentCount > 0 && (
-              <span className="inline-flex items-center rounded-full bg-blue-200 px-2 py-0.5 font-semibold text-blue-800 dark:bg-blue-800/60 dark:text-blue-100">
-                Asignaciones {assignmentCount}
-              </span>
-            )}
-          </div>
-        </div>
-        <ChevronDown
-          size={16}
-          className={`text-gray-400 transition-transform ${
-            isOpen ? "rotate-180" : ""
-          }`}
-        />
-      </button>
-      {isOpen && (
-        <div className="mt-3 max-h-48 space-y-3 overflow-y-auto pr-1">
-          {contracts.length === 0 ? (
-            <div className="rounded-md bg-white p-3 text-xs text-gray-500 shadow-sm dark:bg-gray-900 dark:text-gray-400">
-              Este trabajador no tiene contratos guardados para esta empresa.
-            </div>
-          ) : (
-            contracts.map((contract, index) => {
-              const label =
-                trimToNull(contract.label) ?? `Contrato ${index + 1}`;
-              const typeText = trimToNull(
-                contract.typeLabel ?? contract.position
-              );
-              const descriptionText = trimToNull(contract.description);
-              const startDate = formatMaybeDate(contract.startDate);
-              const endDate = formatMaybeDate(contract.endDate);
-              const statusText = trimToNull(contract.status);
-
-              return (
-                <div
-                  key={`${contract.id}-${index}`}
-                  className="rounded-md bg-white p-3 text-sm text-gray-700 shadow-sm dark:bg-gray-900 dark:text-gray-200"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {label}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
-                          contract.hasContract
-                            ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
-                            : "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
-                        }`}
-                      >
-                        {contract.hasContract ? "Activo" : "Asignación"}
-                      </span>
-                      {statusText && (
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {statusText}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-2 grid gap-1 text-xs text-gray-600 dark:text-gray-400">
-                    {typeText && <span>{typeText}</span>}
-                    {(startDate || endDate) && (
-                      <span>
-                        {startDate ?? "¿"} – {endDate ?? "¿"}
-                      </span>
-                    )}
-                    {typeof contract.hourlyRate === "number" && (
-                      <span>Tarifa: {contract.hourlyRate.toFixed(2)} €/h</span>
-                    )}
-                  </div>
-
-                  {descriptionText && (
-                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                      {descriptionText}
-                    </p>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
-    </div>
-  );
 };
 
 interface WorkerCompaniesAndContractsProps {
@@ -1184,7 +1065,49 @@ const WorkerCompaniesAndContracts: React.FC<
     return result;
   }, [companies, contractsByCompany, companyStats]);
 
-  if (!entries.length) {
+  const flattenedLines = useMemo(() => {
+    const lines: Array<{ key: string; text: string }> = [];
+    if (!entries.length) {
+      return lines;
+    }
+    entries.forEach((entry) => {
+      const companyLabel = entry.companyName;
+      if (!entry.contracts.length) {
+        if ((entry.assignmentCount ?? 0) > 0) {
+          lines.push({
+            key: `${companyLabel}-assignment`,
+            text: `${companyLabel} · Sin contrato`,
+          });
+        } else {
+          lines.push({
+            key: `${companyLabel}-no-contract`,
+            text: `${companyLabel} · Sin contrato registrado`,
+          });
+        }
+        return;
+      }
+
+      entry.contracts.forEach((contract, index) => {
+        const label =
+          trimToNull(contract.label) ??
+          trimToNull(contract.position) ??
+          `Contrato ${index + 1}`;
+        let text = `${companyLabel} · ${label}`;
+        if (typeof contract.hourlyRate === "number") {
+          text += ` · ${contract.hourlyRate.toFixed(2)} €/h`;
+        }
+
+        lines.push({
+          key: `${companyLabel}-${contract.id ?? index}`,
+          text,
+        });
+      });
+    });
+
+    return lines;
+  }, [entries]);
+
+  if (!flattenedLines.length) {
     return null;
   }
 
@@ -1193,23 +1116,31 @@ const WorkerCompaniesAndContracts: React.FC<
       <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
         Empresas y contratos
       </h4>
-      {entries.map((entry) => (
-        <WorkerContractList
-          key={entry.companyName}
-          companyName={entry.companyName}
-          contracts={entry.contracts}
-          assignmentCount={entry.assignmentCount}
-          contractCount={entry.contractCount}
-        />
-      ))}
+      <ul className="space-y-2 text-sm text-gray-700 dark:text-gray-200">
+        {flattenedLines.map((line) => {
+          const [companyPart, ...rest] = line.text.split(" · ");
+          return (
+            <li
+              key={line.key}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+            >
+              <span className="font-semibold text-gray-900 dark:text-gray-100">
+                {companyPart}
+              </span>
+              {rest.length > 0 ? (
+                <span className="text-gray-600 dark:text-gray-300">
+                  {` · ${rest.join(" · ")}`}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 };
 
-const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
-  state,
-  onClose,
-}) => {
+const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => {
   const [copyFeedback, setCopyFeedback] = useState<{
     type: "email" | "phone";
     message: string;

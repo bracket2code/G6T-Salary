@@ -44,6 +44,12 @@ const ACTIVE_SITUATION_TOKENS = new Set([
   "activa",
 ]);
 
+const CALCULATOR_VIEW_OPTIONS = [
+  { value: "company" as const, label: "Empresa" },
+  { value: "worker" as const, label: "Trabajador" },
+  { value: "individual" as const, label: "Individual" },
+];
+
 const trimToNull = (value: unknown): string | null => {
   if (value === null || value === undefined) {
     return null;
@@ -196,6 +202,9 @@ const MultipleCalculatorPage: React.FC = () => {
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([
     ALL_COMPANIES_OPTION_ID,
   ]);
+  const [viewMode, setViewMode] = useState<"company" | "worker" | "individual">(
+    "individual"
+  );
   const [isLoadingWorkers, setIsLoadingWorkers] = useState<boolean>(true);
   const [isLoadingGroupOptions, setIsLoadingGroupOptions] =
     useState<boolean>(true);
@@ -643,6 +652,141 @@ const MultipleCalculatorPage: React.FC = () => {
     );
   }, [hasRequestedResults, resultsByWorker, visibleWorkerIds]);
 
+  const workerSummaries = useMemo(
+    () =>
+      !hasRequestedResults || !visibleWorkers.length
+        ? []
+        : visibleWorkers.map((worker) => {
+            const fallbackName =
+              worker.name?.trim() ||
+              worker.email?.trim() ||
+              `Trabajador ${worker.id}`;
+            return {
+              workerId: worker.id,
+              name: fallbackName,
+              result: resultsByWorker[worker.id] ?? null,
+            };
+          }),
+    [hasRequestedResults, resultsByWorker, visibleWorkers]
+  );
+
+  const companySummaries = useMemo(() => {
+    if (!hasRequestedResults || !visibleWorkers.length) {
+      return [];
+    }
+
+    type CompanySummary = {
+      id: string;
+      name: string;
+      amount: number;
+      hours: number;
+      workerDetails: Array<{
+        workerId: string;
+        workerName: string;
+        amount: number;
+        hours: number;
+      }>;
+    };
+
+    const normalizeCompanyName = (name?: string | null) => {
+      if (!name || name === "__unassigned__") {
+        return "Sin empresa asignada";
+      }
+      return name;
+    };
+
+    const summaries = new Map<string, CompanySummary>();
+
+    const ensureSummary = (key: string, name: string) => {
+      if (!summaries.has(key)) {
+        summaries.set(key, {
+          id: key,
+          name,
+          amount: 0,
+          hours: 0,
+          workerDetails: [],
+        });
+      }
+      return summaries.get(key)!;
+    };
+
+    visibleWorkers.forEach((worker) => {
+      const workerResult = resultsByWorker[worker.id];
+      if (!workerResult) {
+        return;
+      }
+
+      const workerName =
+        worker.name?.trim() ||
+        worker.email?.trim() ||
+        `Trabajador ${worker.id}`;
+
+      const breakdown = workerResult.companyBreakdown;
+      if (!breakdown.length) {
+        const summary = ensureSummary("__sin_empresa__", "Sin empresa asignada");
+        summary.amount += workerResult.totalAmount;
+        summary.hours += workerResult.totalHours;
+        summary.workerDetails.push({
+          workerId: worker.id,
+          workerName,
+          amount: workerResult.totalAmount,
+          hours: workerResult.totalHours,
+        });
+        return;
+      }
+
+      breakdown.forEach((company, index) => {
+        const key =
+          company.companyKey ||
+          (company.companyId ? `id:${company.companyId}` : "") ||
+          (company.name ? `name:${company.name}` : "") ||
+          `${worker.id}-${index}`;
+
+        const summary = ensureSummary(
+          key,
+          normalizeCompanyName(company.name)
+        );
+
+        summary.amount += company.amount;
+        summary.hours += company.hours ?? 0;
+        summary.workerDetails.push({
+          workerId: worker.id,
+          workerName,
+          amount: company.amount,
+          hours: company.hours,
+        });
+      });
+    });
+
+    summaries.forEach((summary) => {
+      summary.workerDetails.sort((a, b) =>
+        a.workerName.localeCompare(b.workerName, "es", {
+          sensitivity: "base",
+        })
+      );
+    });
+
+    return Array.from(summaries.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+    );
+  }, [hasRequestedResults, resultsByWorker, visibleWorkers]);
+
+  const viewModeDescription = useMemo(() => {
+    switch (viewMode) {
+      case "company":
+        return "Agrupa los importes calculados por empresa.";
+      case "worker":
+        return "Resume los importes calculados por cada trabajador seleccionado.";
+      default:
+        return "Edita y recalcula cada trabajador de forma individual.";
+    }
+  }, [viewMode]);
+
+  const hasWorkerSummaryResults = useMemo(
+    () => workerSummaries.some((entry) => Boolean(entry.result)),
+    [workerSummaries]
+  );
+
   const handlePrevWorker = useCallback(() => {
     setActiveWorkerIndex((prev) => Math.max(prev - 1, 0));
   }, []);
@@ -859,46 +1003,266 @@ const MultipleCalculatorPage: React.FC = () => {
         </Card>
       ) : (
         <div className="space-y-6">
-          {hasMultipleVisibleWorkers && activeWorker && (
-            <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                Trabajador {activeWorkerIndex + 1} de {visibleWorkers.length}
-                {activeWorker.name ? ` · ${activeWorker.name}` : ""}
+          <Card>
+            <CardHeader className="gap-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center justify-center lg:justify-start">
+                  <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 shadow-sm dark:bg-gray-800">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-gray-500 dark:text-gray-400">
+                      Vista
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {CALCULATOR_VIEW_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setViewMode(option.value)}
+                          className={`px-3 py-1.5 text-sm font-medium rounded-full transition ${
+                            viewMode === option.value
+                              ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
+                              : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-center text-sm text-gray-500 dark:text-gray-400 lg:text-right">
+                  {viewModeDescription}
+                </p>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handlePrevWorker}
-                  disabled={activeWorkerIndex === 0}
-                  className="h-9 w-9 rounded-full p-0"
-                  aria-label="Trabajador anterior"
-                >
-                  <ChevronLeft size={18} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleNextWorker}
-                  disabled={activeWorkerIndex >= visibleWorkers.length - 1}
-                  className="h-9 w-9 rounded-full p-0"
-                  aria-label="Trabajador siguiente"
-                >
-                  <ChevronRight size={18} />
-                </Button>
-              </div>
-            </div>
-          )}
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div
+                className={
+                  viewMode === "individual" ? "space-y-6" : "hidden"
+                }
+              >
+                {hasMultipleVisibleWorkers && activeWorker && (
+                  <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                      Trabajador {activeWorkerIndex + 1} de {visibleWorkers.length}
+                      {activeWorker.name ? ` · ${activeWorker.name}` : ""}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handlePrevWorker}
+                        disabled={activeWorkerIndex === 0}
+                        className="h-9 w-9 rounded-full p-0"
+                        aria-label="Trabajador anterior"
+                      >
+                        <ChevronLeft size={18} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleNextWorker}
+                        disabled={activeWorkerIndex >= visibleWorkers.length - 1}
+                        className="h-9 w-9 rounded-full p-0"
+                        aria-label="Trabajador siguiente"
+                      >
+                        <ChevronRight size={18} />
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
-          {activeWorker && (
-            <WorkerCalculationModule
-              key={activeWorker.id}
-              worker={activeWorker}
-              apiUrl={apiUrl ?? ""}
-              token={externalJwt ?? ""}
-              onResultChange={handleResultChange}
-            />
-          )}
+                {activeWorker ? (
+                  <div>
+                    <WorkerCalculationModule
+                      key={activeWorker.id}
+                      worker={activeWorker}
+                      apiUrl={apiUrl ?? ""}
+                      token={externalJwt ?? ""}
+                      onResultChange={handleResultChange}
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                    Selecciona un trabajador para comenzar.
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={
+                  viewMode === "worker" ? "space-y-4" : "hidden"
+                }
+              >
+                {hasWorkerSummaryResults ? (
+                  workerSummaries
+                    .filter(
+                      (
+                        entry
+                      ): entry is {
+                        workerId: string;
+                        name: string;
+                        result: CalculationResult;
+                      } => Boolean(entry.result)
+                    )
+                    .map((entry) => {
+                      const result = entry.result;
+                      return (
+                        <div
+                          key={`worker-summary-${entry.workerId}`}
+                          className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+                        >
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                                {entry.name}
+                              </p>
+                              <p className="text-sm text-gray-500 dark:text-gray-400">
+                                Importe total calculado
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-green-600 dark:text-green-300">
+                                {formatCurrency(result.totalAmount)}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400">
+                                {formatHours(result.totalHours)} horas
+                              </p>
+                            </div>
+                          </div>
+                          <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-gray-600 dark:text-gray-300 sm:grid-cols-3">
+                            <div>
+                              <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                                Horas regulares
+                              </p>
+                              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                                {formatHours(result.regularHours)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                                Horas extra
+                              </p>
+                              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                                {formatHours(result.overtimeHours)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                                Horas totales
+                              </p>
+                              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                                {formatHours(result.totalHours)}
+                              </p>
+                            </div>
+                          </div>
+                          {result.companyBreakdown.length > 0 ? (
+                            <div className="mt-4 overflow-x-auto">
+                              <table className="min-w-full text-sm">
+                                <thead>
+                                  <tr className="text-left text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    <th className="pb-2 pr-4 font-medium">Empresa</th>
+                                    <th className="pb-2 pr-4 font-medium text-right">
+                                      Horas
+                                    </th>
+                                    <th className="pb-2 font-medium text-right">
+                                      Importe
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                  {result.companyBreakdown.map((company) => (
+                                    <tr key={`${entry.workerId}-${company.companyKey ?? company.name}`}>
+                                      <td className="py-2 pr-4 text-gray-900 dark:text-white">
+                                        {company.name ?? "Sin empresa asignada"}
+                                      </td>
+                                      <td className="py-2 pr-4 text-right text-gray-700 dark:text-gray-200">
+                                        {formatHours(company.hours ?? 0)}
+                                      </td>
+                                      <td className="py-2 text-right font-semibold text-gray-900 dark:text-white">
+                                        {formatCurrency(company.amount)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+                              Este cálculo no tiene repartos por empresa.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })
+                ) : (
+                  <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                    Calcula primero los trabajadores en la vista individual para ver
+                    el resumen por trabajador.
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={
+                  viewMode === "company" ? "space-y-4" : "hidden"
+                }
+              >
+                {companySummaries.length > 0 ? (
+                  companySummaries.map((company) => (
+                    <div
+                      key={`company-summary-${company.id}`}
+                      className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+                    >
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                            {company.name}
+                          </p>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">
+                            {company.workerDetails.length} trabajador
+                            {company.workerDetails.length === 1 ? "" : "es"}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-2xl font-bold text-green-600 dark:text-green-300">
+                            {formatCurrency(company.amount)}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {formatHours(company.hours)} horas
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {company.workerDetails.map((detail) => (
+                          <div
+                            key={`company-${company.id}-worker-${detail.workerId}`}
+                            className="flex flex-col gap-1 rounded-lg border border-gray-100 px-3 py-2 text-sm text-gray-700 dark:border-gray-800 dark:text-gray-200 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div>
+                              <p className="font-medium text-gray-900 dark:text-white">
+                                {detail.workerName}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400">
+                                {formatHours(detail.hours)} horas
+                              </p>
+                            </div>
+                            <p className="font-semibold text-gray-900 dark:text-white">
+                              {formatCurrency(detail.amount)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                    Calcula primero los trabajadores en la vista individual para ver
+                    el resumen por empresa.
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {aggregatedResults && (
             <Card>
