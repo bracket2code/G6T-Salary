@@ -1205,13 +1205,6 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
       : state.data.iban;
     addItem("IBAN", ibanDisplay, { always: true });
 
-    const categoryDisplay = state.data.category ?? state.data.categoryId;
-    addItem("Categoría", categoryDisplay, { always: true });
-
-    const subcategoryDisplay =
-      state.data.subcategory ?? state.data.subcategoryId;
-    addItem("Subcategoría", subcategoryDisplay, { always: true });
-
     const staffTypeDisplay =
       formatPersonalType(state.data.staffType) ??
       trimToNull(state.data.staffType);
@@ -1223,32 +1216,8 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
 
     addItem("Seguridad Social", state.data.socialSecurity, { always: true });
 
-    const statusText = formatActiveStatus(
-      state.data.isActive,
-      state.data.situation ?? null
-    );
-    const statusLabel =
-      statusText ??
-      formatSituationLabel(state.data.situation) ??
-      (state.data.situation !== undefined && state.data.situation !== null
-        ? `Código ${state.data.situation}`
-        : null);
-    addItem("Estado", statusLabel, { always: true });
-
     addItem("Departamento", state.data.department);
     addItem("Puesto", state.data.position);
-
-    if (state.data.contractType) {
-      const contractLabel =
-        state.data.contractType === "full_time"
-          ? "Tiempo completo"
-          : state.data.contractType === "part_time"
-          ? "Tiempo parcial"
-          : state.data.contractType === "freelance"
-          ? "Freelance"
-          : state.data.contractType;
-      addItem("Tipo de contrato", contractLabel);
-    }
 
     const formattedStart =
       formatMaybeDate(state.data.startDate) ?? state.data.startDate;
@@ -1263,6 +1232,16 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
     }
 
     return items;
+  }, [state.data]);
+
+  const workerStatus = useMemo(() => {
+    if (!state.data) {
+      return null;
+    }
+    return formatActiveStatus(
+      state.data.isActive,
+      state.data.situation ?? null
+    );
   }, [state.data]);
 
   useEffect(() => {
@@ -1316,10 +1295,25 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {state.data?.name ?? state.workerName}
-            </h3>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-3">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                {state.data?.name ?? state.workerName}
+              </h3>
+              {workerStatus ? (
+                <span
+                  className={`rounded-full px-3 py-1 text-sm font-semibold ${
+                    workerStatus.toLowerCase() === "alta"
+                      ? "bg-green-100 text-green-700"
+                      : workerStatus.toLowerCase() === "baja"
+                      ? "bg-red-100 text-red-700"
+                      : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {workerStatus}
+                </span>
+              ) : null}
+            </div>
           </div>
           <button
             type="button"
