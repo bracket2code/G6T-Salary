@@ -24,6 +24,7 @@ import {
   X,
   Mail,
   Phone,
+  Edit3,
   MessageCircle,
   MessageSquareWarning,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import { PageHeader } from "../components/layout/PageHeader";
 import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { Select } from "../components/ui/Select";
 import {
   WorkerHoursCalendar,
   type DayScheduleEntry,
@@ -556,6 +558,119 @@ const normalizeCompanyLookupMap = (
 
 const createDefaultCompanyLookupMap = () => normalizeCompanyLookupMap({});
 
+interface CompanyParameterOption {
+  id: string;
+  label: string;
+}
+
+const extractParameterItems = (
+  payload: unknown
+): Array<Record<string, unknown>> => {
+  if (Array.isArray(payload)) {
+    return payload.filter((item): item is Record<string, unknown> =>
+      Boolean(item && typeof item === "object")
+    );
+  }
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const candidateKeys = [
+      "value",
+      "values",
+      "data",
+      "items",
+      "result",
+      "results",
+      "records",
+      "payload",
+    ];
+
+    for (const key of candidateKeys) {
+      const maybe = record[key];
+      if (Array.isArray(maybe)) {
+        return maybe.filter((item): item is Record<string, unknown> =>
+          Boolean(item && typeof item === "object")
+        );
+      }
+    }
+  }
+
+  return [];
+};
+
+const fetchCompanyParameterOptions = async (
+  apiUrl: string,
+  token: string
+): Promise<CompanyParameterOption[]> => {
+  const endpoint = buildApiEndpoint(apiUrl, "/Parameter/List?Types=1");
+
+  try {
+    const response = await fetch(endpoint, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json().catch(() => null);
+    const items = extractParameterItems(payload);
+
+    const options = items
+      .map((item) => {
+        const id = pickFirstString(
+          item.id,
+          item.parameterId,
+          item.parameter_id,
+          item.guid,
+          item.value,
+          item.code
+        );
+        const label = pickFirstString(
+          item.name,
+          item.label,
+          item.description,
+          item.title,
+          item.parameterName,
+          item.parameterLabel,
+          item.displayName
+        );
+        const situation = pickFirstString(
+          item.situation,
+          item.Situation,
+          item.status,
+          item.Status
+        );
+
+        if (!id || !label) {
+          return null;
+        }
+
+        if (situation && !["0", "1"].includes(situation)) {
+          return null;
+        }
+
+        return { id, label };
+      })
+      .filter((option): option is CompanyParameterOption => option !== null);
+
+    const uniqueMap = new Map<string, CompanyParameterOption>();
+    options.forEach((option) => {
+      if (!uniqueMap.has(option.id)) {
+        uniqueMap.set(option.id, option);
+      }
+    });
+
+    return Array.from(uniqueMap.values());
+  } catch (error) {
+    console.error("Error fetching company parameters:", error);
+    return [];
+  }
+};
+
 const formatDateKeyToApiDateTime = (dateKey: string): string => {
   if (typeof dateKey === "string") {
     const normalized = dateKey.trim();
@@ -979,6 +1094,8 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
 interface WorkerInfoModalProps {
   state: WorkerInfoModalState;
   onClose: () => void;
+  companyLookup?: Record<string, string>;
+  availableCompanies?: CompanyParameterOption[];
 }
 
 const formatMaybeDate = (value?: string | null) => {
@@ -1140,28 +1257,305 @@ const WorkerCompaniesAndContracts: React.FC<
   );
 };
 
-const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => {
+interface WorkerEditableFields {
+  name: string;
+  email: string;
+  secondaryEmail: string;
+  phone: string;
+  dni: string;
+  address: string;
+  iban: string;
+  staffType: string;
+  birthDate: string;
+  socialSecurity: string;
+  department: string;
+  position: string;
+  baseSalary: string;
+  hourlyRate: string;
+  contractType: string;
+}
+
+interface WorkerCompanyContractFormValue {
+  contractKey: string;
+  label: string;
+  hourlyRate: string;
+}
+
+interface WorkerCompanyFormValue {
+  formId: string;
+  companyKey: string;
+  name: string;
+  count: number;
+  contracts: WorkerCompanyContractFormValue[];
+}
+
+const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
+  state,
+  onClose,
+  companyLookup,
+  availableCompanies = [],
+}) => {
   const [copyFeedback, setCopyFeedback] = useState<{
     type: "email" | "phone";
     message: string;
     target?: string;
   } | null>(null);
+  const [displayData, setDisplayData] = useState<WorkerInfoData | null>(
+    state.data ?? null
+  );
+  const [isEditing, setIsEditing] = useState(false);
+  const [formValues, setFormValues] = useState<WorkerEditableFields>(() => ({
+    name: trimToNull(state.data?.name) ?? state.workerName ?? "",
+    email: state.data?.email ?? "",
+    secondaryEmail: state.data?.secondaryEmail ?? "",
+    phone: state.data?.phone ?? "",
+    dni: state.data?.dni ?? "",
+    address: state.data?.address ?? "",
+    iban: state.data?.iban ?? "",
+    staffType: state.data?.staffType ?? "",
+    birthDate: state.data?.birthDate ?? "",
+    socialSecurity: state.data?.socialSecurity ?? "",
+    department: state.data?.department ?? "",
+    position: state.data?.position ?? "",
+    baseSalary:
+      typeof state.data?.baseSalary === "number"
+        ? String(state.data.baseSalary)
+        : "",
+    hourlyRate:
+      typeof state.data?.hourlyRate === "number"
+        ? String(state.data.hourlyRate)
+        : "",
+    contractType: state.data?.contractType ?? "",
+  }));
+  const [companyFormValues, setCompanyFormValues] = useState<
+    WorkerCompanyFormValue[]
+  >(() => {
+    const data = state.data;
+    if (!data || !data.companies?.length) {
+      return [];
+    }
+    return data.companies.map((company, index) => {
+      const baseKey =
+        trimToNull(company.id) ?? normalizeKeyPart(company.name ?? "");
+      const normalizedKey = baseKey ?? "";
+      const formId = baseKey ? `${baseKey}-${index}` : `company-form-${index}`;
+      const relatedContracts = data.contractsByCompany?.[company.name] ?? [];
+      return {
+        formId,
+        companyKey: normalizedKey,
+        name: company.name ?? "",
+        count: company.count ?? Math.max(relatedContracts.length, 1),
+        contracts: relatedContracts.map((contract, contractIndex) => ({
+          contractKey:
+            contract.id ?? `${normalizedKey}-contract-${contractIndex}`,
+          label:
+            trimToNull(contract.label) ?? trimToNull(contract.position) ?? "",
+          hourlyRate:
+            typeof contract.hourlyRate === "number"
+              ? String(contract.hourlyRate)
+              : "",
+        })),
+      };
+    });
+  });
+
+  const companyOptions = useMemo(() => {
+    const options = new Map<string, { value: string; label: string }>();
+
+    const addOption = (
+      value?: string | null,
+      label?: string | null,
+      optionsConfig: { allowUnassigned?: boolean } = {}
+    ) => {
+      const trimmedValue = trimToNull(value);
+      if (!trimmedValue) {
+        return;
+      }
+
+      const isUnassigned = trimmedValue === UNASSIGNED_COMPANY_ID;
+      if (isUnassigned && !optionsConfig.allowUnassigned) {
+        return;
+      }
+
+      const trimmedLabel = trimToNull(label) ?? trimmedValue;
+      if (!options.has(trimmedValue)) {
+        options.set(trimmedValue, {
+          value: trimmedValue,
+          label: trimmedLabel,
+        });
+      }
+    };
+
+    availableCompanies.forEach((option) => {
+      addOption(option.id, option.label);
+    });
+
+    const sourceCompanies =
+      displayData?.companies ?? state.data?.companies ?? [];
+    sourceCompanies.forEach((company, index) => {
+      const canonicalId = trimToNull(company.id);
+      if (canonicalId) {
+        addOption(canonicalId, company.name ?? canonicalId, {
+          allowUnassigned: true,
+        });
+        return;
+      }
+
+      const normalized = normalizeKeyPart(company.name ?? "");
+      if (normalized) {
+        addOption(normalized, company.name ?? normalized, {
+          allowUnassigned: true,
+        });
+      } else {
+        addOption(`company-${index}`, company.name ?? null, {
+          allowUnassigned: true,
+        });
+      }
+    });
+
+    companyFormValues.forEach((company, index) => {
+      const existing = options.get(company.companyKey);
+      const label =
+        existing?.label ?? trimToNull(company.name) ?? `Empresa ${index + 1}`;
+      addOption(company.companyKey, label, { allowUnassigned: true });
+    });
+
+    if (companyLookup) {
+      Object.entries(companyLookup).forEach(([key, label]) => {
+        addOption(key, label ?? key);
+      });
+    }
+
+    const sorted = Array.from(options.values())
+      .filter((option) => option.value !== "")
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+      );
+
+    const seenLabels = new Set<string>();
+    const deduped = sorted.filter((option) => {
+      const normalizedLabel =
+        normalizeCompanyLabel(option.label) ?? option.label.toLowerCase();
+      if (seenLabels.has(normalizedLabel)) {
+        return false;
+      }
+      seenLabels.add(normalizedLabel);
+      return true;
+    });
+
+    return [{ value: "", label: "Selecciona una empresa" }, ...deduped];
+  }, [
+    availableCompanies,
+    companyFormValues,
+    companyLookup,
+    displayData?.companies,
+    state.data?.companies,
+  ]);
+
+  const companyOptionsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    companyOptions.forEach((option) => {
+      map.set(option.value, option.label);
+    });
+    return map;
+  }, [companyOptions]);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   const nameClickCountRef = useRef(0);
   const [isShowingWorkerId, setIsShowingWorkerId] = useState(false);
+
+  const computeEditableFields = useCallback(
+    (data: WorkerInfoData | null): WorkerEditableFields => ({
+      name: trimToNull(data?.name) ?? state.workerName ?? "",
+      email: data?.email ?? "",
+      secondaryEmail: data?.secondaryEmail ?? "",
+      phone: data?.phone ?? "",
+      dni: data?.dni ?? "",
+      address: data?.address ?? "",
+      iban: data?.iban ?? "",
+      staffType: data?.staffType ?? "",
+      birthDate: data?.birthDate ?? "",
+      socialSecurity: data?.socialSecurity ?? "",
+      department: data?.department ?? "",
+      position: data?.position ?? "",
+      baseSalary:
+        typeof data?.baseSalary === "number" ? String(data.baseSalary) : "",
+      hourlyRate:
+        typeof data?.hourlyRate === "number" ? String(data.hourlyRate) : "",
+      contractType: data?.contractType ?? "",
+    }),
+    [state.workerName]
+  );
+
+  const computeCompanyForms = useCallback(
+    (data: WorkerInfoData | null): WorkerCompanyFormValue[] => {
+      if (!data || !data.companies?.length) {
+        return [];
+      }
+      return data.companies.map((company, index) => {
+        const baseKey =
+          trimToNull(company.id) ?? normalizeKeyPart(company.name ?? "");
+        const normalizedKey = baseKey ?? "";
+        const formId = baseKey
+          ? `${baseKey}-${index}`
+          : `company-form-${index}`;
+        const relatedContracts = data.contractsByCompany?.[company.name] ?? [];
+        return {
+          formId,
+          companyKey: normalizedKey,
+          name: company.name ?? "",
+          count: company.count ?? Math.max(relatedContracts.length, 1),
+          contracts: relatedContracts.map((contract, contractIndex) => ({
+            contractKey:
+              contract.id ?? `${normalizedKey}-contract-${contractIndex}`,
+            label:
+              trimToNull(contract.label) ?? trimToNull(contract.position) ?? "",
+            hourlyRate:
+              typeof contract.hourlyRate === "number"
+                ? String(contract.hourlyRate)
+                : "",
+          })),
+        };
+      });
+    },
+    []
+  );
+
+  const resetForms = useCallback(
+    (data: WorkerInfoData | null) => {
+      setFormValues(computeEditableFields(data));
+      setCompanyFormValues(computeCompanyForms(data));
+    },
+    [computeEditableFields, computeCompanyForms]
+  );
 
   useEffect(() => {
     if (!state.isOpen) {
       setCopyFeedback(null);
       nameClickCountRef.current = 0;
       setIsShowingWorkerId(false);
+      setIsEditing(false);
+      setSaveMessage(null);
+      setIsSavingDraft(false);
     }
   }, [state.isOpen]);
 
   useEffect(() => {
+    if (!state.isOpen) {
+      return;
+    }
+    if (!isEditing) {
+      const sourceData = state.data ?? null;
+      setDisplayData(sourceData);
+      resetForms(sourceData);
+    }
+  }, [state.data, state.isOpen, isEditing, resetForms]);
+
+  useEffect(() => {
     nameClickCountRef.current = 0;
     setIsShowingWorkerId(false);
-  }, [state.data?.id]);
+  }, [displayData?.id]);
 
   const handleNameTap = useCallback(() => {
     nameClickCountRef.current += 1;
@@ -1171,16 +1565,24 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
     }
   }, []);
 
-  const phoneHref = state.data?.phone
-    ? sanitizeTelHref(state.data.phone)
+  useEffect(() => {
+    if (!copyFeedback) {
+      return;
+    }
+    const timer = window.setTimeout(() => setCopyFeedback(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [copyFeedback]);
+
+  const phoneHref = displayData?.phone
+    ? sanitizeTelHref(displayData.phone)
     : null;
-  const whatsappHref = state.data?.phone
-    ? buildWhatsAppLink(state.data.phone)
+  const whatsappHref = displayData?.phone
+    ? buildWhatsAppLink(displayData.phone)
     : null;
-  const emailHref = state.data?.email ? `mailto:${state.data.email}` : null;
+  const emailHref = displayData?.email ? `mailto:${displayData.email}` : null;
 
   const generalInfo = useMemo(() => {
-    if (!state.data) {
+    if (!displayData) {
       return [] as Array<{ label: string; value: string }>;
     }
 
@@ -1211,64 +1613,56 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
       }
     };
 
-    const dniDisplay = state.data.dni
-      ? state.data.dni.toUpperCase()
-      : state.data.dni;
+    const dniDisplay = displayData.dni
+      ? displayData.dni.toUpperCase()
+      : displayData.dni;
     addItem("DNI", dniDisplay, { always: true });
 
-    addItem("Dirección", state.data.address, { always: true });
+    addItem("Dirección", displayData.address, { always: true });
 
-    const ibanDisplay = state.data.iban
-      ? state.data.iban.toUpperCase()
-      : state.data.iban;
+    const ibanDisplay = displayData.iban
+      ? displayData.iban.toUpperCase()
+      : displayData.iban;
     addItem("IBAN", ibanDisplay, { always: true });
 
     const staffTypeDisplay =
-      formatPersonalType(state.data.staffType) ??
-      trimToNull(state.data.staffType);
+      formatPersonalType(displayData.staffType) ??
+      trimToNull(displayData.staffType);
     addItem("Tipo de personal", staffTypeDisplay, { always: true });
 
     const birthDateDisplay =
-      formatMaybeDate(state.data.birthDate) ?? state.data.birthDate;
+      formatMaybeDate(displayData.birthDate) ?? displayData.birthDate;
     addItem("Fecha de nacimiento", birthDateDisplay, { always: true });
 
-    addItem("Seguridad Social", state.data.socialSecurity, { always: true });
+    addItem("Seguridad Social", displayData.socialSecurity, { always: true });
 
-    addItem("Departamento", state.data.department);
-    addItem("Puesto", state.data.position);
+    addItem("Departamento", displayData.department);
+    addItem("Puesto", displayData.position);
 
     const formattedStart =
-      formatMaybeDate(state.data.startDate) ?? state.data.startDate;
+      formatMaybeDate(displayData.startDate) ?? displayData.startDate;
     addItem("Inicio", formattedStart);
 
-    if (typeof state.data.baseSalary === "number") {
-      addItem("Salario base", euroFormatter.format(state.data.baseSalary));
+    if (typeof displayData.baseSalary === "number") {
+      addItem("Salario base", euroFormatter.format(displayData.baseSalary));
     }
 
-    if (typeof state.data.hourlyRate === "number") {
-      addItem("Tarifa hora", euroFormatter.format(state.data.hourlyRate));
+    if (typeof displayData.hourlyRate === "number") {
+      addItem("Tarifa hora", euroFormatter.format(displayData.hourlyRate));
     }
 
     return items;
-  }, [state.data]);
+  }, [displayData]);
 
   const workerStatus = useMemo(() => {
-    if (!state.data) {
+    if (!displayData) {
       return null;
     }
     return formatActiveStatus(
-      state.data.isActive,
-      state.data.situation ?? null
+      displayData.isActive,
+      displayData.situation ?? null
     );
-  }, [state.data]);
-
-  useEffect(() => {
-    if (!copyFeedback) {
-      return;
-    }
-    const timer = window.setTimeout(() => setCopyFeedback(null), 2200);
-    return () => window.clearTimeout(timer);
-  }, [copyFeedback]);
+  }, [displayData]);
 
   const handleCopy = useCallback(
     async (type: "email" | "phone", value?: string | null) => {
@@ -1305,6 +1699,287 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
     }
   }, [whatsappHref]);
 
+  const handleFieldChange = useCallback(
+    (field: keyof WorkerEditableFields, value: string) => {
+      setFormValues((previous) => ({
+        ...previous,
+        [field]: value,
+      }));
+    },
+    []
+  );
+
+  const handleStartEditing = useCallback(() => {
+    setIsEditing(true);
+    setSaveMessage(null);
+    resetForms(displayData ?? state.data ?? null);
+  }, [displayData, resetForms, state.data]);
+
+  const handleCancelEdits = useCallback(() => {
+    setIsEditing(false);
+    setSaveMessage(null);
+    resetForms(displayData ?? state.data ?? null);
+  }, [displayData, resetForms, state.data]);
+
+  const handleAddCompany = useCallback(() => {
+    const formId = `temp-company-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    setCompanyFormValues((previous) => [
+      ...previous,
+      {
+        formId,
+        companyKey: "",
+        name: "",
+        count: 1,
+        contracts: [],
+      },
+    ]);
+  }, []);
+
+  const handleRemoveCompany = useCallback((formId: string) => {
+    setCompanyFormValues((previous) =>
+      previous.filter((company) => company.formId !== formId)
+    );
+  }, []);
+
+  const handleCompanyNameChange = useCallback(
+    (formId: string, nextCompanyKey: string) => {
+      const sanitizedKey = trimToNull(nextCompanyKey) ?? "";
+      setCompanyFormValues((previous) =>
+        previous.map((company) =>
+          company.formId === formId
+            ? {
+                ...company,
+                companyKey: sanitizedKey,
+                name: sanitizedKey
+                  ? companyOptionsMap.get(sanitizedKey) ?? company.name ?? ""
+                  : "",
+              }
+            : company
+        )
+      );
+    },
+    [companyOptionsMap]
+  );
+
+  const handleAddContract = useCallback((formId: string) => {
+    setCompanyFormValues((previous) =>
+      previous.map((company) => {
+        if (company.formId !== formId) {
+          return company;
+        }
+        const nextContracts = [
+          ...company.contracts,
+          {
+            contractKey: `temp-contract-${Date.now()}`,
+            label: "",
+            hourlyRate: "",
+          },
+        ];
+        return {
+          ...company,
+          contracts: nextContracts,
+          count: Math.max(company.count, nextContracts.length || 1),
+        };
+      })
+    );
+  }, []);
+
+  const handleRemoveContract = useCallback(
+    (formId: string, contractKey: string) => {
+      setCompanyFormValues((previous) =>
+        previous.map((company) => {
+          if (company.formId !== formId) {
+            return company;
+          }
+          const nextContracts = company.contracts.filter(
+            (contract) => contract.contractKey !== contractKey
+          );
+          return {
+            ...company,
+            contracts: nextContracts,
+            count: Math.max(nextContracts.length, 1),
+          };
+        })
+      );
+    },
+    []
+  );
+
+  const handleContractChange = useCallback(
+    (
+      formId: string,
+      contractKey: string,
+      field: keyof WorkerCompanyContractFormValue,
+      value: string
+    ) => {
+      setCompanyFormValues((previous) =>
+        previous.map((company) => {
+          if (company.formId !== formId) {
+            return company;
+          }
+          const nextContracts = company.contracts.map((contract) =>
+            contract.contractKey === contractKey
+              ? { ...contract, [field]: value }
+              : contract
+          );
+          return {
+            ...company,
+            contracts: nextContracts,
+          };
+        })
+      );
+    },
+    []
+  );
+
+  const handleSaveEdits = useCallback(() => {
+    if (isSavingDraft) {
+      return;
+    }
+
+    setIsSavingDraft(true);
+    setTimeout(() => {
+      setDisplayData((previous) => {
+        const base = previous ??
+          state.data ?? {
+            id: state.workerId,
+            name: state.workerName,
+            companies: [],
+            contractsByCompany: {},
+          };
+
+        const sanitizeString = (value: string) =>
+          trimToNull(value) ?? undefined;
+        const parseNumeric = (value: string): number | undefined => {
+          const normalized = trimToNull(value);
+          if (!normalized) {
+            return undefined;
+          }
+
+          const parsed = Number(normalized.replace(",", "."));
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+
+        const updatedCompanies = companyFormValues.map((company, index) => {
+          const resolvedName =
+            trimToNull(
+              companyOptionsMap.get(company.companyKey) ?? company.name
+            ) ?? `Empresa ${index + 1}`;
+          const normalizedKey =
+            trimToNull(company.companyKey) ??
+            normalizeKeyPart(resolvedName ?? "") ??
+            company.formId ??
+            `company-${index}`;
+
+          const mappedContracts = company.contracts
+            .map((contract, contractIndex) => {
+              const normalizedLabel = trimToNull(contract.label);
+              const parsedRate = parseNumeric(contract.hourlyRate);
+
+              if (!normalizedLabel && parsedRate === undefined) {
+                return null;
+              }
+
+              const resultLabel =
+                normalizedLabel ?? `Contrato ${contractIndex + 1}`;
+              return {
+                id:
+                  contract.contractKey ||
+                  `${normalizedKey}-contract-${contractIndex}`,
+                hasContract: true,
+                label: resultLabel,
+                position: resultLabel,
+                hourlyRate: parsedRate,
+                companyName: resolvedName,
+              } as WorkerCompanyContract;
+            })
+            .filter(
+              (contract): contract is WorkerCompanyContract => contract !== null
+            );
+
+          const effectiveCount =
+            company.count && company.count > 0
+              ? company.count
+              : Math.max(mappedContracts.length, 1);
+
+          return {
+            fallbackName: resolvedName,
+            normalizedKey,
+            mappedContracts,
+            effectiveCount,
+          };
+        });
+
+        const contractsByCompany: Record<string, WorkerCompanyContract[]> = {};
+        updatedCompanies.forEach((entry) => {
+          if (entry.mappedContracts.length > 0) {
+            contractsByCompany[entry.fallbackName] = entry.mappedContracts;
+          }
+        });
+
+        const companies = updatedCompanies.map((entry) => ({
+          id: entry.normalizedKey,
+          name: entry.fallbackName,
+          count: Math.max(
+            entry.effectiveCount,
+            entry.mappedContracts.length || 1
+          ),
+        }));
+
+        const updatedData: WorkerInfoData = {
+          ...base,
+          name: trimToNull(formValues.name) ?? base.name ?? state.workerName,
+          email: sanitizeString(formValues.email),
+          secondaryEmail: sanitizeString(formValues.secondaryEmail),
+          phone: sanitizeString(formValues.phone),
+          dni: sanitizeString(formValues.dni),
+          address: sanitizeString(formValues.address),
+          iban: sanitizeString(formValues.iban)?.toUpperCase(),
+          staffType: sanitizeString(formValues.staffType),
+          birthDate: sanitizeString(formValues.birthDate),
+          socialSecurity: sanitizeString(formValues.socialSecurity),
+          department: sanitizeString(formValues.department),
+          position: sanitizeString(formValues.position),
+          baseSalary: parseNumeric(formValues.baseSalary),
+          hourlyRate: parseNumeric(formValues.hourlyRate),
+          contractType: sanitizeString(formValues.contractType) as
+            | Worker["contractType"]
+            | undefined,
+          companies,
+          contractsByCompany,
+        };
+
+        return updatedData;
+      });
+
+      setIsEditing(false);
+      setIsSavingDraft(false);
+      setSaveMessage("Cambios guardados localmente");
+    }, 250);
+  }, [
+    companyFormValues,
+    formValues,
+    isSavingDraft,
+    state.data,
+    state.workerId,
+    state.workerName,
+  ]);
+
+  const primaryEmail = useMemo(
+    () => trimToNull(displayData?.email),
+    [displayData?.email]
+  );
+  const secondaryEmail = useMemo(
+    () => trimToNull(displayData?.secondaryEmail),
+    [displayData?.secondaryEmail]
+  );
+  const primaryPhone = useMemo(
+    () => trimToNull(displayData?.phone),
+    [displayData?.phone]
+  );
+
   if (!state.isOpen) {
     return null;
   }
@@ -1312,14 +1987,14 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col">
             <div className="flex flex-wrap items-center gap-3">
               <span
-                className="text-lg font-semibold text-gray-900 dark:text-white cursor-default select-none"
+                className="cursor-default select-none text-xl font-semibold text-gray-900 dark:text-white"
                 onClick={handleNameTap}
               >
-                {state.data?.name ?? state.workerName}
+                {displayData?.name ?? state.workerName}
               </span>
               {workerStatus ? (
                 <span
@@ -1337,21 +2012,57 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
             </div>
             {isShowingWorkerId && (
               <span className="mt-1 select-text text-sm text-gray-500 dark:text-gray-300">
-                {state.data?.id ?? state.workerId}
+                {displayData?.id ?? state.workerId}
               </span>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            aria-label="Cerrar información de trabajador"
-          >
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            {!isEditing && saveMessage ? (
+              <span className="text-xs font-medium text-green-600 dark:text-green-300">
+                {saveMessage}
+              </span>
+            ) : null}
+            {isEditing ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleCancelEdits}
+                  disabled={isSavingDraft}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSaveEdits}
+                  isLoading={isSavingDraft}
+                >
+                  Guardar
+                </Button>
+              </>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleStartEditing}
+                leftIcon={<Edit3 size={16} />}
+                disabled={state.isLoading || Boolean(state.error)}
+              >
+                Editar
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              aria-label="Cerrar información de trabajador"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
-        <div className="mt-4 max-h-[65vh] overflow-y-auto space-y-4 pr-1">
+        <div className="mt-5 max-h-[70vh] overflow-y-auto pr-1">
           {state.isLoading ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Cargando información del trabajador...
@@ -1360,112 +2071,395 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
             <p className="text-sm text-red-600 dark:text-red-400">
               {state.error}
             </p>
-          ) : (
-            <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
-              <div className="space-y-2">
-                <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-200">
-                    Email:
-                  </span>{" "}
-                  {state.data?.email ? (
-                    <a
-                      href={emailHref ?? "#"}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void handleCopy("email", state.data?.email);
-                      }}
-                      className="text-blue-600 transition hover:underline dark:text-blue-400"
-                    >
-                      {state.data.email}
-                    </a>
-                  ) : (
-                    <span className="text-gray-500 dark:text-gray-400">
-                      No disponible
-                    </span>
-                  )}
-                  {copyFeedback?.type === "email" && (
-                    <span className="ml-2 text-xs text-green-600 dark:text-green-300">
-                      {copyFeedback.message}
-                    </span>
-                  )}
+          ) : isEditing ? (
+            <div className="space-y-6 text-sm text-gray-700 dark:text-gray-200">
+              <section>
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                  Información de contacto
+                </h3>
+                <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Input
+                    fullWidth
+                    label="Nombre completo"
+                    value={formValues.name}
+                    onChange={(event) =>
+                      handleFieldChange("name", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Teléfono"
+                    value={formValues.phone}
+                    onChange={(event) =>
+                      handleFieldChange("phone", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    type="email"
+                    label="Email"
+                    value={formValues.email}
+                    onChange={(event) =>
+                      handleFieldChange("email", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    type="email"
+                    label="Email secundario"
+                    value={formValues.secondaryEmail}
+                    onChange={(event) =>
+                      handleFieldChange("secondaryEmail", event.target.value)
+                    }
+                  />
                 </div>
-                {state.data?.secondaryEmail && (
-                  <div>
-                    <span className="font-medium text-gray-700 dark:text-gray-200">
-                      Email 2:
-                    </span>{" "}
-                    <a
-                      href={emailHref ?? "#"}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void handleCopy("email", state.data?.secondaryEmail);
-                      }}
-                      className="text-blue-600 transition hover:underline dark:text-blue-400"
-                    >
-                      {state.data.secondaryEmail}
-                    </a>
+              </section>
+
+              <section>
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                  Datos personales
+                </h3>
+                <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Input
+                    fullWidth
+                    label="DNI"
+                    value={formValues.dni}
+                    onChange={(event) =>
+                      handleFieldChange("dni", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="IBAN"
+                    value={formValues.iban}
+                    onChange={(event) =>
+                      handleFieldChange("iban", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Dirección"
+                    value={formValues.address}
+                    onChange={(event) =>
+                      handleFieldChange("address", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Tipo de personal"
+                    value={formValues.staffType}
+                    onChange={(event) =>
+                      handleFieldChange("staffType", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Fecha de nacimiento"
+                    placeholder="YYYY-MM-DD"
+                    value={formValues.birthDate}
+                    onChange={(event) =>
+                      handleFieldChange("birthDate", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Seguridad Social"
+                    value={formValues.socialSecurity}
+                    onChange={(event) =>
+                      handleFieldChange("socialSecurity", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Departamento"
+                    value={formValues.department}
+                    onChange={(event) =>
+                      handleFieldChange("department", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Puesto"
+                    value={formValues.position}
+                    onChange={(event) =>
+                      handleFieldChange("position", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Salario base (€)"
+                    type="number"
+                    value={formValues.baseSalary}
+                    onChange={(event) =>
+                      handleFieldChange("baseSalary", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Tarifa hora (€)"
+                    type="number"
+                    value={formValues.hourlyRate}
+                    onChange={(event) =>
+                      handleFieldChange("hourlyRate", event.target.value)
+                    }
+                  />
+                  <Input
+                    fullWidth
+                    label="Tipo de contrato"
+                    placeholder="full_time, part_time..."
+                    value={formValues.contractType}
+                    onChange={(event) =>
+                      handleFieldChange("contractType", event.target.value)
+                    }
+                  />
+                </div>
+              </section>
+
+              <section>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                    Empresas y contratos
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleAddCompany}
+                    leftIcon={<Plus size={16} />}
+                  >
+                    Añadir empresa
+                  </Button>
+                </div>
+                {companyFormValues.length === 0 ? (
+                  <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+                    No hay empresas registradas. Usa "Añadir empresa" para crear
+                    la primera.
+                  </p>
+                ) : (
+                  <div className="mt-3 space-y-4">
+                    {companyFormValues.map((company) => (
+                      <div
+                        key={company.formId}
+                        className="rounded-xl border border-gray-200 bg-gray-100 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/40"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                          <div className="min-w-0 flex-1">
+                            <Select
+                              label="Nombre de la empresa"
+                              value={company.companyKey}
+                              onChange={(value) =>
+                                handleCompanyNameChange(company.formId, value)
+                              }
+                              options={companyOptions}
+                              fullWidth
+                              disabled={companyOptions.length <= 1}
+                            />
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRemoveCompany(company.formId)}
+                            className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                            leftIcon={<Trash2 size={16} />}
+                          >
+                            Eliminar
+                          </Button>
+                        </div>
+                        <div className="mt-3 space-y-3">
+                          {company.contracts.length === 0 ? (
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                              Sin contratos. Añade uno nuevo si lo necesitas.
+                            </p>
+                          ) : (
+                            company.contracts.map((contract) => (
+                              <div
+                                key={contract.contractKey}
+                                className="rounded-lg border border-gray-200 p-3 dark:border-gray-700"
+                              >
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                                  <Input
+                                    fullWidth
+                                    label="Nombre del contrato"
+                                    value={contract.label}
+                                    onChange={(event) =>
+                                      handleContractChange(
+                                        company.formId,
+                                        contract.contractKey,
+                                        "label",
+                                        event.target.value
+                                      )
+                                    }
+                                  />
+                                  <div className="flex items-end gap-2">
+                                    <Input
+                                      label="Precio por hora(€)"
+                                      type="number"
+                                      value={contract.hourlyRate}
+                                      onChange={(event) =>
+                                        handleContractChange(
+                                          company.formId,
+                                          contract.contractKey,
+                                          "hourlyRate",
+                                          event.target.value
+                                        )
+                                      }
+                                      className="w-28"
+                                      inputMode="decimal"
+                                    />
+                                    <div className="h-[42px] w-0" aria-hidden="true"></div>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="flex h-[42px] w-[42px] items-center justify-center rounded-lg text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                                      onClick={() =>
+                                        handleRemoveContract(
+                                          company.formId,
+                                          contract.contractKey
+                                        )
+                                      }
+                                      aria-label="Eliminar contrato"
+                                    >
+                                      <Trash2 size={16} />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        <div className="mt-3">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleAddContract(company.formId)}
+                            leftIcon={<Plus size={16} />}
+                          >
+                            Añadir contrato
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
-                <div>
-                  <span className="font-medium text-gray-700 dark:text-gray-200">
-                    Teléfono:
-                  </span>{" "}
-                  {state.data?.phone ? (
-                    <a
-                      href={phoneHref ?? "#"}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void handleCopy("phone", state.data?.phone);
-                      }}
-                      className="text-blue-600 transition hover:underline dark:text-blue-400"
-                    >
-                      {state.data.phone}
-                    </a>
-                  ) : (
-                    <span className="text-gray-500 dark:text-gray-400">
-                      No disponible
-                    </span>
-                  )}
-                  {copyFeedback?.type === "phone" && (
-                    <span className="ml-2 text-xs text-green-600 dark:text-green-300">
-                      {copyFeedback.message}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {generalInfo.length > 0 && (
-                <div className="grid gap-2 text-xs sm:grid-cols-2">
-                  {generalInfo.map((item) => (
-                    <div
-                      key={`${item.label}-${item.value}`}
-                      className="text-gray-600 dark:text-gray-300"
-                    >
-                      <span className="font-medium text-gray-700 dark:text-gray-200">
-                        {item.label}:
-                      </span>{" "}
-                      <span>{item.value}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              </section>
             </div>
-          )}
+          ) : (
+            <div className="space-y-6 text-sm text-gray-600 dark:text-gray-300">
+              <section>
+                <div className="space-y-2">
+                  <p>
+                    <span className="font-medium text-gray-700 dark:text-gray-200">
+                      Email:
+                    </span>{" "}
+                    {primaryEmail ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy("email", primaryEmail)}
+                        className="text-blue-600 transition hover:underline dark:text-blue-400"
+                      >
+                        {primaryEmail}
+                      </button>
+                    ) : (
+                      <span className="text-gray-500 dark:text-gray-400">
+                        No disponible
+                      </span>
+                    )}
+                    {copyFeedback?.type === "email" &&
+                    copyFeedback.target === primaryEmail ? (
+                      <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                        {copyFeedback.message}
+                      </span>
+                    ) : null}
+                  </p>
+                  <p>
+                    <span className="font-medium text-gray-700 dark:text-gray-200">
+                      Teléfono:
+                    </span>{" "}
+                    {primaryPhone ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy("phone", primaryPhone)}
+                        className="text-blue-600 transition hover:underline dark:text-blue-400"
+                      >
+                        {primaryPhone}
+                      </button>
+                    ) : (
+                      <span className="text-gray-500 dark:text-gray-400">
+                        No disponible
+                      </span>
+                    )}
+                    {copyFeedback?.type === "phone" &&
+                    copyFeedback.target === primaryPhone ? (
+                      <span className="ml-2 text-xs text-green-600 dark:text-green-300">
+                        {copyFeedback.message}
+                      </span>
+                    ) : null}
+                  </p>
+                  {secondaryEmail ? (
+                    <p>
+                      <span className="font-medium text-gray-700 dark:text-gray-200">
+                        Email 2:
+                      </span>{" "}
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy("email", secondaryEmail)}
+                        className="text-blue-600 transition hover:underline dark:text-blue-400"
+                      >
+                        {secondaryEmail}
+                      </button>
+                    </p>
+                  ) : null}
+                </div>
+              </section>
 
-          {state.data && !state.isLoading && !state.error && (
-            <WorkerCompaniesAndContracts
-              companies={state.data.companies ?? []}
-              contractsByCompany={state.data.contractsByCompany ?? {}}
-              companyStats={state.data.companyStats}
-            />
+              {generalInfo.length > 0 ? (
+                <section>
+                  <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+                    {generalInfo.map((item) => (
+                      <div key={item.label} className="flex gap-2">
+                        <span className="font-medium text-gray-700 dark:text-gray-200">
+                          {item.label}:
+                        </span>
+                        <span className="text-gray-600 dark:text-gray-300">
+                          {item.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              <section>
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                  Empresas y contratos
+                </h3>
+                <div className="mt-3">
+                  {displayData?.companies?.length ? (
+                    <WorkerCompaniesAndContracts
+                      companies={displayData.companies}
+                      contractsByCompany={displayData.contractsByCompany ?? {}}
+                      companyStats={displayData.companyStats}
+                    />
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      No hay empresas asignadas.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
           )}
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-3">
+        <div className="mt-6 flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
             size="sm"
-            disabled={!emailHref || state.isLoading || Boolean(state.error)}
+            disabled={
+              !primaryEmail ||
+              isEditing ||
+              state.isLoading ||
+              Boolean(state.error)
+            }
             onClick={handleOpenEmail}
             leftIcon={<Mail size={16} />}
           >
@@ -1474,7 +2468,9 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
           <Button
             variant="outline"
             size="sm"
-            disabled={!phoneHref || state.isLoading || Boolean(state.error)}
+            disabled={
+              !phoneHref || isEditing || state.isLoading || Boolean(state.error)
+            }
             onClick={handleOpenPhone}
             leftIcon={<Phone size={16} />}
           >
@@ -1483,7 +2479,12 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
           <Button
             variant="outline"
             size="sm"
-            disabled={!whatsappHref || state.isLoading || Boolean(state.error)}
+            disabled={
+              !whatsappHref ||
+              isEditing ||
+              state.isLoading ||
+              Boolean(state.error)
+            }
             onClick={handleOpenWhatsApp}
             leftIcon={<MessageCircle size={16} />}
           >
@@ -2327,7 +3328,7 @@ const collectContractsMatchingAssignment = (
             normalizedAssignmentName === normalizedContractName) ||
             (normalizedLookupName &&
               normalizedAssignmentName === normalizedLookupName) ||
-          matchesKeyName)
+            matchesKeyName)
       );
 
       if (matchesId || matchesName) {
@@ -4182,6 +5183,9 @@ export const HoursRegistryPage: React.FC = () => {
   const [companyLookupMap, setCompanyLookupMap] = useState<
     Record<string, string>
   >(() => createDefaultCompanyLookupMap());
+  const [companyParameterOptions, setCompanyParameterOptions] = useState<
+    CompanyParameterOption[]
+  >([]);
   const [groupOptions, setGroupOptions] = useState<WorkerGroupOption[]>([
     {
       id: "all",
@@ -4246,6 +5250,28 @@ export const HoursRegistryPage: React.FC = () => {
     useState<SegmentsModalTarget | null>(null);
   const [notesModalTarget, setNotesModalTarget] =
     useState<NotesModalTarget | null>(null);
+
+  useEffect(() => {
+    if (!apiUrl || !externalJwt) {
+      setCompanyParameterOptions([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCompanyParameters = async () => {
+      const options = await fetchCompanyParameterOptions(apiUrl, externalJwt);
+      if (!cancelled) {
+        setCompanyParameterOptions(options);
+      }
+    };
+
+    void loadCompanyParameters();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiUrl, externalJwt]);
   const [selectedRange, setSelectedRange] = useState<DateInterval>(() => {
     const start = getStartOfWeek(new Date());
     const end = addDays(start, 6);
@@ -6753,18 +7779,15 @@ export const HoursRegistryPage: React.FC = () => {
     const tableHeaderRowNumber = sheetRows.length + 1;
     sheetRows.push(["EMPLEADO", "UBICACIÓN", "HORAS", "€/HORA", "IMPORTE €"]);
 
-    const sortedWorkers = Array.from(workerAggregates.values()).sort(
-      (a, b) =>
-        a.workerName.localeCompare(b.workerName, "es", {
-          sensitivity: "base",
-        })
+    const sortedWorkers = Array.from(workerAggregates.values()).sort((a, b) =>
+      a.workerName.localeCompare(b.workerName, "es", {
+        sensitivity: "base",
+      })
     );
 
     sortedWorkers.forEach((worker) => {
       const rowsWithHours = worker.rows
-        .filter(
-          (row) => Math.abs(row.hours) >= HOURS_COMPARISON_EPSILON
-        )
+        .filter((row) => Math.abs(row.hours) >= HOURS_COMPARISON_EPSILON)
         .sort((a, b) =>
           a.companyName.localeCompare(b.companyName, "es", {
             sensitivity: "base",
@@ -6790,13 +7813,7 @@ export const HoursRegistryPage: React.FC = () => {
       const workerDataEndRow = sheetRows.length;
       const workerTotalRow = sheetRows.length + 1;
 
-      sheetRows.push([
-        "",
-        "TOTAL",
-        null,
-        null,
-        null,
-      ]);
+      sheetRows.push(["", "TOTAL", null, null, null]);
       sheetRows.push([]);
       const separatorRowNumber = sheetRows.length;
 
@@ -6809,7 +7826,11 @@ export const HoursRegistryPage: React.FC = () => {
     });
 
     const tableLastDataRowNumber = (() => {
-      for (let index = sheetRows.length; index > tableHeaderRowNumber; index -= 1) {
+      for (
+        let index = sheetRows.length;
+        index > tableHeaderRowNumber;
+        index -= 1
+      ) {
         const row = sheetRows[index - 1];
         const hasValue = row.some((value) => {
           if (value === null || value === undefined) {
@@ -6829,8 +7850,7 @@ export const HoursRegistryPage: React.FC = () => {
 
     const sortedCompanies = Array.from(companyAggregates.values())
       .filter(
-        (company) =>
-          Math.abs(company.totalHours) >= HOURS_COMPARISON_EPSILON
+        (company) => Math.abs(company.totalHours) >= HOURS_COMPARISON_EPSILON
       )
       .sort((a, b) =>
         a.companyName.localeCompare(b.companyName, "es", {
@@ -6873,8 +7893,7 @@ export const HoursRegistryPage: React.FC = () => {
       const existingStyle =
         (cell.s as Record<string, unknown> | undefined) ?? {};
       const existingAlignment =
-        (existingStyle.alignment as Record<string, unknown> | undefined) ??
-        {};
+        (existingStyle.alignment as Record<string, unknown> | undefined) ?? {};
       cell.s = {
         ...existingStyle,
         alignment: {
@@ -6889,8 +7908,7 @@ export const HoursRegistryPage: React.FC = () => {
       const existingStyle =
         (cell.s as Record<string, unknown> | undefined) ?? {};
       const existingAlignment =
-        (existingStyle.alignment as Record<string, unknown> | undefined) ??
-        {};
+        (existingStyle.alignment as Record<string, unknown> | undefined) ?? {};
       cell.s = {
         ...existingStyle,
         alignment: {
@@ -6990,54 +8008,58 @@ export const HoursRegistryPage: React.FC = () => {
 
     workerTotals.forEach(
       ({ dataStartRow, dataEndRow, totalRow, separatorRow }, index) => {
-      if (dataEndRow < dataStartRow) {
-        return;
-      }
-      const hoursRange = buildRange("C", dataStartRow, dataEndRow);
-      const rateRange = buildRange("D", dataStartRow, dataEndRow);
-      const amountRange = buildRange("E", dataStartRow, dataEndRow);
-      for (let rowIndex = dataStartRow; rowIndex <= dataEndRow; rowIndex += 1) {
-        setCellFormula(
-          `E${rowIndex}`,
-          `IF(OR(C${rowIndex}="",D${rowIndex}=""),"",C${rowIndex}*D${rowIndex})`
-        );
-        applyCurrencyFormat(`E${rowIndex}`);
-        applyCenterAlignment(`C${rowIndex}`);
-        applyCenterAlignment(`D${rowIndex}`);
-      }
-      const amountWithRateExpr = `SUMIFS(${amountRange},${rateRange},"<>")`;
-      const hoursWithRateExpr = `SUMIFS(${hoursRange},${rateRange},"<>")`;
+        if (dataEndRow < dataStartRow) {
+          return;
+        }
+        const hoursRange = buildRange("C", dataStartRow, dataEndRow);
+        const rateRange = buildRange("D", dataStartRow, dataEndRow);
+        const amountRange = buildRange("E", dataStartRow, dataEndRow);
+        for (
+          let rowIndex = dataStartRow;
+          rowIndex <= dataEndRow;
+          rowIndex += 1
+        ) {
+          setCellFormula(
+            `E${rowIndex}`,
+            `IF(OR(C${rowIndex}="",D${rowIndex}=""),"",C${rowIndex}*D${rowIndex})`
+          );
+          applyCurrencyFormat(`E${rowIndex}`);
+          applyCenterAlignment(`C${rowIndex}`);
+          applyCenterAlignment(`D${rowIndex}`);
+        }
+        const amountWithRateExpr = `SUMIFS(${amountRange},${rateRange},"<>")`;
+        const hoursWithRateExpr = `SUMIFS(${hoursRange},${rateRange},"<>")`;
 
-      setCellFormula(`C${totalRow}`, `SUM(${hoursRange})`);
-      setCellFormula(
-        `D${totalRow}`,
-        `IF(${hoursWithRateExpr}=0,"",ROUND(${amountWithRateExpr}/${hoursWithRateExpr},2))`
-      );
-      setCellFormula(
-        `E${totalRow}`,
-        `IF(${amountWithRateExpr}=0,"",${amountWithRateExpr})`
-      );
-      applyCurrencyFormat(`E${totalRow}`);
-      applyCenterAlignment(`C${totalRow}`);
-      applyCenterAlignment(`D${totalRow}`);
-      applyBoldStyle(`B${totalRow}`);
-      ["A", "B", "C", "D", "E"].forEach((column) =>
-        applyTotalHighlight(`${column}${totalRow}`)
-      );
-      if (totalRow > dataStartRow) {
-        merges.push({
-          s: { r: dataStartRow - 1, c: 0 },
-          e: { r: totalRow - 1, c: 0 },
-        });
-        applyLeftAlignment(`A${dataStartRow}`);
-        applyWorkerNameFill(`A${dataStartRow}`);
-      }
-      if (separatorRow && index < workerTotals.length - 1) {
-        ["A", "B", "C", "D", "E"].forEach((column) =>
-          applySeparatorFill(`${column}${separatorRow}`)
+        setCellFormula(`C${totalRow}`, `SUM(${hoursRange})`);
+        setCellFormula(
+          `D${totalRow}`,
+          `IF(${hoursWithRateExpr}=0,"",ROUND(${amountWithRateExpr}/${hoursWithRateExpr},2))`
         );
+        setCellFormula(
+          `E${totalRow}`,
+          `IF(${amountWithRateExpr}=0,"",${amountWithRateExpr})`
+        );
+        applyCurrencyFormat(`E${totalRow}`);
+        applyCenterAlignment(`C${totalRow}`);
+        applyCenterAlignment(`D${totalRow}`);
+        applyBoldStyle(`B${totalRow}`);
+        ["A", "B", "C", "D", "E"].forEach((column) =>
+          applyTotalHighlight(`${column}${totalRow}`)
+        );
+        if (totalRow > dataStartRow) {
+          merges.push({
+            s: { r: dataStartRow - 1, c: 0 },
+            e: { r: totalRow - 1, c: 0 },
+          });
+          applyLeftAlignment(`A${dataStartRow}`);
+          applyWorkerNameFill(`A${dataStartRow}`);
+        }
+        if (separatorRow && index < workerTotals.length - 1) {
+          ["A", "B", "C", "D", "E"].forEach((column) =>
+            applySeparatorFill(`${column}${separatorRow}`)
+          );
+        }
       }
-    }
     );
 
     const tableDataStartRow = tableHeaderRowNumber + 1;
@@ -7103,8 +8125,9 @@ export const HoursRegistryPage: React.FC = () => {
       const summaryTitleExistingStyle =
         (summaryTitleCell.s as Record<string, unknown> | undefined) ?? {};
       const summaryTitleFont =
-        (summaryTitleExistingStyle.font as Record<string, unknown> | undefined) ??
-        {};
+        (summaryTitleExistingStyle.font as
+          | Record<string, unknown>
+          | undefined) ?? {};
       const summaryTitleAlignment =
         (summaryTitleExistingStyle.alignment as
           | Record<string, unknown>
@@ -7969,6 +8992,8 @@ export const HoursRegistryPage: React.FC = () => {
         <WorkerInfoModal
           state={workerInfoModal}
           onClose={closeWorkerInfoModal}
+          companyLookup={companyLookupMap}
+          availableCompanies={companyParameterOptions}
         />
       )}
     </>
