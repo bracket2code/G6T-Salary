@@ -2241,7 +2241,7 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
                         key={company.formId}
                         className="rounded-xl border border-gray-200 bg-gray-100 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800/40"
                       >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                           <div className="min-w-0 flex-1">
                             <Select
                               label="Nombre de la empresa"
@@ -2254,15 +2254,20 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
                               disabled={companyOptions.length <= 1}
                             />
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleRemoveCompany(company.formId)}
-                            className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                            leftIcon={<Trash2 size={16} />}
-                          >
-                            Eliminar
-                          </Button>
+                          <div className="hidden w-[44px] flex-col sm:flex">
+                            <span className="mb-2 text-sm font-medium text-transparent">
+                              &nbsp;
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleRemoveCompany(company.formId)}
+                              className="inline-flex h-[44px] w-[44px] min-w-0 items-center justify-center rounded-lg text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                              aria-label="Eliminar empresa"
+                            >
+                              <Trash2 size={18} />
+                            </Button>
+                          </div>
                         </div>
                         <div className="mt-3 space-y-3">
                           {company.contracts.length === 0 ? (
@@ -2305,21 +2310,25 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
                                       className="w-28"
                                       inputMode="decimal"
                                     />
-                                    <div className="h-[42px] w-0" aria-hidden="true"></div>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="flex h-[42px] w-[42px] items-center justify-center rounded-lg text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                                      onClick={() =>
-                                        handleRemoveContract(
-                                          company.formId,
-                                          contract.contractKey
-                                        )
-                                      }
-                                      aria-label="Eliminar contrato"
-                                    >
-                                      <Trash2 size={16} />
-                                    </Button>
+                                    <div className="flex w-28 flex-col items-end">
+                                      <span className="mb-2 text-sm font-medium text-transparent">
+                                        &nbsp;
+                                      </span>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="inline-flex h-[42px] w-[42px] min-w-0 items-center justify-center rounded-lg text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                                        onClick={() =>
+                                          handleRemoveContract(
+                                            company.formId,
+                                            contract.contractKey
+                                          )
+                                        }
+                                        aria-label="Eliminar contrato"
+                                      >
+                                        <Trash2 size={16} />
+                                      </Button>
+                                    </div>
                                   </div>
                                 </div>
                               </div>
