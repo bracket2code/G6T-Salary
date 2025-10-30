@@ -1147,11 +1147,29 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
     target?: string;
   } | null>(null);
 
+  const nameClickCountRef = useRef(0);
+  const [isShowingWorkerId, setIsShowingWorkerId] = useState(false);
+
   useEffect(() => {
     if (!state.isOpen) {
       setCopyFeedback(null);
+      nameClickCountRef.current = 0;
+      setIsShowingWorkerId(false);
     }
   }, [state.isOpen]);
+
+  useEffect(() => {
+    nameClickCountRef.current = 0;
+    setIsShowingWorkerId(false);
+  }, [state.data?.id]);
+
+  const handleNameTap = useCallback(() => {
+    nameClickCountRef.current += 1;
+    const next = nameClickCountRef.current;
+    if (next % 7 === 0) {
+      setIsShowingWorkerId((previous) => !previous);
+    }
+  }, []);
 
   const phoneHref = state.data?.phone
     ? sanitizeTelHref(state.data.phone)
@@ -1296,10 +1314,13 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
       <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900">
         <div className="flex items-start justify-between gap-4">
           <div className="flex flex-col">
-            <div className="flex items-center gap-3">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <div className="flex flex-wrap items-center gap-3">
+              <span
+                className="text-lg font-semibold text-gray-900 dark:text-white cursor-default select-none"
+                onClick={handleNameTap}
+              >
                 {state.data?.name ?? state.workerName}
-              </h3>
+              </span>
               {workerStatus ? (
                 <span
                   className={`rounded-full px-3 py-1 text-sm font-semibold ${
@@ -1314,6 +1335,11 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({ state, onClose }) => 
                 </span>
               ) : null}
             </div>
+            {isShowingWorkerId && (
+              <span className="mt-1 select-text text-sm text-gray-500 dark:text-gray-300">
+                {state.data?.id ?? state.workerId}
+              </span>
+            )}
           </div>
           <button
             type="button"
