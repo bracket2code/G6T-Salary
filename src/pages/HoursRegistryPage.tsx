@@ -1965,6 +1965,7 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
     state.data,
     state.workerId,
     state.workerName,
+    companyOptionsMap,
   ]);
 
   const primaryEmail = useMemo(
@@ -2260,8 +2261,10 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
                             </span>
                             <Button
                               variant="ghost"
-                              size="icon"
-                              onClick={() => handleRemoveCompany(company.formId)}
+                              size="sm"
+                              onClick={() =>
+                                handleRemoveCompany(company.formId)
+                              }
                               className="inline-flex h-[44px] w-[44px] min-w-0 items-center justify-center rounded-lg text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                               aria-label="Eliminar empresa"
                             >
@@ -2316,7 +2319,7 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
                                       </span>
                                       <Button
                                         variant="ghost"
-                                        size="icon"
+                                        size="sm"
                                         className="inline-flex h-[42px] w-[42px] min-w-0 items-center justify-center rounded-lg text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                                         onClick={() =>
                                           handleRemoveContract(
@@ -2438,9 +2441,6 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
               ) : null}
 
               <section>
-                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-                  Empresas y contratos
-                </h3>
                 <div className="mt-3">
                   {displayData?.companies?.length ? (
                     <WorkerCompaniesAndContracts
@@ -4177,7 +4177,7 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
 
         if (Array.isArray(entry.workShifts) && entry.workShifts.length > 0) {
           return entry.workShifts
-            .map((shift, index) => {
+            .map((shift, index): HourSegment | null => {
               const start = shift.startTime ?? "";
               const end = shift.endTime ?? "";
               if (!start && !end) {
@@ -4204,9 +4204,9 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
                 end,
                 total: shiftTotal ?? "",
                 description: shiftDescription,
-              } satisfies HourSegment;
+              };
             })
-            .filter((segment): segment is HourSegment => Boolean(segment));
+            .filter((segment): segment is HourSegment => segment !== null);
         }
 
         if (entryTotal) {
@@ -5013,7 +5013,7 @@ const IndividualModeView: React.FC<IndividualModeViewProps> = ({
                 </h3>
                 <div className="flex items-center gap-2">
                   <Button
-                    size="icon"
+                    size="sm"
                     variant="ghost"
                     onClick={() => handleShiftDay(-1)}
                     disabled={!selectedDayKey}
@@ -5022,7 +5022,7 @@ const IndividualModeView: React.FC<IndividualModeViewProps> = ({
                     <ChevronLeft size={18} />
                   </Button>
                   <Button
-                    size="icon"
+                    size="sm"
                     variant="ghost"
                     onClick={() => handleShiftDay(1)}
                     disabled={!selectedDayKey}
@@ -8800,11 +8800,11 @@ export const HoursRegistryPage: React.FC = () => {
               <div className="flex items-center justify-center gap-3 lg:justify-self-center">
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
                   <Button
-                    size="icon"
-                    variant="ghost"
+                    size="sm"
+                    variant="primary"
                     onClick={() => shiftSelectedRange(-1)}
                     aria-label="Rango anterior"
-                    className="h-9 w-9 rounded-full border-2 border-blue-500 text-blue-600 hover:bg-blue-50/40 dark:border-blue-400 dark:text-blue-200 dark:hover:bg-blue-500/10"
+                    className="h-10 w-10 rounded-xl !p-0"
                   >
                     <ChevronLeft size={18} />
                   </Button>
@@ -8813,11 +8813,11 @@ export const HoursRegistryPage: React.FC = () => {
                     onChange={handleRangeSelect}
                   />
                   <Button
-                    size="icon"
-                    variant="ghost"
+                    size="sm"
+                    variant="primary"
                     onClick={() => shiftSelectedRange(1)}
                     aria-label="Rango siguiente"
-                    className="h-9 w-9 rounded-full border-2 border-blue-500 text-blue-600 hover:bg-blue-50/40 dark:border-blue-400 dark:text-blue-200 dark:hover:bg-blue-500/10"
+                    className="h-10 w-10 rounded-xl !p-0"
                   >
                     <ChevronRight size={18} />
                   </Button>

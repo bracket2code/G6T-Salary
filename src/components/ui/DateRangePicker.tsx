@@ -106,13 +106,17 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       return;
     }
 
+    // range.from fue verificado arriba, aseguramos los tipos a Date para onChange
+    const finalFrom = range.from as Date;
+    const finalTo = (range.to ?? range.from) as Date;
+
     const finalRange: DateRange = {
-      from: range.from,
-      to: range.to ?? range.from,
+      from: finalFrom,
+      to: finalTo,
     };
 
     setDraftRange(finalRange);
-    onChange({ from: finalRange.from, to: finalRange.to });
+    onChange({ from: finalFrom, to: finalTo });
     setIsOpen(false);
     setIsSelectingEnd(false);
   };
@@ -120,16 +124,14 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   return (
     <div className="relative" ref={containerRef}>
       <Button
-        size="lg"
+        size="sm"
         variant="primary"
         onClick={() => setIsOpen((prev) => !prev)}
         disabled={disabled}
-        leftIcon={<CalendarDays className="h-5 w-5" />}
-        className={`rounded-2xl px-6 py-3 text-base font-semibold tracking-wide shadow-lg shadow-blue-500/25 transition-transform hover:-translate-y-0.5 hover:shadow-blue-500/40 dark:shadow-blue-900/50 ${
-          isOpen
-            ? "ring-2 ring-blue-400/70 ring-offset-2 dark:ring-blue-500/70"
-            : "ring-0"
-        } border border-blue-400/60 bg-blue-600 hover:bg-blue-700 dark:border-blue-500/50 dark:bg-blue-500 dark:hover:bg-blue-600`}
+        leftIcon={<CalendarDays className="h-4 w-4" />}
+        className={`h-10 gap-2 !rounded-xl !px-5 !py-0 text-sm font-semibold shadow-sm hover:shadow-md ${
+          isOpen ? "ring-2 ring-blue-300 ring-offset-1" : ""
+        }`}
       >
         {buttonLabel}
       </Button>
@@ -139,7 +141,10 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             mode="range"
             locale={es}
             defaultMonth={
-              draftRange?.from ?? draftRange?.to ?? selectedRange.from ?? new Date()
+              draftRange?.from ??
+              draftRange?.to ??
+              selectedRange.from ??
+              new Date()
             }
             numberOfMonths={2}
             pagedNavigation
