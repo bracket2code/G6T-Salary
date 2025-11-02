@@ -5,6 +5,7 @@ import { es } from "date-fns/locale";
 import "react-day-picker/style.css";
 
 import { Button } from "./Button";
+import { CalendarDays } from "lucide-react";
 
 interface DateRangePickerProps {
   value: { from: Date; to: Date };
@@ -119,10 +120,16 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   return (
     <div className="relative" ref={containerRef}>
       <Button
-        size="sm"
-        variant="outline"
+        size="lg"
+        variant="primary"
         onClick={() => setIsOpen((prev) => !prev)}
         disabled={disabled}
+        leftIcon={<CalendarDays className="h-5 w-5" />}
+        className={`rounded-2xl px-6 py-3 text-base font-semibold tracking-wide shadow-lg shadow-blue-500/25 transition-transform hover:-translate-y-0.5 hover:shadow-blue-500/40 dark:shadow-blue-900/50 ${
+          isOpen
+            ? "ring-2 ring-blue-400/70 ring-offset-2 dark:ring-blue-500/70"
+            : "ring-0"
+        } border border-blue-400/60 bg-blue-600 hover:bg-blue-700 dark:border-blue-500/50 dark:bg-blue-500 dark:hover:bg-blue-600`}
       >
         {buttonLabel}
       </Button>

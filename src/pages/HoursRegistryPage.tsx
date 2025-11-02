@@ -8804,7 +8804,7 @@ export const HoursRegistryPage: React.FC = () => {
                     variant="ghost"
                     onClick={() => shiftSelectedRange(-1)}
                     aria-label="Rango anterior"
-                    className="h-9 w-7 rounded-md"
+                    className="h-9 w-9 rounded-full border-2 border-blue-500 text-blue-600 hover:bg-blue-50/40 dark:border-blue-400 dark:text-blue-200 dark:hover:bg-blue-500/10"
                   >
                     <ChevronLeft size={18} />
                   </Button>
@@ -8817,7 +8817,7 @@ export const HoursRegistryPage: React.FC = () => {
                     variant="ghost"
                     onClick={() => shiftSelectedRange(1)}
                     aria-label="Rango siguiente"
-                    className="h-9 w-7 rounded-md"
+                    className="h-9 w-9 rounded-full border-2 border-blue-500 text-blue-600 hover:bg-blue-50/40 dark:border-blue-400 dark:text-blue-200 dark:hover:bg-blue-500/10"
                   >
                     <ChevronRight size={18} />
                   </Button>
