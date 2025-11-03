@@ -5255,6 +5255,7 @@ export const HoursRegistryPage: React.FC = () => {
     Record<string, DayNoteEntry[]>
   >({});
   const [isSavingAll, setIsSavingAll] = useState(false);
+  const [weekDataReloadKey, setWeekDataReloadKey] = useState(0);
   const [segmentModalTarget, setSegmentModalTarget] =
     useState<SegmentsModalTarget | null>(null);
   const [notesModalTarget, setNotesModalTarget] =
@@ -5812,6 +5813,7 @@ export const HoursRegistryPage: React.FC = () => {
     selectedRange,
     visibleWorkerIdsKey,
     workerNameById,
+    weekDataReloadKey,
   ]);
 
   const shiftSelectedRange = useCallback((step: number) => {
@@ -7227,11 +7229,7 @@ export const HoursRegistryPage: React.FC = () => {
     workerLastClickRef.current = null;
   }, []);
 
-  const handleSaveAll = useCallback(async () => {
-    if (isSavingAll) {
-      return;
-    }
-
+  const computeSavePayload = useCallback(() => {
     const workersPayload = new Map<string, ControlScheduleSavePayload[]>();
     const unassignedPayload: ControlScheduleSavePayload[] = [];
     let totalPayloadItems = 0;
@@ -7470,6 +7468,33 @@ export const HoursRegistryPage: React.FC = () => {
       }
     });
 
+    return {
+      workersPayload,
+      unassignedPayload,
+      totalPayloadItems,
+    };
+  }, [
+    noteDraftsByDay,
+    noteOriginalsByDay,
+    segmentsByAssignment,
+    visibleAssignments,
+    visibleDays,
+    workerWeekData,
+  ]);
+
+  const hasPendingChanges = useMemo(
+    () => computeSavePayload().totalPayloadItems > 0,
+    [computeSavePayload]
+  );
+
+  const handleSaveAll = useCallback(async () => {
+    if (isSavingAll) {
+      return;
+    }
+
+    const { workersPayload, unassignedPayload, totalPayloadItems } =
+      computeSavePayload();
+
     if (totalPayloadItems === 0) {
       alert("No hay cambios de horas o notas para guardar");
       return;
@@ -7601,6 +7626,7 @@ export const HoursRegistryPage: React.FC = () => {
       }
 
       alert("Horas registradas exitosamente");
+      setWeekDataReloadKey((prev) => prev + 1);
     } catch (error) {
       console.error("Error al guardar horas", error);
       const message =
@@ -7613,14 +7639,10 @@ export const HoursRegistryPage: React.FC = () => {
     }
   }, [
     apiUrl,
+    computeSavePayload,
     externalJwt,
     isSavingAll,
     noteDraftsByDay,
-    noteOriginalsByDay,
-    segmentsByAssignment,
-    visibleAssignments,
-    visibleDays,
-    workerWeekData,
   ]);
 
   const weeklyTotals = useMemo(
@@ -7670,8 +7692,20 @@ export const HoursRegistryPage: React.FC = () => {
   }, [visibleWorkerIds, workerLookupById, workerNameById, workerWeekData]);
 
   const canExport = hasRequestedResults && visibleAssignments.length > 0;
+  const exportExcelEnabled = canExport && !hasPendingChanges;
+  const exportExcelButtonClassName = exportExcelEnabled
+    ? "bg-green-700 text-white hover:bg-white hover:text-green-700"
+    : "bg-gray-300 text-gray-500 hover:bg-gray-300 hover:text-gray-500 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-400";
+  const exportExcelButtonTitle = hasPendingChanges
+    ? "Guarda los cambios antes de exportar el Excel"
+    : undefined;
 
   const handleExportExcel = useCallback(() => {
+    if (hasPendingChanges) {
+      alert("Guarda los cambios pendientes antes de exportar el Excel.");
+      return;
+    }
+
     if (!hasRequestedResults || visibleAssignments.length === 0) {
       alert("No hay datos para exportar en el rango seleccionado.");
       return;
@@ -8269,6 +8303,7 @@ export const HoursRegistryPage: React.FC = () => {
   }, [
     companyLookupMap,
     hasRequestedResults,
+    hasPendingChanges,
     rangeLabel,
     selectedRange.end,
     selectedRange.start,
@@ -8823,12 +8858,30 @@ export const HoursRegistryPage: React.FC = () => {
                   </Button>
                 </div>
               </div>
-              <div className="flex items-center justify-center lg:justify-end">
+              <div className="flex items-center justify-center gap-2 lg:justify-end">
+                <Button
+                  size="sm"
+                  className={exportExcelButtonClassName}
+                  variant="outline"
+                  leftIcon={<FileSpreadsheet size={16} />}
+                  onClick={handleExportExcel}
+                  disabled={!exportExcelEnabled}
+                  title={exportExcelButtonTitle}
+                >
+                  Exportar Excel
+                </Button>
                 <Button
                   size="sm"
                   onClick={handleSaveAll}
                   disabled={isSavingAll}
                   leftIcon={<Save size={16} />}
+                  variant="primary"
+                  isLoading={isSavingAll}
+                  className={
+                    hasPendingChanges
+                      ? "!bg-amber-400 !text-white hover:!bg-amber-500 focus:!ring-amber-400 dark:!bg-amber-500 dark:hover:!bg-amber-400"
+                      : ""
+                  }
                 >
                   Guardar Todo
                 </Button>
@@ -8908,15 +8961,32 @@ export const HoursRegistryPage: React.FC = () => {
         )}
 
         {hasRequestedResults && (
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
             <Button
-              className="bg-green-700 text-white hover:bg-white hover:text-green-700"
+              size="sm"
+              className={exportExcelButtonClassName}
               variant="outline"
               leftIcon={<FileSpreadsheet size={16} />}
               onClick={handleExportExcel}
-              disabled={!canExport}
+              disabled={!exportExcelEnabled}
+              title={exportExcelButtonTitle}
             >
               Exportar Excel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveAll}
+              disabled={isSavingAll}
+              leftIcon={<Save size={16} />}
+              variant="primary"
+              isLoading={isSavingAll}
+              className={
+                hasPendingChanges
+                  ? "!bg-amber-400 !text-white hover:!bg-amber-500 focus:!ring-amber-400 dark:!bg-amber-500 dark:hover:!bg-amber-400"
+                  : ""
+              }
+            >
+              Guardar Todo
             </Button>
           </div>
         )}
