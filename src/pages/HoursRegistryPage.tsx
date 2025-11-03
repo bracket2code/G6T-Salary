@@ -5222,7 +5222,7 @@ export const HoursRegistryPage: React.FC = () => {
     useState<boolean>(true);
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"company" | "worker" | "individual">(
-    "company"
+    "worker"
   );
   const rawShowInactiveId = useId();
   const showInactiveCheckboxId = `show-inactive-${
@@ -5435,7 +5435,7 @@ export const HoursRegistryPage: React.FC = () => {
       entries.unshift({
         value: ALL_COMPANIES_OPTION_ID,
         label: ALL_COMPANIES_OPTION_LABEL,
-        description: "Incluye empresas detectadas en las asignaciones",
+        description: "Incluye todas las empresas detectadas",
       });
     }
 
@@ -8766,14 +8766,14 @@ export const HoursRegistryPage: React.FC = () => {
                   <div className="flex items-center gap-1.5">
                     {[
                       {
-                        value: "company" as const,
-                        label: "Empresa",
-                        handler: handleCompanyButtonClick,
-                      },
-                      {
                         value: "worker" as const,
                         label: "Trabajador",
                         handler: handleWorkerButtonClick,
+                      },
+                      {
+                        value: "company" as const,
+                        label: "Empresa",
+                        handler: handleCompanyButtonClick,
                       },
                       {
                         value: "individual" as const,

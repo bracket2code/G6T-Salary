@@ -45,8 +45,8 @@ const ACTIVE_SITUATION_TOKENS = new Set([
 ]);
 
 const CALCULATOR_VIEW_OPTIONS = [
-  { value: "company" as const, label: "Empresa" },
   { value: "worker" as const, label: "Trabajador" },
+  { value: "company" as const, label: "Empresa" },
   { value: "individual" as const, label: "Individual" },
 ];
 
@@ -203,7 +203,7 @@ const MultipleCalculatorPage: React.FC = () => {
     ALL_COMPANIES_OPTION_ID,
   ]);
   const [viewMode, setViewMode] = useState<"company" | "worker" | "individual">(
-    "individual"
+    "worker"
   );
   const [isLoadingWorkers, setIsLoadingWorkers] = useState<boolean>(true);
   const [isLoadingGroupOptions, setIsLoadingGroupOptions] =
