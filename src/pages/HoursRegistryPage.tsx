@@ -8790,8 +8790,10 @@ export const HoursRegistryPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="gap-3">
+        <Card className="overflow-visible">
+          <CardHeader
+            className="sticky top-0 z-30 gap-3 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/75 shadow-sm dark:bg-gray-900/90"
+          >
             <div className="grid w-full grid-cols-1 items-center gap-3 lg:grid-cols-[1fr_auto_1fr] lg:gap-4">
               <div className="flex items-center justify-center lg:justify-start">
                 <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 shadow-sm dark:bg-gray-800">
