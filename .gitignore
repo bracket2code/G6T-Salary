@@ -145,3 +145,7 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 .DS_Store
+
+
+# m --- IGNORE ---
+suppressReactDevToolsWarning.ts

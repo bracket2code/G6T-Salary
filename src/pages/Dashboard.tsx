@@ -148,7 +148,7 @@ export const Dashboard: React.FC = () => {
                 />
               </div>
               <p className="text-xs text-gray-600 dark:text-gray-400 text-center">
-                Consultas
+                Trabajadores
               </p>
             </div>
           </div>
@@ -236,7 +236,7 @@ export const Dashboard: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">
-                    Consultas
+                    Trabajadores
                   </p>
                   <p className="text-lg font-bold text-gray-900 dark:text-white">
                     Trabajadores
