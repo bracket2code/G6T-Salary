@@ -8,6 +8,7 @@ import type {
   AssignmentTotalsContext,
   DayDescriptor,
 } from "../../pages/HoursRegistryPage";
+import type { HourSegment } from "../../pages/HoursRegistryPage";
 import type { DistributionViewMode } from "./useBulkDistribution";
 
 const HOURS_COMPARISON_EPSILON = 0.01;
@@ -17,15 +18,88 @@ const percentFormatter = new Intl.NumberFormat("es-ES", {
   maximumFractionDigits: 2,
 });
 
+interface TimeRange {
+  start: number;
+  end: number;
+}
+
+const parseTimeToMinutes = (value: string): number | null => {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+};
+
+const clampMinutesToDay = (value: number): number =>
+  Math.max(0, Math.min(value, 24 * 60));
+
+const minutesToTimeString = (value: number): string => {
+  const minutes = Math.floor(clampMinutesToDay(value));
+  const hoursPart = Math.floor(minutes / 60);
+  const minutesPart = minutes % 60;
+  return `${String(hoursPart).padStart(2, "0")}:${String(minutesPart).padStart(
+    2,
+    "0"
+  )}`;
+};
+
+const mergeTimeRanges = (input: TimeRange[]): TimeRange[] => {
+  if (!input.length) {
+    return [];
+  }
+  const sorted = input
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start);
+  const merged: TimeRange[] = [];
+  sorted.forEach((range) => {
+    const previous = merged[merged.length - 1];
+    if (!previous || range.start > previous.end) {
+      merged.push({ ...range });
+      return;
+    }
+    previous.end = Math.max(previous.end, range.end);
+  });
+  return merged;
+};
+
+const calculateSegmentsTotalMinutes = (segments: HourSegment[]): number =>
+  segments.reduce((total, segment) => {
+    const start = parseTimeToMinutes(segment.start);
+    const end = parseTimeToMinutes(segment.end);
+    if (start === null || end === null || end <= start) {
+      return total;
+    }
+    return total + (end - start);
+  }, 0);
+
 type DistributionMode = "hours" | "percentage";
+
+interface AssignmentDayContext {
+  workerId: string;
+  segments: HourSegment[];
+}
 
 export interface BulkHoursDistributionModalProps {
   isOpen: boolean;
   targetDay: DayDescriptor | null;
   groupName: string;
   viewMode: DistributionViewMode;
+  dayKey: string | null;
   assignments: Assignment[];
   totalsContext: AssignmentTotalsContext;
+  assignmentContexts: Record<string, AssignmentDayContext>;
   resolveAssignmentHourValue: (
     assignment: Assignment,
     dateKey: string,
@@ -33,6 +107,11 @@ export interface BulkHoursDistributionModalProps {
   ) => number;
   formatHours: (value: number) => string;
   hoursFormatter: Intl.NumberFormat;
+  onSegmentsApply: (
+    assignmentId: string,
+    dateKey: string,
+    segments: HourSegment[]
+  ) => void;
   onClose: () => void;
   onApply: (payload: {
     dayKey: string;
@@ -49,11 +128,14 @@ export const BulkHoursDistributionModal: React.FC<
   targetDay,
   groupName,
   viewMode,
+  dayKey,
   assignments,
   totalsContext,
+  assignmentContexts,
   resolveAssignmentHourValue,
   formatHours,
   hoursFormatter,
+  onSegmentsApply,
   onClose,
   onApply,
 }) => {
@@ -66,6 +148,13 @@ export const BulkHoursDistributionModal: React.FC<
     {}
   );
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [autoDescription, setAutoDescription] = useState("");
+  const [autoRangeStart, setAutoRangeStart] = useState("08:00");
+  const [autoRangeEnd, setAutoRangeEnd] = useState("18:00");
+  const [autoBreakStart, setAutoBreakStart] = useState("");
+  const [autoBreakMinutes, setAutoBreakMinutes] = useState("");
+  const [autoFeedback, setAutoFeedback] = useState<string | null>(null);
+  const [autoError, setAutoError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen || !targetDay) {
@@ -91,6 +180,13 @@ export const BulkHoursDistributionModal: React.FC<
     setSelectedIds(nextSelection);
     setHoursValues(nextHours);
     setPercentValues({});
+    setAutoDescription("");
+    setAutoRangeStart("08:00");
+    setAutoRangeEnd("18:00");
+    setAutoBreakStart("");
+    setAutoBreakMinutes("");
+    setAutoFeedback(null);
+    setAutoError(null);
   }, [assignments, isOpen, targetDay]);
 
   const parseDecimalInput = (value: string | undefined): number | null => {
@@ -294,6 +390,194 @@ export const BulkHoursDistributionModal: React.FC<
     setSubmitAttempted(false);
   };
 
+  const handleAutoGenerateSegments = () => {
+    setAutoFeedback(null);
+    setAutoError(null);
+
+    if (!selectedAssignments.length) {
+      setAutoError("Selecciona al menos una fila para generar tramos.");
+      return;
+    }
+
+    if (!targetDay || !dayKey) {
+      setAutoError("Selecciona un día válido antes de generar tramos.");
+      return;
+    }
+
+    const successMessages: string[] = [];
+    const errorMessages: string[] = [];
+
+    selectedAssignments.forEach((assignment) => {
+      const context = assignmentContexts[assignment.id];
+      if (!context) {
+        errorMessages.push(
+          `${assignment.companyName}: sin información existente para este día.`
+        );
+        return;
+      }
+
+      const targetHours =
+        mode === "hours"
+          ? parseDecimalInput(hoursValues[assignment.id]) ??
+            resolveAssignmentHourValue(
+              assignment,
+              targetDay.dateKey,
+              totalsContext
+            )
+          : parseDecimalInput(hoursValues[assignment.id]) ??
+            resolveAssignmentHourValue(
+              assignment,
+              targetDay.dateKey,
+              totalsContext
+            );
+
+      if (!targetHours || targetHours <= 0) {
+        errorMessages.push(
+          `${assignment.companyName}: define las horas a distribuir antes de generar tramos.`
+        );
+        return;
+      }
+
+      const baseSegments = context.segments
+        ? context.segments.map((segment) => ({ ...segment }))
+        : [];
+      const occupiedMinutes = calculateSegmentsTotalMinutes(baseSegments);
+      const desiredMinutes = Math.max(Math.round(targetHours * 60), 0);
+      let remaining = Math.max(desiredMinutes - occupiedMinutes, 0);
+
+      if (remaining <= 0) {
+        errorMessages.push(
+          `${assignment.companyName}: ya tiene ${formatHours(
+            occupiedMinutes / 60
+          )} detalladas.`
+        );
+        return;
+      }
+
+      const fallbackStartCandidates = baseSegments
+        .map((segment) => parseTimeToMinutes(segment.start))
+        .filter((value): value is number => value !== null && Number.isFinite(value));
+      const fallbackStart = fallbackStartCandidates.length
+        ? Math.min(...fallbackStartCandidates)
+        : 8 * 60;
+      const normalizedRangeStart = clampMinutesToDay(
+        parseTimeToMinutes(autoRangeStart) ?? fallbackStart
+      );
+      const rangeEnd = clampMinutesToDay(
+        parseTimeToMinutes(autoRangeEnd) ?? normalizedRangeStart + 8 * 60
+      );
+
+      if (rangeEnd <= normalizedRangeStart) {
+        errorMessages.push(
+          `${assignment.companyName}: el rango horario es inválido.`
+        );
+        return;
+      }
+
+      const occupiedRanges: TimeRange[] = baseSegments
+        .map((segment) => ({
+          start: parseTimeToMinutes(segment.start),
+          end: parseTimeToMinutes(segment.end),
+        }))
+        .filter(
+          (range): range is TimeRange =>
+            range.start !== null &&
+            range.end !== null &&
+            range.end > range.start
+        )
+        .map((range) => ({
+          start: Math.max(range.start, normalizedRangeStart),
+          end: Math.min(range.end, rangeEnd),
+        }));
+
+      const pauseMinutes = Number.parseInt(autoBreakMinutes, 10);
+      const pauseStart = parseTimeToMinutes(autoBreakStart);
+      if (
+        pauseStart !== null &&
+        Number.isFinite(pauseMinutes) &&
+        pauseMinutes > 0
+      ) {
+        const pauseEnd = Math.min(pauseStart + pauseMinutes, rangeEnd);
+        if (pauseEnd > pauseStart) {
+          occupiedRanges.push({
+            start: Math.max(pauseStart, normalizedRangeStart),
+            end: Math.min(pauseEnd, rangeEnd),
+          });
+        }
+      }
+
+      const mergedOccupied = mergeTimeRanges(occupiedRanges);
+      const slots: TimeRange[] = [];
+      let cursor = normalizedRangeStart;
+      mergedOccupied.forEach((range) => {
+        if (range.start > cursor) {
+          slots.push({ start: cursor, end: range.start });
+        }
+        cursor = Math.max(cursor, range.end);
+      });
+      if (cursor < rangeEnd) {
+        slots.push({ start: cursor, end: rangeEnd });
+      }
+
+      if (!slots.length) {
+        errorMessages.push(
+          `${assignment.companyName}: no hay huecos disponibles dentro del rango.`
+        );
+        return;
+      }
+
+      const additions: HourSegment[] = [];
+      slots.forEach((slot) => {
+        if (remaining <= 0) {
+          return;
+        }
+        let slotCursor = slot.start;
+        while (slotCursor < slot.end && remaining > 0) {
+          const freeMinutes = slot.end - slotCursor;
+          if (freeMinutes <= 0) {
+            break;
+          }
+          const allocation = Math.min(freeMinutes, remaining);
+          const segmentEnd = slotCursor + allocation;
+          additions.push({
+            id: "",
+            start: minutesToTimeString(slotCursor),
+            end: minutesToTimeString(segmentEnd),
+            total: hoursFormatter.format(allocation / 60),
+            description: autoDescription.trim() || undefined,
+          });
+          remaining -= allocation;
+          slotCursor = segmentEnd;
+        }
+      });
+
+      if (!additions.length) {
+        errorMessages.push(
+          `${assignment.companyName}: no se generaron nuevos tramos.`
+        );
+        return;
+      }
+
+      const finalSegments = [...baseSegments, ...additions];
+      onSegmentsApply(assignment.id, dayKey, finalSegments);
+      successMessages.push(
+        `${assignment.companyName}: ${formatHours(
+          (desiredMinutes - remaining) / 60
+        )} detalladas con ${additions.length} tramo(s).`
+      );
+      if (remaining > 0) {
+        errorMessages.push(
+          `${assignment.companyName}: faltan ${formatHours(
+            remaining / 60
+          )} por ubicar.`
+        );
+      }
+    });
+
+    setAutoFeedback(successMessages.length ? successMessages.join("\n") : null);
+    setAutoError(errorMessages.length ? errorMessages.join("\n") : null);
+  };
+
   const handleApply = () => {
     setSubmitAttempted(true);
     if (distributionError) {
@@ -466,73 +750,81 @@ export const BulkHoursDistributionModal: React.FC<
         </div>
 
         <div className="flex flex-1 flex-col gap-4 overflow-hidden p-5 lg:flex-row">
-          <div className="w-full space-y-3 lg:w-60">
-            <Input
-              label="Descripción"
-              placeholder="Ej. Proyecto Alfa"
-              value={description}
-              onChange={(event) => {
-                setDescription(event.target.value);
-                setSubmitAttempted(false);
-              }}
-              fullWidth
-            />
-            <Input
-              label="Total de horas"
-              placeholder="Ej. 8"
-              value={totalHoursInput}
-              onChange={(event) => {
-                setTotalHoursInput(event.target.value);
-                setSubmitAttempted(false);
-              }}
-              inputMode="decimal"
-              fullWidth
-            />
-            <div>
+          <div className="w-full space-y-4 lg:w-72">
+            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900/30">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                Forma de reparto
+                Configuración del reparto
               </p>
-              <div className="mt-2 inline-flex rounded-full border border-gray-200 bg-gray-50 p-1 text-xs dark:border-gray-700 dark:bg-gray-800">
-                <button
-                  type="button"
-                  onClick={() => handleModeChange("hours")}
-                  className={`rounded-full px-3 py-1 font-medium transition ${
-                    mode === "hours"
-                      ? "bg-white text-blue-600 shadow dark:bg-gray-900"
-                      : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                  }`}
-                >
-                  Horas
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange("percentage")}
-                  className={`rounded-full px-4 py-1 text-sm font-medium transition ${
-                    mode === "percentage"
-                      ? "bg-white text-blue-600 shadow dark:bg-gray-900"
-                      : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                  }`}
-                >
-                  %
-                </button>
+              <div className="mt-3 space-y-3">
+                <Input
+                  label="Descripción general"
+                  placeholder="Ej. Proyecto Alfa"
+                  value={description}
+                  onChange={(event) => {
+                    setDescription(event.target.value);
+                    setSubmitAttempted(false);
+                  }}
+                  fullWidth
+                />
+                <Input
+                  label="Total de horas"
+                  placeholder="Ej. 8"
+                  value={totalHoursInput}
+                  onChange={(event) => {
+                    setTotalHoursInput(event.target.value);
+                    setSubmitAttempted(false);
+                  }}
+                  inputMode="decimal"
+                  fullWidth
+                />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    Forma de reparto
+                  </p>
+                  <div className="mt-2 inline-flex rounded-full border border-gray-200 bg-gray-50 p-1 text-xs dark:border-gray-700 dark:bg-gray-800">
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange("hours")}
+                      className={`rounded-full px-3 py-1 font-medium transition ${
+                        mode === "hours"
+                          ? "bg-white text-blue-600 shadow dark:bg-gray-900"
+                          : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      }`}
+                    >
+                      Horas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleModeChange("percentage")}
+                      className={`rounded-full px-3 py-1 font-medium transition ${
+                        mode === "percentage"
+                          ? "bg-white text-blue-600 shadow dark:bg-gray-900"
+                          : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      }`}
+                    >
+                      %
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm dark:border-gray-700 dark:bg-gray-800">
-              <p className="font-semibold text-gray-800 dark:text-gray-100">
-                Selección
-              </p>
-              <div className="mt-2 space-y-2 text-gray-600 dark:text-gray-300">
-                <label className="flex items-center gap-2 text-xs font-medium">
+
+            <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/30">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Selección de filas
+                </p>
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
                   <input
                     type="checkbox"
                     className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     checked={allSelected}
-                    onChange={(event) =>
-                      handleToggleAll(event.target.checked)
-                    }
+                    onChange={(event) => handleToggleAll(event.target.checked)}
                   />
-                  Seleccionar todo ({selectedIds.size}/{assignments.length})
+                  Todo ({selectedIds.size}/{assignments.length})
                 </label>
+              </div>
+              <div className="mt-3 space-y-2 text-gray-600 dark:text-gray-300">
                 {mode === "hours" && differenceLabel && (
                   <p
                     className={`text-xs ${
@@ -550,26 +842,99 @@ export const BulkHoursDistributionModal: React.FC<
                   </p>
                 )}
               </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleEqualDistribution}
+                  disabled={!selectedAssignments.length}
+                >
+                  Reparto equitativo
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleClearSelected}
+                  disabled={!selectedAssignments.length}
+                >
+                  Limpiar selección
+                </Button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleEqualDistribution}
-                disabled={!selectedAssignments.length}
-              >
-                Reparto equitativo
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={handleClearSelected}
-                disabled={!selectedAssignments.length}
-              >
-                Limpiar
-              </Button>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/30">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    Generar tramos automáticos
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Usa los huecos libres del día para crear tramos con una descripción.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleAutoGenerateSegments}
+                  disabled={!selectedAssignments.length}
+                >
+                  Generar tramos
+                </Button>
+              </div>
+              <div className="mt-3 space-y-2">
+                <Input
+                  label="Descripción"
+                  size="sm"
+                  value={autoDescription}
+                  onChange={(event) => setAutoDescription(event.target.value)}
+                  placeholder="Ej. Reunión semanal"
+                  fullWidth
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    type="time"
+                    label="Rango inicio"
+                    size="sm"
+                    value={autoRangeStart}
+                    onChange={(event) => setAutoRangeStart(event.target.value)}
+                  />
+                  <Input
+                    type="time"
+                    label="Rango fin"
+                    size="sm"
+                    value={autoRangeEnd}
+                    onChange={(event) => setAutoRangeEnd(event.target.value)}
+                  />
+                  <Input
+                    type="time"
+                    label="Inicio pausa"
+                    size="sm"
+                    value={autoBreakStart}
+                    onChange={(event) => setAutoBreakStart(event.target.value)}
+                  />
+                  <Input
+                    label="Duración pausa (min)"
+                    size="sm"
+                    value={autoBreakMinutes}
+                    onChange={(event) => setAutoBreakMinutes(event.target.value)}
+                    inputMode="numeric"
+                    placeholder="Ej. 30"
+                  />
+                </div>
+              </div>
+              {autoFeedback && (
+                <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-900/30 dark:text-emerald-100 whitespace-pre-line">
+                  {autoFeedback}
+                </div>
+              )}
+              {autoError && (
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/40 dark:bg-red-950/30 dark:text-red-200 whitespace-pre-line">
+                  {autoError}
+                </div>
+              )}
             </div>
           </div>
 

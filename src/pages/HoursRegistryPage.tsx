@@ -2491,7 +2491,7 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
   );
 };
 
-interface HourSegment {
+export interface HourSegment {
   id: string;
   start: string;
   end: string;
@@ -3537,6 +3537,81 @@ const resolveEntriesForAssignment = (
       ? entry.workShifts.map((shift) => ({ ...shift }))
       : undefined,
   }));
+};
+
+const extractSegmentsFromEntries = (
+  entries: DayScheduleEntry[]
+): HourSegment[] => {
+  if (!entries.length) {
+    return [];
+  }
+
+  const segments: HourSegment[] = [];
+
+  entries.forEach((entry, entryIndex) => {
+    if (Array.isArray(entry.workShifts) && entry.workShifts.length > 0) {
+      entry.workShifts.forEach((shift, shiftIndex) => {
+        const start = shift.startTime ?? "";
+        const end = shift.endTime ?? "";
+        if (!start || !end) {
+          return;
+        }
+
+        const shiftHours =
+          typeof shift.hours === "number" && Number.isFinite(shift.hours)
+            ? shift.hours
+            : undefined;
+
+        segments.push({
+          id:
+            shift.id ??
+            `entry-${entry.id ?? "shift"}-${entryIndex}-${shiftIndex}-${Math.random()
+              .toString(36)
+              .slice(2, 6)}`,
+          start,
+          end,
+          total:
+            shiftHours !== undefined
+              ? hoursFormatter.format(shiftHours)
+              : undefined,
+          description:
+            shift.description ??
+            extractShiftDescription(shift, entry.description) ??
+            entry.description ??
+            undefined,
+        });
+      });
+      return;
+    }
+
+    const entryHours =
+      typeof entry.hours === "number" && Number.isFinite(entry.hours)
+        ? entry.hours
+        : undefined;
+
+    if (entryHours && entryHours > 0) {
+      const minutes = Math.round(entryHours * 60);
+      const startMinutes = 8 * 60;
+      const endMinutes = startMinutes + minutes;
+      const formatMinutes = (value: number) => {
+        const hours = Math.floor(value / 60);
+        const mins = value % 60;
+        return `${String(hours).padStart(2, "0")}:${String(mins).padStart(
+          2,
+          "0"
+        )}`;
+      };
+      segments.push({
+        id: `entry-${entry.id ?? "hours"}-${entryIndex}`,
+        start: formatMinutes(startMinutes),
+        end: formatMinutes(endMinutes),
+        total: hoursFormatter.format(entryHours),
+        description: entry.description ?? undefined,
+      });
+    }
+  });
+
+  return segments;
 };
 
 const noteAppliesToAssignment = (
@@ -5628,17 +5703,77 @@ export const HoursRegistryPage: React.FC = () => {
     openBulkDistributionModal,
   } = useBulkDistribution({
     assignments,
-    resolveDayNotes,
     setAssignments,
-    setNoteDraftsByDay,
-    formatHours,
     hoursFormatter,
-    buildNotesStateKey,
-    generateUuid,
   });
 
   const selectedRangeStartMs = selectedRange.start.getTime();
   const selectedRangeEndMs = selectedRange.end.getTime();
+
+  const bulkDistributionDayKey =
+    bulkDistributionTarget?.day.dateKey ?? null;
+
+  const bulkDistributionAssignmentContexts = useMemo(() => {
+    if (!bulkDistributionTarget || !bulkDistributionDayKey) {
+      return {} as Record<
+        string,
+        {
+          workerId: string;
+          segments: HourSegment[];
+        }
+      >;
+    }
+
+    const contexts: Record<
+      string,
+      {
+        workerId: string;
+        segments: HourSegment[];
+      }
+    > = {};
+
+    bulkDistributionAssignments.forEach((assignment) => {
+      const workerId = assignment.workerId;
+      const dayData =
+        workerWeekData[workerId]?.days?.[bulkDistributionDayKey];
+      const localSegments =
+        segmentsByAssignment[assignment.id]?.[bulkDistributionDayKey];
+      const fallbackSegments = dayData?.entries
+        ? extractSegmentsFromEntries(dayData.entries)
+        : [];
+      const baseSegments = (localSegments ?? fallbackSegments).map(
+        (segment) => ({ ...segment })
+      );
+      contexts[assignment.id] = {
+        workerId,
+        segments: baseSegments,
+      };
+    });
+
+    return contexts;
+  }, [
+    bulkDistributionAssignments,
+    bulkDistributionDayKey,
+    bulkDistributionTarget,
+    segmentsByAssignment,
+    workerWeekData,
+  ]);
+
+  const handleBulkSegmentsApply = useCallback(
+    (assignmentId: string, dateKey: string, segments: HourSegment[]) => {
+      setSegmentsByAssignment((prev) => {
+        const next = { ...prev };
+        const assignmentSegments = { ...(next[assignmentId] ?? {}) };
+        assignmentSegments[dateKey] = segments.map((segment) => ({
+          ...segment,
+          id: segment.id ?? generateUuid(),
+        }));
+        next[assignmentId] = assignmentSegments;
+        return next;
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     setNoteDraftsByDay({});
@@ -9099,6 +9234,9 @@ export const HoursRegistryPage: React.FC = () => {
         viewMode={bulkDistributionTarget?.viewMode ?? "worker"}
         assignments={bulkDistributionAssignments}
         totalsContext={totalsContext}
+        dayKey={bulkDistributionDayKey}
+        assignmentContexts={bulkDistributionAssignmentContexts}
+        onSegmentsApply={handleBulkSegmentsApply}
         resolveAssignmentHourValue={resolveAssignmentHourValue}
         formatHours={formatHours}
         hoursFormatter={hoursFormatter}
