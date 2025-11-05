@@ -62,6 +62,7 @@ import {
 } from "../components/worker/GroupSelectors";
 import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
 import { DateRangePicker } from "../components/ui/DateRangePicker";
+import { FeedbackDialog } from "../components/ui/FeedbackDialog";
 
 interface DayDescriptor {
   date: Date;
@@ -84,6 +85,12 @@ interface Assignment {
   companyId: string;
   companyName: string;
   hours: Record<string, string>;
+}
+
+interface SaveFeedbackState {
+  title: string;
+  description?: string;
+  variant?: "success" | "error" | "info";
 }
 
 interface ParameterRelationPayload {
@@ -5234,6 +5241,24 @@ export const HoursRegistryPage: React.FC = () => {
     useState<SegmentsModalTarget | null>(null);
   const [notesModalTarget, setNotesModalTarget] =
     useState<NotesModalTarget | null>(null);
+  const [feedbackDialog, setFeedbackDialog] = useState<SaveFeedbackState | null>(
+    null
+  );
+
+  const showFeedbackDialog = useCallback(
+    (payload: SaveFeedbackState) => {
+      setFeedbackDialog({
+        title: payload.title,
+        description: payload.description,
+        variant: payload.variant ?? "info",
+      });
+    },
+    []
+  );
+
+  const closeFeedbackDialog = useCallback(() => {
+    setFeedbackDialog(null);
+  }, []);
 
   useEffect(() => {
     if (!apiUrl || !externalJwt) {
@@ -7470,12 +7495,21 @@ export const HoursRegistryPage: React.FC = () => {
       computeSavePayload();
 
     if (totalPayloadItems === 0) {
-      alert("No hay cambios de horas o notas para guardar");
+      showFeedbackDialog({
+        title: "Sin cambios por guardar",
+        description: "No hay cambios de horas o notas para guardar.",
+        variant: "info",
+      });
       return;
     }
 
     if (!apiUrl || !externalJwt) {
-      alert("Falta configuración de API o token de autenticación");
+      showFeedbackDialog({
+        title: "Falta configuración para guardar",
+        description:
+          "Verifica la URL de la API y el token de autenticación antes de continuar.",
+        variant: "error",
+      });
       return;
     }
 
@@ -7599,7 +7633,11 @@ export const HoursRegistryPage: React.FC = () => {
         setNoteDraftsByDay({});
       }
 
-      alert("Horas registradas exitosamente");
+      showFeedbackDialog({
+        title: "Horas registradas",
+        description: "Guardamos todos los cambios correctamente.",
+        variant: "success",
+      });
       setWeekDataReloadKey((prev) => prev + 1);
     } catch (error) {
       console.error("Error al guardar horas", error);
@@ -7607,7 +7645,11 @@ export const HoursRegistryPage: React.FC = () => {
         error instanceof Error && error.message
           ? error.message
           : "No se pudieron guardar las horas. Inténtalo nuevamente.";
-      alert(`No se pudieron guardar las horas: ${message}`);
+      showFeedbackDialog({
+        title: "No se pudieron guardar las horas",
+        description: message,
+        variant: "error",
+      });
     } finally {
       setIsSavingAll(false);
     }
@@ -7617,6 +7659,7 @@ export const HoursRegistryPage: React.FC = () => {
     externalJwt,
     isSavingAll,
     noteDraftsByDay,
+    showFeedbackDialog,
   ]);
 
   const weeklyTotals = useMemo(
@@ -9051,6 +9094,13 @@ export const HoursRegistryPage: React.FC = () => {
           availableCompanies={companyParameterOptions}
         />
       )}
+      <FeedbackDialog
+        open={feedbackDialog !== null}
+        title={feedbackDialog?.title ?? ""}
+        description={feedbackDialog?.description}
+        variant={feedbackDialog?.variant ?? "info"}
+        onDismiss={closeFeedbackDialog}
+      />
     </>
   );
 };

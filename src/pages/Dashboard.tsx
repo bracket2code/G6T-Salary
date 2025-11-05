@@ -257,7 +257,7 @@ export const Dashboard: React.FC = () => {
         <Card className="border-0 shadow-sm">
           <CardHeader>
             <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
-              Trabajadores Recientes
+              Registros Recientes
             </h2>
           </CardHeader>
           <CardContent>

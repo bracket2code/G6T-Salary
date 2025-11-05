@@ -2285,7 +2285,7 @@ const TemplatesPage: React.FC = () => {
   return (
     <div className="w-full min-w-0 pb-10">
       <PageHeader
-        title="Plantillas PDF"
+        title="Plantillas"
         description="Crea, edita y genera plantillas en PDF utilizando tus datos reales de trabajadores y horas."
         actionLabel="Nueva plantilla"
         onAction={() => createTemplate()}
@@ -2422,8 +2422,12 @@ const TemplatesPage: React.FC = () => {
                 ) : (
                   <WorkerSearchSelect
                     workers={workers}
-                    selectedWorkerIds={selectedWorkerId ? [selectedWorkerId] : []}
-                    onSelectionChange={(ids) => setSelectedWorkerId(ids[0] ?? "")}
+                    selectedWorkerIds={
+                      selectedWorkerId ? [selectedWorkerId] : []
+                    }
+                    onSelectionChange={(ids) =>
+                      setSelectedWorkerId(ids[0] ?? "")
+                    }
                     placeholder="Buscar y seleccionar trabajador..."
                     multiSelect={false}
                   />

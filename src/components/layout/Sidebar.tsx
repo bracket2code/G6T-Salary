@@ -46,7 +46,7 @@ export const Sidebar: React.FC = () => {
     { path: "/multiple", icon: Users, label: "Cálculo Múltiple" },
     { path: "/queries", icon: Search, label: "Consultas" },
     { path: "/reports", icon: BarChart2, label: "Informes" },
-    { path: "/templates", icon: FileText, label: "Plantillas PDF" },
+    { path: "/templates", icon: FileText, label: "Plantillas" },
   ];
 
   return (
