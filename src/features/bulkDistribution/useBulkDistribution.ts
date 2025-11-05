@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import type { DayNoteEntry } from "../../components/WorkerHoursCalendar";
 import type {
   Assignment,
   DayDescriptor,
@@ -17,8 +18,15 @@ export interface BulkDistributionTarget {
 
 interface UseBulkDistributionOptions {
   assignments: Assignment[];
+  resolveDayNotes: (workerId: string, dateKey: string) => DayNoteEntry[];
   setAssignments: Dispatch<SetStateAction<Assignment[]>>;
+  setNoteDraftsByDay: Dispatch<
+    SetStateAction<Record<string, DayNoteEntry[]>>
+  >;
+  formatHours: (value: number) => string;
   hoursFormatter: Intl.NumberFormat;
+  buildNotesStateKey: (workerId: string, dateKey: string) => string;
+  generateUuid: () => string;
 }
 
 interface ApplyPayload {
@@ -30,8 +38,13 @@ interface ApplyPayload {
 
 export const useBulkDistribution = ({
   assignments,
+  resolveDayNotes,
   setAssignments,
+  setNoteDraftsByDay,
+  formatHours,
   hoursFormatter,
+  buildNotesStateKey,
+  generateUuid,
 }: UseBulkDistributionOptions) => {
   const [bulkDistributionTarget, setBulkDistributionTarget] =
     useState<BulkDistributionTarget | null>(null);
@@ -90,9 +103,79 @@ export const useBulkDistribution = ({
           };
         })
       );
+
+      if (
+        payload.description &&
+        payload.viewMode === "worker" &&
+        Object.keys(payload.updates).length > 0
+      ) {
+        const assignmentEntries = Object.entries(payload.updates)
+          .map(([assignmentId, hours]) => {
+            const assignment = assignmentMap.get(assignmentId);
+            return assignment ? { assignment, hours } : null;
+          })
+          .filter(
+            (
+              entry
+            ): entry is { assignment: Assignment; hours: number } =>
+              entry !== null
+          );
+
+        const firstEntry = assignmentEntries[0];
+
+        if (firstEntry) {
+          const workerId = firstEntry.assignment.workerId;
+          const key = buildNotesStateKey(workerId, payload.dayKey);
+          const existingNotes = resolveDayNotes(workerId, payload.dayKey);
+          const baseEntry = existingNotes[0];
+
+          const summarySegments = assignmentEntries
+            .filter((entry) => entry.hours > 0)
+            .map(
+              (entry) =>
+                `${entry.assignment.companyName}: ${formatHours(entry.hours)}`
+            );
+
+          if (summarySegments.length) {
+            const summaryLine = `${payload.description.trim()} → ${summarySegments.join(
+              ", "
+            )}`;
+            const mergedText = baseEntry?.text?.trim()
+              ? `${baseEntry.text.trim()}\n${summaryLine}`
+              : summaryLine;
+
+            const nextNotes = baseEntry
+              ? [{ ...baseEntry, text: mergedText }]
+              : [
+                  {
+                    id: generateUuid(),
+                    text: mergedText,
+                    origin: "description" as DayNoteEntry["origin"],
+                    companyId: firstEntry.assignment.companyId,
+                    companyName: firstEntry.assignment.companyName,
+                  },
+                ];
+
+            setNoteDraftsByDay((prev) => ({
+              ...prev,
+              [key]: nextNotes,
+            }));
+          }
+        }
+      }
+
       setBulkDistributionTarget(null);
     },
-    [hoursFormatter, setAssignments]
+    [
+      assignmentMap,
+      buildNotesStateKey,
+      formatHours,
+      generateUuid,
+      hoursFormatter,
+      resolveDayNotes,
+      setAssignments,
+      setNoteDraftsByDay,
+    ]
   );
 
   return {

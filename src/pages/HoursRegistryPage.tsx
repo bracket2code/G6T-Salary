@@ -2506,8 +2506,6 @@ interface SegmentsModalTarget {
   dateKey: string;
   dayLabel: string;
   existingEntries: DayScheduleEntry[];
-  dayEntries: DayScheduleEntry[];
-  expectedHours: number;
 }
 
 interface NotesModalTarget {
@@ -2713,59 +2711,6 @@ const toInputNumberString = (value: unknown): string | undefined => {
   }
 
   return undefined;
-};
-
-interface TimeRange {
-  start: number;
-  end: number;
-}
-
-const clampMinutesToDay = (value: number): number => {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.min(value, 24 * 60));
-};
-
-const minutesToTimeString = (value: number): string => {
-  const minutes = Math.floor(clampMinutesToDay(value));
-  const hoursPart = Math.floor(minutes / 60);
-  const minutesPart = minutes % 60;
-  return `${String(hoursPart).padStart(2, "0")}:${String(minutesPart).padStart(
-    2,
-    "0"
-  )}`;
-};
-
-const mergeTimeRanges = (input: TimeRange[]): TimeRange[] => {
-  if (!input.length) {
-    return [];
-  }
-  const sorted = input
-    .filter((range) => range.end > range.start)
-    .sort((a, b) => a.start - b.start);
-  const merged: TimeRange[] = [];
-  sorted.forEach((range) => {
-    const previous = merged[merged.length - 1];
-    if (!previous || range.start > previous.end) {
-      merged.push({ ...range });
-      return;
-    }
-    previous.end = Math.max(previous.end, range.end);
-  });
-  return merged;
-};
-
-const parseHoursInputValue = (value: string): number | null => {
-  if (!value) {
-    return null;
-  }
-  const normalized = value.replace(",", ".").trim();
-  if (!normalized) {
-    return null;
-  }
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const DOUBLE_CLICK_TIMEOUT = 400;
@@ -3749,8 +3694,6 @@ interface HourSegmentsModalProps {
   dayLabel: string;
   initialSegments: HourSegment[];
   existingEntries: DayScheduleEntry[];
-  dayEntries: DayScheduleEntry[];
-  expectedHours?: number;
   onClose: () => void;
   onSave: (segments: HourSegment[]) => void;
 }
@@ -4180,20 +4123,10 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
   dayLabel,
   initialSegments,
   existingEntries,
-  dayEntries,
-  expectedHours = 0,
   onClose,
   onSave,
 }) => {
   const [segments, setSegments] = useState<HourSegment[]>([]);
-  const [autoHoursInput, setAutoHoursInput] = useState("");
-  const [autoDescription, setAutoDescription] = useState("");
-  const [autoRangeStart, setAutoRangeStart] = useState("08:00");
-  const [autoRangeEnd, setAutoRangeEnd] = useState("18:00");
-  const [autoBreakStart, setAutoBreakStart] = useState("");
-  const [autoBreakMinutes, setAutoBreakMinutes] = useState("");
-  const [autoFeedback, setAutoFeedback] = useState<string | null>(null);
-  const [autoError, setAutoError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -4306,22 +4239,6 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
     setSegments([createEmptySegment()]);
   }, [existingEntries, initialSegments, isOpen]);
 
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-    setAutoHoursInput(
-      expectedHours > 0 ? hoursFormatter.format(expectedHours) : ""
-    );
-    setAutoDescription("");
-    setAutoRangeStart("08:00");
-    setAutoRangeEnd("18:00");
-    setAutoBreakStart("");
-    setAutoBreakMinutes("");
-    setAutoFeedback(null);
-    setAutoError(null);
-  }, [expectedHours, isOpen]);
-
   const invalidSegments = useMemo(
     () =>
       segments.some((segment) => {
@@ -4349,85 +4266,6 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
     () => calculateSegmentsTotalMinutes(segments),
     [segments]
   );
-
-  const baseOccupiedRanges = useMemo(() => {
-    const ranges: TimeRange[] = [];
-    dayEntries.forEach((entry) => {
-      if (!entry.workShifts) {
-        return;
-      }
-      entry.workShifts.forEach((shift) => {
-        const start = parseTimeToMinutes(shift.startTime ?? "");
-        const end = parseTimeToMinutes(shift.endTime ?? "");
-        if (start === null || end === null || end <= start) {
-          return;
-        }
-        ranges.push({ start, end });
-      });
-    });
-    segments.forEach((segment) => {
-      const start = parseTimeToMinutes(segment.start);
-      const end = parseTimeToMinutes(segment.end);
-      if (start === null || end === null || end <= start) {
-        return;
-      }
-      ranges.push({ start, end });
-    });
-    return mergeTimeRanges(ranges);
-  }, [dayEntries, segments]);
-
-  const autoBreakRange = useMemo(() => {
-    const duration = Number.parseInt(autoBreakMinutes, 10);
-    const start = parseTimeToMinutes(autoBreakStart);
-    if (start === null || !Number.isFinite(duration) || duration <= 0) {
-      return null;
-    }
-    const end = Math.min(start + duration, 24 * 60);
-    if (end <= start) {
-      return null;
-    }
-    return { start, end } satisfies TimeRange;
-  }, [autoBreakMinutes, autoBreakStart]);
-
-  const availableSlots = useMemo(() => {
-    const rangeStart =
-      parseTimeToMinutes(autoRangeStart) ?? clampMinutesToDay(8 * 60);
-    const fallbackEnd = Math.min(rangeStart + 8 * 60, 24 * 60);
-    const rangeEnd =
-      parseTimeToMinutes(autoRangeEnd) ?? clampMinutesToDay(fallbackEnd);
-
-    if (rangeEnd <= rangeStart) {
-      return [] as TimeRange[];
-    }
-
-    const ranges: TimeRange[] = baseOccupiedRanges
-      .map((range) => ({
-        start: Math.max(range.start, rangeStart),
-        end: Math.min(range.end, rangeEnd),
-      }))
-      .filter((range) => range.end > range.start);
-
-    if (autoBreakRange) {
-      ranges.push({
-        start: Math.max(autoBreakRange.start, rangeStart),
-        end: Math.min(autoBreakRange.end, rangeEnd),
-      });
-    }
-
-    const merged = mergeTimeRanges(ranges);
-    const slots: TimeRange[] = [];
-    let cursor = rangeStart;
-    merged.forEach((range) => {
-      if (range.start > cursor) {
-        slots.push({ start: cursor, end: range.start });
-      }
-      cursor = Math.max(cursor, range.end);
-    });
-    if (cursor < rangeEnd) {
-      slots.push({ start: cursor, end: rangeEnd });
-    }
-    return slots;
-  }, [autoBreakRange, autoRangeEnd, autoRangeStart, baseOccupiedRanges]);
 
   const totalLabel = formatMinutesToHoursLabel(totalMinutes);
   const totalHours = Math.floor(totalMinutes / 60);
@@ -4469,83 +4307,6 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
         return nextSegment;
       })
     );
-  };
-
-  const handleAutoFillSegments = () => {
-    setAutoError(null);
-    setAutoFeedback(null);
-
-    const parsedHours = parseHoursInputValue(autoHoursInput);
-    if (parsedHours === null || parsedHours <= 0) {
-      setAutoError("Ingresa un total de horas válido para generar turnos.");
-      return;
-    }
-
-    if (!availableSlots.length) {
-      setAutoError("No hay huecos disponibles dentro del rango indicado.");
-      return;
-    }
-
-    const targetMinutes = Math.round(parsedHours * 60);
-    const minutesAlreadyDetailed = totalMinutes;
-    const minutesToAllocate = Math.max(targetMinutes - minutesAlreadyDetailed, 0);
-
-    if (minutesToAllocate <= 0) {
-      setAutoError(
-        "Ya has detallado todas las horas indicadas para este día."
-      );
-      return;
-    }
-
-    let remaining = minutesToAllocate;
-    const additions: HourSegment[] = [];
-
-    availableSlots.forEach((slot) => {
-      if (remaining <= 0) {
-        return;
-      }
-      let cursor = slot.start;
-      while (cursor < slot.end && remaining > 0) {
-        const freeMinutes = slot.end - cursor;
-        if (freeMinutes <= 0) {
-          break;
-        }
-        const allocation = Math.min(freeMinutes, remaining);
-        const segmentEnd = cursor + allocation;
-        additions.push({
-          id: generateUuid(),
-          start: minutesToTimeString(cursor),
-          end: minutesToTimeString(segmentEnd),
-          total: hoursFormatter.format(allocation / 60),
-          description: autoDescription.trim() || undefined,
-        });
-        remaining -= allocation;
-        cursor = segmentEnd;
-      }
-    });
-
-    if (!additions.length) {
-      setAutoError(
-        "No se pudieron generar nuevos tramos con los huecos actuales."
-      );
-      return;
-    }
-
-    setSegments((prev) => [...prev, ...additions]);
-    if (remaining > 0) {
-      setAutoFeedback(
-        `Se añadieron ${additions.length} turno(s), pero aún faltan ${formatHours(
-          remaining / 60
-        )} por ubicar. Ajusta el rango o libera huecos.`
-      );
-    } else {
-      const coveredMinutes = minutesToAllocate - remaining;
-      setAutoFeedback(
-        `Se añadieron ${additions.length} turno(s) que cubren ${formatHours(
-          coveredMinutes / 60
-        )}.`
-      );
-    }
   };
 
   const handleRemoveSegment = (id: string) => {
@@ -4619,114 +4380,6 @@ const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-          <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                  Generador automático de turnos
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-300">
-                  Detecta huecos libres del día e introduce tramos con una descripción.
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleAutoFillSegments}
-              >
-                Rellenar huecos
-              </Button>
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <Input
-                label="Total horas objetivo"
-                size="sm"
-                value={autoHoursInput}
-                onChange={(event) => setAutoHoursInput(event.target.value)}
-                placeholder="Ej. 6"
-                fullWidth
-              />
-              <Input
-                label="Descripción para los tramos"
-                size="sm"
-                value={autoDescription}
-                onChange={(event) => setAutoDescription(event.target.value)}
-                placeholder="Ej. Tarea administrativa"
-                fullWidth
-              />
-              <Input
-                type="time"
-                label="Inicio del rango"
-                size="sm"
-                value={autoRangeStart}
-                onChange={(event) => setAutoRangeStart(event.target.value)}
-              />
-              <Input
-                type="time"
-                label="Fin del rango"
-                size="sm"
-                value={autoRangeEnd}
-                onChange={(event) => setAutoRangeEnd(event.target.value)}
-              />
-              <Input
-                type="time"
-                label="Inicio de la pausa (opcional)"
-                size="sm"
-                value={autoBreakStart}
-                onChange={(event) => setAutoBreakStart(event.target.value)}
-              />
-              <Input
-                label="Duración pausa (min)"
-                size="sm"
-                value={autoBreakMinutes}
-                onChange={(event) => setAutoBreakMinutes(event.target.value)}
-                inputMode="numeric"
-                placeholder="Ej. 30"
-              />
-            </div>
-            <div className="mt-3 grid gap-2 text-xs text-gray-500 dark:text-gray-400 sm:grid-cols-2">
-              <p>
-                Horas registradas en el día: {expectedHours > 0 ? formatHours(expectedHours) : "0 h"}
-              </p>
-              <p>
-                Horas detalladas con turnos: {formatHours(totalMinutes / 60)}
-              </p>
-            </div>
-            <div className="mt-3 rounded-md bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">
-              <p className="font-semibold">
-                Huecos detectados ({availableSlots.length})
-              </p>
-              {availableSlots.length ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {availableSlots.map((slot, index) => (
-                    <span
-                      key={`${slot.start}-${slot.end}-${index}`}
-                      className="rounded-full border border-gray-200 px-2 py-0.5 text-gray-700 dark:border-gray-600 dark:text-gray-200"
-                    >
-                      {minutesToTimeString(slot.start)} - {minutesToTimeString(slot.end)} ({formatHours(
-                        (slot.end - slot.start) / 60
-                      )})
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-2 text-amber-600 dark:text-amber-400">
-                  No hay huecos libres dentro del rango seleccionado.
-                </p>
-              )}
-            </div>
-            {autoError && (
-              <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-950/30 dark:text-red-200">
-                {autoError}
-              </div>
-            )}
-            {autoFeedback && !autoError && (
-              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-900/30 dark:text-emerald-100">
-                {autoFeedback}
-              </div>
-            )}
-          </div>
           {segments.map((segment, index) => (
             <div
               key={segment.id}
@@ -5975,8 +5628,13 @@ export const HoursRegistryPage: React.FC = () => {
     openBulkDistributionModal,
   } = useBulkDistribution({
     assignments,
+    resolveDayNotes,
     setAssignments,
+    setNoteDraftsByDay,
+    formatHours,
     hoursFormatter,
+    buildNotesStateKey,
+    generateUuid,
   });
 
   const selectedRangeStartMs = selectedRange.start.getTime();
@@ -6362,11 +6020,6 @@ export const HoursRegistryPage: React.FC = () => {
       const dateKey = day.dateKey;
       const dayData = workerWeekData[assignment.workerId]?.days?.[dateKey];
       const existingEntries = resolveEntriesForAssignment(dayData, assignment);
-      const expectedHours = resolveAssignmentHourValue(
-        assignment,
-        dateKey,
-        totalsContext
-      );
 
       setSegmentModalTarget({
         assignmentId: assignment.id,
@@ -6375,11 +6028,9 @@ export const HoursRegistryPage: React.FC = () => {
         dateKey,
         dayLabel,
         existingEntries,
-        dayEntries: dayData?.entries ?? [],
-        expectedHours,
       });
     },
-    [totalsContext, workerWeekData]
+    [workerWeekData]
   );
 
   const closeSegmentsModal = useCallback(() => {
@@ -9488,8 +9139,6 @@ export const HoursRegistryPage: React.FC = () => {
             : []
         }
         existingEntries={segmentModalTarget?.existingEntries ?? []}
-        dayEntries={segmentModalTarget?.dayEntries ?? []}
-        expectedHours={segmentModalTarget?.expectedHours ?? 0}
         onClose={closeSegmentsModal}
         onSave={handleSegmentsModalSave}
       />
