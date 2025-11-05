@@ -723,7 +723,10 @@ const MultipleCalculatorPage: React.FC = () => {
 
       const breakdown = workerResult.companyBreakdown;
       if (!breakdown.length) {
-        const summary = ensureSummary("__sin_empresa__", "Sin empresa asignada");
+        const summary = ensureSummary(
+          "__sin_empresa__",
+          "Sin empresa asignada"
+        );
         summary.amount += workerResult.totalAmount;
         summary.hours += workerResult.totalHours;
         summary.workerDetails.push({
@@ -742,10 +745,7 @@ const MultipleCalculatorPage: React.FC = () => {
           (company.name ? `name:${company.name}` : "") ||
           `${worker.id}-${index}`;
 
-        const summary = ensureSummary(
-          key,
-          normalizeCompanyName(company.name)
-        );
+        const summary = ensureSummary(key, normalizeCompanyName(company.name));
 
         summary.amount += company.amount;
         summary.hours += company.hours ?? 0;
@@ -922,7 +922,7 @@ const MultipleCalculatorPage: React.FC = () => {
                     Sincronizando trabajadores...
                   </span>
                   <span className="text-xs text-gray-500 dark:text-gray-400">
-                    Podés seguir configurando grupos y filtros mientras
+                    Puedes seguir configurando grupos y filtros mientras
                     terminamos.
                   </span>
                 </div>
@@ -1036,14 +1036,13 @@ const MultipleCalculatorPage: React.FC = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               <div
-                className={
-                  viewMode === "individual" ? "space-y-6" : "hidden"
-                }
+                className={viewMode === "individual" ? "space-y-6" : "hidden"}
               >
                 {hasMultipleVisibleWorkers && activeWorker && (
                   <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                      Trabajador {activeWorkerIndex + 1} de {visibleWorkers.length}
+                      Trabajador {activeWorkerIndex + 1} de{" "}
+                      {visibleWorkers.length}
                       {activeWorker.name ? ` · ${activeWorker.name}` : ""}
                     </div>
                     <div className="flex items-center gap-2">
@@ -1061,7 +1060,9 @@ const MultipleCalculatorPage: React.FC = () => {
                         variant="ghost"
                         size="sm"
                         onClick={handleNextWorker}
-                        disabled={activeWorkerIndex >= visibleWorkers.length - 1}
+                        disabled={
+                          activeWorkerIndex >= visibleWorkers.length - 1
+                        }
                         className="h-9 w-9 rounded-full p-0"
                         aria-label="Trabajador siguiente"
                       >
@@ -1088,11 +1089,7 @@ const MultipleCalculatorPage: React.FC = () => {
                 )}
               </div>
 
-              <div
-                className={
-                  viewMode === "worker" ? "space-y-4" : "hidden"
-                }
-              >
+              <div className={viewMode === "worker" ? "space-y-4" : "hidden"}>
                 {hasWorkerSummaryResults ? (
                   workerSummaries
                     .filter(
@@ -1160,7 +1157,9 @@ const MultipleCalculatorPage: React.FC = () => {
                               <table className="min-w-full text-sm">
                                 <thead>
                                   <tr className="text-left text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                    <th className="pb-2 pr-4 font-medium">Empresa</th>
+                                    <th className="pb-2 pr-4 font-medium">
+                                      Empresa
+                                    </th>
                                     <th className="pb-2 pr-4 font-medium text-right">
                                       Horas
                                     </th>
@@ -1171,7 +1170,11 @@ const MultipleCalculatorPage: React.FC = () => {
                                 </thead>
                                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                                   {result.companyBreakdown.map((company) => (
-                                    <tr key={`${entry.workerId}-${company.companyKey ?? company.name}`}>
+                                    <tr
+                                      key={`${entry.workerId}-${
+                                        company.companyKey ?? company.name
+                                      }`}
+                                    >
                                       <td className="py-2 pr-4 text-gray-900 dark:text-white">
                                         {company.name ?? "Sin empresa asignada"}
                                       </td>
@@ -1196,17 +1199,13 @@ const MultipleCalculatorPage: React.FC = () => {
                     })
                 ) : (
                   <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
-                    Calcula primero los trabajadores en la vista individual para ver
-                    el resumen por trabajador.
+                    Calcula primero los trabajadores en la vista individual para
+                    ver el resumen por trabajador.
                   </div>
                 )}
               </div>
 
-              <div
-                className={
-                  viewMode === "company" ? "space-y-4" : "hidden"
-                }
-              >
+              <div className={viewMode === "company" ? "space-y-4" : "hidden"}>
                 {companySummaries.length > 0 ? (
                   companySummaries.map((company) => (
                     <div
@@ -1256,8 +1255,8 @@ const MultipleCalculatorPage: React.FC = () => {
                   ))
                 ) : (
                   <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
-                    Calcula primero los trabajadores en la vista individual para ver
-                    el resumen por empresa.
+                    Calcula primero los trabajadores en la vista individual para
+                    ver el resumen por empresa.
                   </div>
                 )}
               </div>

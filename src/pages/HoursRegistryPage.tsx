@@ -49,7 +49,10 @@ import {
 import { formatDate } from "../lib/utils";
 import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
 import type { WorkerHoursSummaryResult } from "../lib/salaryData";
-import { formatLocalDateKey } from "../lib/timezone";
+import {
+  formatDateKeyToApiDateTime,
+  formatLocalDateKey,
+} from "../lib/timezone";
 import { useAuthStore } from "../store/authStore";
 import {
   CompanySearchSelect,
@@ -669,35 +672,6 @@ const fetchCompanyParameterOptions = async (
     console.error("Error fetching company parameters:", error);
     return [];
   }
-};
-
-const formatDateKeyToApiDateTime = (dateKey: string): string => {
-  if (typeof dateKey === "string") {
-    const normalized = dateKey.trim();
-    if (normalized.length > 0) {
-      const [yearPart, monthPart, dayPart] = normalized.split("-");
-      const parsedYear = Number(yearPart);
-      const parsedMonth = Number(monthPart);
-      const parsedDay = Number(dayPart);
-
-      if (
-        Number.isFinite(parsedYear) &&
-        Number.isFinite(parsedMonth) &&
-        Number.isFinite(parsedDay)
-      ) {
-        const year = String(parsedYear).padStart(4, "0");
-        const month = String(parsedMonth).padStart(2, "0");
-        const day = String(parsedDay).padStart(2, "0");
-        return `${year}-${month}-${day}T00:00:00+00:00`;
-      }
-    }
-  }
-
-  const today = new Date();
-  const year = String(today.getUTCFullYear()).padStart(4, "0");
-  const month = String(today.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(today.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}T00:00:00+00:00`;
 };
 
 const buildNotesStateKey = (workerId: string, dateKey: string): string =>
