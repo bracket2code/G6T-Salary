@@ -8745,7 +8745,7 @@ export const HoursRegistryPage: React.FC = () => {
                       Sincronizando trabajadores...
                     </span>
                     <span className="text-xs text-gray-500 dark:text-gray-400">
-                      Podés seguir configurando grupos y empresas mientras
+                      Puedes seguir configurando grupos y empresas mientras
                       terminamos.
                     </span>
                   </div>
