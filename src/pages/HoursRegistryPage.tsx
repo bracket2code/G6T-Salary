@@ -34,6 +34,13 @@ import { Card, CardContent, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
+import { DayNotesModal } from "../components/DayNotesModal";
+import { SingleHourSegmentsModal } from "../components/SingleHourSegmentsModal";
+import { MultiHourSegmentsModal } from "../components/MultiHourSegmentsModal";
+import {
+  DayHeaderActionsSheet,
+  type DayHeaderActionsTarget,
+} from "../components/DayHeaderActionsSheet";
 import {
   WorkerHoursCalendar,
   type DayScheduleEntry,
@@ -46,6 +53,14 @@ import {
   WorkerCompanyRelation,
   WorkerCompanyStats,
 } from "../types/salary";
+import type { HourSegment } from "../types/hourSegment";
+import type {
+  Assignment,
+  AssignmentTotalsContext,
+  DayDescriptor,
+  WorkerWeeklyData,
+  WorkerWeeklyDayData,
+} from "../types/hoursRegistry";
 import { formatDate } from "../lib/utils";
 import { fetchWorkerHoursSummary, fetchWorkersData } from "../lib/salaryData";
 import type { WorkerHoursSummaryResult } from "../lib/salaryData";
@@ -53,6 +68,15 @@ import {
   formatDateKeyToApiDateTime,
   formatLocalDateKey,
 } from "../lib/timezone";
+import {
+  calculateSegmentsTotalMinutes,
+  formatMinutesToHoursLabel,
+  hoursFormatter,
+} from "../lib/hours";
+import {
+  extractObservationText,
+  extractShiftDescription,
+} from "../lib/segmentDescriptions";
 import { useAuthStore } from "../store/authStore";
 import {
   CompanySearchSelect,
@@ -69,27 +93,9 @@ import {
   type DistributionViewMode,
 } from "../features/bulkDistribution/useBulkDistribution";
 
-export interface DayDescriptor {
-  date: Date;
-  dateKey: string;
-  label: string;
-  shortLabel: string;
-  compactLabel: string;
-  dayOfMonth: number;
-}
-
 interface DateInterval {
   start: Date;
   end: Date;
-}
-
-export interface Assignment {
-  id: string;
-  workerId: string;
-  workerName: string;
-  companyId: string;
-  companyName: string;
-  hours: Record<string, string>;
 }
 
 interface SaveFeedbackState {
@@ -696,243 +702,6 @@ const buildApiEndpoint = (baseUrl: string, path: string): string => {
     return `${trimmedBase}${normalizedPath}`;
   }
   return `${trimmedBase}/api${normalizedPath}`;
-};
-
-const generateUuid = (): string => {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
-  }
-
-  const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
-  return template.replace(/[xy]/g, (char) => {
-    const random = Math.random() * 16;
-    const value =
-      char === "x" ? Math.floor(random) : (Math.floor(random) & 0x3) | 0x8;
-    return value.toString(16);
-  });
-};
-
-interface DayNotesModalProps {
-  isOpen: boolean;
-  workerId: string;
-  dateKey: string;
-  workerName: string;
-  companyName: string;
-  dayLabel: string;
-  dateLabel?: string;
-  notes: DayNoteEntry[];
-  onClose: () => void;
-  onSave: (payload: {
-    workerId: string;
-    dateKey: string;
-    notes: DayNoteEntry[];
-    deletedNoteIds: string[];
-  }) => void;
-}
-
-const DayNotesModal: React.FC<DayNotesModalProps> = ({
-  isOpen,
-  workerId,
-  dateKey,
-  workerName,
-  dayLabel,
-  dateLabel,
-  notes,
-  onClose,
-  onSave,
-}) => {
-  const [editableNote, setEditableNote] = useState<{
-    id: string;
-    text: string;
-    isNew: boolean;
-    original?: DayNoteEntry;
-  } | null>(null);
-  const rawNoteFieldId = useId();
-  const noteFieldId = `day-note-${
-    rawNoteFieldId.replace(/[^a-zA-Z0-9_-]/g, "") || "field"
-  }`;
-  const noteHelperId = `${noteFieldId}-helper`;
-  const noteFieldName = `day-note-${workerId}-${dateKey}`.replace(
-    /[^a-zA-Z0-9_-]/g,
-    "-"
-  );
-
-  useEffect(() => {
-    if (!isOpen) {
-      setEditableNote(null);
-      return;
-    }
-
-    if (notes.length > 0) {
-      const primary = notes[0];
-      setEditableNote({
-        id: primary.id,
-        text: primary.text ?? "",
-        isNew: false,
-        original: primary,
-      });
-      return;
-    }
-
-    setEditableNote({
-      id: generateUuid(),
-      text: "",
-      isNew: true,
-    });
-  }, [isOpen, notes]);
-
-  const initialText = useMemo(() => (notes[0]?.text ?? "").trim(), [notes]);
-
-  const trimmedCurrentText = useMemo(
-    () => (editableNote?.text ?? "").trim(),
-    [editableNote]
-  );
-
-  const preparedState = useMemo(() => {
-    if (!editableNote) {
-      return {
-        finalNotes: [] as DayNoteEntry[],
-        deletedNoteIds: [] as string[],
-      };
-    }
-
-    if (!trimmedCurrentText.length) {
-      return {
-        finalNotes: [],
-        deletedNoteIds: editableNote.original ? [editableNote.original.id] : [],
-      };
-    }
-
-    const finalNote = editableNote.original
-      ? {
-          ...editableNote.original,
-          text: trimmedCurrentText,
-        }
-      : {
-          id: editableNote.id,
-          text: trimmedCurrentText,
-          origin: "note" as DayNoteEntry["origin"],
-        };
-
-    return {
-      finalNotes: [finalNote],
-      deletedNoteIds: [],
-    };
-  }, [editableNote, trimmedCurrentText]);
-
-  const hasChanges = trimmedCurrentText !== initialText;
-
-  const formattedLabel =
-    dateLabel && dateLabel !== dayLabel
-      ? `${dayLabel} · ${dateLabel}`
-      : dateLabel ?? dayLabel;
-
-  if (!isOpen) {
-    return null;
-  }
-
-  const handleSaveClick = () => {
-    if (!editableNote || !hasChanges) {
-      onClose();
-      return;
-    }
-
-    onSave({
-      workerId,
-      dateKey,
-      notes: preparedState.finalNotes,
-      deletedNoteIds: preparedState.deletedNoteIds,
-    });
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 z-[104] flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
-        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4 dark:border-gray-800">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-base font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-300">
-              <NotebookPen size={16} />
-              Notas del día
-            </div>
-            <div className="flex flex-wrap items-baseline gap-3 text-gray-500 dark:text-gray-400">
-              <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
-                {formattedLabel}
-              </span>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-lg font-semibold text-gray-900 dark:text-white">
-              {workerName}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            aria-label="Cerrar notas"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
-          <div className="space-y-3">
-            <label
-              htmlFor={noteFieldId}
-              className="block text-sm font-semibold text-gray-700 dark:text-gray-200"
-            >
-              Nota del día
-            </label>
-            <textarea
-              id={noteFieldId}
-              name={noteFieldName}
-              aria-describedby={noteHelperId}
-              value={editableNote?.text ?? ""}
-              onChange={(event) =>
-                setEditableNote((previous) =>
-                  previous
-                    ? {
-                        ...previous,
-                        text: event.target.value,
-                      }
-                    : {
-                        id: generateUuid(),
-                        text: event.target.value,
-                        isNew: true,
-                      }
-                )
-              }
-              rows={6}
-              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/40"
-              placeholder="Escribe la nota para este día..."
-            />
-            <p
-              id={noteHelperId}
-              className="text-xs text-gray-500 dark:text-gray-400"
-            >
-              Solo se permite una nota por día. Para eliminarla, deja el campo
-              vacío y guarda los cambios.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-col gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-end">
-          <Button variant="outline" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button
-            onClick={handleSaveClick}
-            disabled={!hasChanges}
-            leftIcon={<Save size={16} />}
-          >
-            Guardar notas
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
 };
 
 const sanitizeTelHref = (phone: string) => {
@@ -2491,21 +2260,18 @@ const WorkerInfoModal: React.FC<WorkerInfoModalProps> = ({
   );
 };
 
-export interface HourSegment {
-  id: string;
-  start: string;
-  end: string;
-  total?: string;
-  description?: string;
-}
-
 interface SegmentsModalTarget {
-  assignmentId: string;
+  mode: "single" | "multi";
+  assignmentId?: string;
   workerName: string;
   companyName: string;
   dateKey: string;
   dayLabel: string;
-  existingEntries: DayScheduleEntry[];
+  existingEntries?: DayScheduleEntry[];
+  multiAssignments?: Array<{
+    assignment: Assignment;
+    existingEntries: DayScheduleEntry[];
+  }>;
 }
 
 interface NotesModalTarget {
@@ -2624,94 +2390,6 @@ interface GroupView {
   assignments: Assignment[];
   totals: Record<string, number>;
 }
-
-interface WorkerWeeklyDayData {
-  totalHours: number;
-  companyHours: Record<
-    string,
-    {
-      companyId?: string;
-      name?: string;
-      hours: number;
-    }
-  >;
-  entries?: DayScheduleEntry[];
-  noteEntries?: DayNoteEntry[];
-}
-
-interface WorkerWeeklyData {
-  days: Record<string, WorkerWeeklyDayData>;
-}
-
-const hoursFormatter = new Intl.NumberFormat("es-ES", {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-});
-
-const parseTimeToMinutes = (value: string): number | null => {
-  if (!value) {
-    return null;
-  }
-
-  const match = value.trim().match(/^([0-1]?\d|2[0-3]):([0-5]\d)$/);
-  if (!match) {
-    return null;
-  }
-
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
-    return null;
-  }
-
-  if (hours < 0 || hours > 23) {
-    return null;
-  }
-
-  if (minutes < 0 || minutes > 59) {
-    return null;
-  }
-
-  return hours * 60 + minutes;
-};
-
-const calculateSegmentsTotalMinutes = (segments: HourSegment[]): number =>
-  segments.reduce((total, segment) => {
-    const start = parseTimeToMinutes(segment.start);
-    const end = parseTimeToMinutes(segment.end);
-
-    if (start === null || end === null || end <= start) {
-      return total;
-    }
-
-    return total + (end - start);
-  }, 0);
-
-const formatMinutesToHoursLabel = (totalMinutes: number): string => {
-  if (totalMinutes <= 0) {
-    return "0";
-  }
-
-  const hours = totalMinutes / 60;
-  return hoursFormatter.format(hours);
-};
-
-const toInputNumberString = (value: unknown): string | undefined => {
-  if (value === null || value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return hoursFormatter.format(value);
-  }
-
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-
-  return undefined;
-};
 
 const DOUBLE_CLICK_TIMEOUT = 400;
 
@@ -3133,10 +2811,6 @@ const createEmptyTotals = (dateKeys: string[]): Record<string, number> => {
   });
   return totals;
 };
-
-export interface AssignmentTotalsContext {
-  workerWeekData: Record<string, WorkerWeeklyData>;
-}
 
 const getManualHourValue = (
   assignment: Assignment,
@@ -3762,81 +3436,6 @@ const formatDateRange = (start: Date, end: Date): string => {
   return `${startLabel} - ${endLabel}`;
 };
 
-interface HourSegmentsModalProps {
-  isOpen: boolean;
-  workerName: string;
-  companyName: string;
-  dayLabel: string;
-  initialSegments: HourSegment[];
-  existingEntries: DayScheduleEntry[];
-  onClose: () => void;
-  onSave: (segments: HourSegment[]) => void;
-}
-
-const createEmptySegment = (): HourSegment => ({
-  id: generateUuid(),
-  start: "",
-  end: "",
-  total: "",
-  description: "",
-});
-
-const extractObservationText = (raw: unknown): string | undefined => {
-  if (!raw || typeof raw !== "object") {
-    return undefined;
-  }
-
-  const source = raw as Record<string, unknown>;
-  const observations = source.observations ?? source.observation;
-
-  if (typeof observations === "string") {
-    const trimmed = observations.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-
-  if (Array.isArray(observations)) {
-    const joined = observations
-      .map((item) => (typeof item === "string" ? item.trim() : ""))
-      .filter(Boolean)
-      .join(" · ");
-    return joined.length > 0 ? joined : undefined;
-  }
-
-  return undefined;
-};
-
-const extractShiftDescription = (
-  shift: unknown,
-  fallback?: string
-): string | undefined => {
-  const observationText = extractObservationText(shift);
-  if (observationText) {
-    return observationText;
-  }
-
-  if (
-    shift &&
-    typeof shift === "object" &&
-    typeof (shift as { description?: unknown }).description === "string"
-  ) {
-    const directDescription = (
-      shift as { description: string }
-    ).description.trim();
-    if (directDescription.length > 0) {
-      return directDescription;
-    }
-  }
-
-  if (typeof fallback === "string") {
-    const trimmedFallback = fallback.trim();
-    if (trimmedFallback.length > 0) {
-      return trimmedFallback;
-    }
-  }
-
-  return undefined;
-};
-
 const MOBILE_BREAKPOINT_QUERY = "(max-width: 640px)";
 const LONG_PRESS_DURATION_MS = 500;
 // Minimum pixel width needed to keep the note/turn icons without covering the value.
@@ -3947,6 +3546,8 @@ const MobileCellActionsSheet: React.FC<MobileCellActionsSheetProps> = ({
     </div>
   );
 };
+
+
 
 interface HourEntryCellProps {
   assignment: Assignment;
@@ -4191,404 +3792,6 @@ const HourEntryCell: React.FC<HourEntryCellProps> = ({
   );
 };
 
-const HourSegmentsModal: React.FC<HourSegmentsModalProps> = ({
-  isOpen,
-  workerName,
-  companyName,
-  dayLabel,
-  initialSegments,
-  existingEntries,
-  onClose,
-  onSave,
-}) => {
-  const [segments, setSegments] = useState<HourSegment[]>([]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    if (initialSegments.length > 0) {
-      setSegments(
-        initialSegments.map((segment) => ({
-          ...segment,
-          total:
-            toInputNumberString(
-              segment.total ??
-                (segment as { total?: unknown }).total ??
-                (segment as { note?: string }).note ??
-                undefined
-            ) ?? "",
-          description: segment.description ?? "",
-        }))
-      );
-      return;
-    }
-
-    if (existingEntries.length > 0) {
-      const derivedSegments = existingEntries.flatMap((entry) => {
-        const entryRaw = (entry as { raw?: unknown }).raw as
-          | Record<string, unknown>
-          | undefined;
-        const observationText = extractObservationText(entryRaw) ?? "";
-        const entryTotal =
-          toInputNumberString(
-            entryRaw?.value ?? entryRaw?.hours ?? entry.hours
-          ) ?? "";
-
-        if (Array.isArray(entry.workShifts) && entry.workShifts.length > 0) {
-          return entry.workShifts
-            .map((shift, index): HourSegment | null => {
-              const start = shift.startTime ?? "";
-              const end = shift.endTime ?? "";
-              if (!start && !end) {
-                return null;
-              }
-
-              const shiftTotal =
-                toInputNumberString(
-                  (shift as Record<string, unknown> | undefined)?.value ??
-                    shift.hours ??
-                    (shift as Record<string, unknown> | undefined)?.workedHours
-                ) ?? entryTotal;
-
-              const shiftDescription =
-                extractShiftDescription(shift, observationText) ?? "";
-
-              return {
-                id:
-                  shift.id ??
-                  `existing-shift-${entry.id}-${index}-${Math.random()
-                    .toString(36)
-                    .slice(2, 6)}`,
-                start,
-                end,
-                total: shiftTotal ?? "",
-                description: shiftDescription,
-              };
-            })
-            .filter((segment): segment is HourSegment => segment !== null);
-        }
-
-        if (entryTotal) {
-          const numericHours =
-            typeof entry.hours === "number" && Number.isFinite(entry.hours)
-              ? entry.hours
-              : parseHour(String(entryTotal).replace(",", "."));
-          if (numericHours <= 0) {
-            return [];
-          }
-
-          const minutes = Math.round(numericHours * 60);
-          const startMinutes = 8 * 60;
-          const endMinutes = startMinutes + minutes;
-          const startLabel = `${String(Math.floor(startMinutes / 60)).padStart(
-            2,
-            "0"
-          )}:${String(startMinutes % 60).padStart(2, "0")}`;
-          const endLabel = `${String(Math.floor(endMinutes / 60)).padStart(
-            2,
-            "0"
-          )}:${String(endMinutes % 60).padStart(2, "0")}`;
-
-          return [
-            {
-              id: `existing-hours-${entry.id}`,
-              start: startLabel,
-              end: endLabel,
-              total: entryTotal,
-              description: observationText,
-            } satisfies HourSegment,
-          ];
-        }
-
-        return [];
-      });
-
-      if (derivedSegments.length > 0) {
-        setSegments(derivedSegments);
-        return;
-      }
-    }
-
-    setSegments([createEmptySegment()]);
-  }, [existingEntries, initialSegments, isOpen]);
-
-  const invalidSegments = useMemo(
-    () =>
-      segments.some((segment) => {
-        if (!segment.start && !segment.end) {
-          return false;
-        }
-
-        if (!segment.start || !segment.end) {
-          return true;
-        }
-
-        const start = parseTimeToMinutes(segment.start);
-        const end = parseTimeToMinutes(segment.end);
-
-        if (start === null || end === null) {
-          return true;
-        }
-
-        return end <= start;
-      }),
-    [segments]
-  );
-
-  const totalMinutes = useMemo(
-    () => calculateSegmentsTotalMinutes(segments),
-    [segments]
-  );
-
-  const totalLabel = formatMinutesToHoursLabel(totalMinutes);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalMinutesRemainder = totalMinutes % 60;
-
-  const handleSegmentChange = (
-    id: string,
-    field: "start" | "end" | "total" | "description",
-    value: string
-  ) => {
-    setSegments((prev) =>
-      prev.map((segment) => {
-        if (segment.id !== id) {
-          return segment;
-        }
-
-        const nextSegment = { ...segment, [field]: value };
-        if (field === "start" || field === "end") {
-          const startMinutes = parseTimeToMinutes(
-            field === "start" ? value : nextSegment.start
-          );
-          const endMinutes = parseTimeToMinutes(
-            field === "end" ? value : nextSegment.end
-          );
-          if (
-            startMinutes !== null &&
-            endMinutes !== null &&
-            endMinutes > startMinutes
-          ) {
-            const diffMinutes = endMinutes - startMinutes;
-            const hours = diffMinutes / 60;
-            const formatted = hours.toFixed(2);
-            nextSegment.total = formatted
-              .replace(/\.00$/, "")
-              .replace(/(\.\d)0$/, "$1");
-          }
-        }
-
-        return nextSegment;
-      })
-    );
-  };
-
-  const handleRemoveSegment = (id: string) => {
-    setSegments((prev) => {
-      const next = prev.filter((segment) => segment.id !== id);
-      if (next.length === 0) {
-        return [createEmptySegment()];
-      }
-      return next;
-    });
-  };
-
-  const handleAddSegment = () => {
-    setSegments((prev) => [...prev, createEmptySegment()]);
-  };
-
-  const handleSave = () => {
-    const validSegments = segments.filter((segment) => {
-      const start = parseTimeToMinutes(segment.start);
-      const end = parseTimeToMinutes(segment.end);
-      return (
-        segment.start &&
-        segment.end &&
-        start !== null &&
-        end !== null &&
-        end > start
-      );
-    });
-
-    onSave(validSegments.map((segment) => ({ ...segment })));
-  };
-
-  if (!isOpen) {
-    return null;
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={onClose}
-        role="presentation"
-      />
-      <div className="relative z-10 flex w-full max-h-[90vh] max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-xl dark:bg-gray-900">
-        <div className="border-b border-gray-200 p-4 sm:p-5 dark:border-gray-700">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-            <div className="text-left">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                {companyName}
-              </h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {workerName}
-              </p>
-            </div>
-            <div className="text-center">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                {dayLabel}
-              </h2>
-            </div>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                aria-label="Cerrar configuración de turnos"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-          {segments.map((segment, index) => (
-            <div
-              key={segment.id}
-              className="rounded-lg border border-gray-200 p-4 dark:border-gray-700"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  Turno {index + 1}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleRemoveSegment(segment.id)}
-                  className="px-2 py-1 text-red-600 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
-                  leftIcon={<Trash2 size={16} />}
-                >
-                  Eliminar
-                </Button>
-              </div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <Input
-                  type="time"
-                  size="sm"
-                  label="Inicio"
-                  value={segment.start}
-                  onChange={(event) =>
-                    handleSegmentChange(segment.id, "start", event.target.value)
-                  }
-                  required
-                />
-                <Input
-                  type="time"
-                  size="sm"
-                  label="Fin"
-                  value={segment.end}
-                  onChange={(event) =>
-                    handleSegmentChange(segment.id, "end", event.target.value)
-                  }
-                  required
-                />
-              </div>
-              <div className="mt-4 space-y-3">
-                <Input
-                  label="Descripción"
-                  size="sm"
-                  value={segment.description ?? ""}
-                  onChange={(event) =>
-                    handleSegmentChange(
-                      segment.id,
-                      "description",
-                      event.target.value
-                    )
-                  }
-                  fullWidth
-                  placeholder="Observaciones del turno"
-                />
-                <div className="sm:w-[12.5%]">
-                  <Input
-                    label="Total horas"
-                    size="sm"
-                    value={segment.total ?? ""}
-                    onChange={(event) =>
-                      handleSegmentChange(
-                        segment.id,
-                        "total",
-                        event.target.value
-                      )
-                    }
-                    fullWidth
-                    inputMode="decimal"
-                    placeholder="Ej. 3,5"
-                  />
-                </div>
-              </div>
-            </div>
-          ))}
-
-          <div className="flex justify-start">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleAddSegment}
-              leftIcon={<Plus size={16} />}
-            >
-              Añadir turno
-            </Button>
-          </div>
-
-          {invalidSegments && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/40 dark:bg-red-950/30 dark:text-red-200">
-              Revisa los turnos: la hora de fin debe ser posterior a la hora de
-              inicio y el formato debe ser HH:MM.
-            </div>
-          )}
-
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-gray-700 dark:bg-gray-800">
-            <p className="font-medium text-gray-700 dark:text-gray-200">
-              Horas calculadas
-            </p>
-            <p className="mt-1 text-base font-semibold text-gray-900 dark:text-white">
-              {totalLabel} h
-              {totalMinutes > 0 && (
-                <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
-                  ({totalHours}h {totalMinutesRemainder}m)
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-gray-200 p-4 sm:flex-row sm:justify-end sm:gap-4 dark:border-gray-700">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onClose}
-            className="w-full sm:w-auto"
-          >
-            Cancelar
-          </Button>
-          <Button
-            type="button"
-            onClick={handleSave}
-            disabled={invalidSegments}
-            className="w-full sm:w-auto"
-          >
-            Guardar turnos
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 
 interface IndividualWorkerCalendarState {
@@ -5373,6 +4576,8 @@ export const HoursRegistryPage: React.FC = () => {
   const longPressTimerRef = useRef<number | null>(null);
   const [mobileCellActions, setMobileCellActions] =
     useState<MobileCellActionsTarget | null>(null);
+  const [dayHeaderActionsTarget, setDayHeaderActionsTarget] =
+    useState<DayHeaderActionsTarget | null>(null);
 
   const assignmentIndexes = useMemo(() => {
     const byWorker = new Map<string, Assignment[]>();
@@ -5712,68 +4917,6 @@ export const HoursRegistryPage: React.FC = () => {
 
   const bulkDistributionDayKey =
     bulkDistributionTarget?.day.dateKey ?? null;
-
-  const bulkDistributionAssignmentContexts = useMemo(() => {
-    if (!bulkDistributionTarget || !bulkDistributionDayKey) {
-      return {} as Record<
-        string,
-        {
-          workerId: string;
-          segments: HourSegment[];
-        }
-      >;
-    }
-
-    const contexts: Record<
-      string,
-      {
-        workerId: string;
-        segments: HourSegment[];
-      }
-    > = {};
-
-    bulkDistributionAssignments.forEach((assignment) => {
-      const workerId = assignment.workerId;
-      const dayData =
-        workerWeekData[workerId]?.days?.[bulkDistributionDayKey];
-      const localSegments =
-        segmentsByAssignment[assignment.id]?.[bulkDistributionDayKey];
-      const fallbackSegments = dayData?.entries
-        ? extractSegmentsFromEntries(dayData.entries)
-        : [];
-      const baseSegments = (localSegments ?? fallbackSegments).map(
-        (segment) => ({ ...segment })
-      );
-      contexts[assignment.id] = {
-        workerId,
-        segments: baseSegments,
-      };
-    });
-
-    return contexts;
-  }, [
-    bulkDistributionAssignments,
-    bulkDistributionDayKey,
-    bulkDistributionTarget,
-    segmentsByAssignment,
-    workerWeekData,
-  ]);
-
-  const handleBulkSegmentsApply = useCallback(
-    (assignmentId: string, dateKey: string, segments: HourSegment[]) => {
-      setSegmentsByAssignment((prev) => {
-        const next = { ...prev };
-        const assignmentSegments = { ...(next[assignmentId] ?? {}) };
-        assignmentSegments[dateKey] = segments.map((segment) => ({
-          ...segment,
-          id: segment.id ?? generateUuid(),
-        }));
-        next[assignmentId] = assignmentSegments;
-        return next;
-      });
-    },
-    []
-  );
 
   useEffect(() => {
     setNoteDraftsByDay({});
@@ -6157,6 +5300,7 @@ export const HoursRegistryPage: React.FC = () => {
       const existingEntries = resolveEntriesForAssignment(dayData, assignment);
 
       setSegmentModalTarget({
+        mode: "single",
         assignmentId: assignment.id,
         workerName: assignment.workerName,
         companyName: assignment.companyName,
@@ -6302,6 +5446,17 @@ export const HoursRegistryPage: React.FC = () => {
     [closeMobileCellActions, openSegmentsModal]
   );
 
+  const openDayHeaderActions = useCallback(
+    (target: DayHeaderActionsTarget) => {
+      setDayHeaderActionsTarget(target);
+    },
+    []
+  );
+
+  const closeDayHeaderActions = useCallback(() => {
+    setDayHeaderActionsTarget(null);
+  }, []);
+
   const handleCellLongPressStart = useCallback(
     (enable: boolean, payload: MobileCellActionsTarget) => {
       if (!enable || typeof window === "undefined") {
@@ -6315,6 +5470,72 @@ export const HoursRegistryPage: React.FC = () => {
       }, LONG_PRESS_DURATION_MS);
     },
     [clearMobileLongPressTimer, openMobileCellActions]
+  );
+
+  const handleDayHeaderNotesSelection = useCallback(
+    (target: DayHeaderActionsTarget) => {
+      if (target.viewMode !== "worker") {
+        closeDayHeaderActions();
+        return;
+      }
+      closeDayHeaderActions();
+      const notes = resolveDayNotes(target.groupId, target.day.dateKey);
+      const label = `${target.day.label} ${target.day.dayOfMonth}`.trim();
+      const humanReadable = formatDate(target.day.dateKey) ?? undefined;
+      setNotesModalTarget({
+        workerId: target.groupId,
+        dateKey: target.day.dateKey,
+        workerName: target.groupName,
+        companyName: "Notas generales del día",
+        dayLabel: label,
+        dateLabel: humanReadable,
+        notes,
+      });
+    },
+    [closeDayHeaderActions, resolveDayNotes, setNotesModalTarget]
+  );
+
+  const handleDayHeaderSegmentsSelection = useCallback(
+    (target: DayHeaderActionsTarget) => {
+      closeDayHeaderActions();
+      const label = `${target.day.label} ${target.day.dayOfMonth}`.trim();
+      setSegmentModalTarget({
+        mode: "multi",
+        workerName: target.groupName,
+        companyName: "Todas las empresas",
+        dateKey: target.day.dateKey,
+        dayLabel: label,
+        multiAssignments: target.assignments.map((assignment) => {
+          const dayData =
+            workerWeekData[assignment.workerId]?.days?.[
+              target.day.dateKey
+            ];
+          const existingEntries = resolveEntriesForAssignment(
+            dayData,
+            assignment
+          );
+          return { assignment, existingEntries };
+        }),
+      });
+    },
+    [closeDayHeaderActions, resolveEntriesForAssignment, workerWeekData]
+  );
+
+  const handleDayHeaderDistributionSelection = useCallback(
+    (target: DayHeaderActionsTarget) => {
+      closeDayHeaderActions();
+      if (!target.canDistribute) {
+        return;
+      }
+      openBulkDistributionModal({
+        groupId: target.groupId,
+        groupName: target.groupName,
+        assignmentIds: target.assignments.map((assignment) => assignment.id),
+        day: target.day,
+        viewMode: target.viewMode,
+      });
+    },
+    [closeDayHeaderActions, openBulkDistributionModal]
   );
 
   const handleCellDoubleClick = useCallback(
@@ -7041,7 +6262,11 @@ export const HoursRegistryPage: React.FC = () => {
 
   const handleSegmentsModalSave = useCallback(
     (segments: HourSegment[]) => {
-      if (!segmentModalTarget) {
+      if (
+        !segmentModalTarget ||
+        segmentModalTarget.mode !== "single" ||
+        !segmentModalTarget.assignmentId
+      ) {
         setSegmentModalTarget(null);
         return;
       }
@@ -7067,6 +6292,40 @@ export const HoursRegistryPage: React.FC = () => {
         segmentModalTarget.dateKey,
         formattedValue
       );
+
+      setSegmentModalTarget(null);
+    },
+    [handleHourChange, segmentModalTarget]
+  );
+
+  const handleSegmentsModalMultiSave = useCallback(
+    (segmentsMap: Record<string, HourSegment[]>) => {
+      if (!segmentModalTarget || segmentModalTarget.mode !== "multi") {
+        setSegmentModalTarget(null);
+        return;
+      }
+
+      const dateKey = segmentModalTarget.dateKey;
+
+      setSegmentsByAssignment((prev) => {
+        const next = { ...prev };
+        Object.entries(segmentsMap).forEach(([assignmentId, segments]) => {
+          const assignmentSegments = { ...(next[assignmentId] ?? {}) };
+          assignmentSegments[dateKey] = segments.map((segment) => ({
+            ...segment,
+            assignmentId: undefined,
+          }));
+          next[assignmentId] = assignmentSegments;
+        });
+        return next;
+      });
+
+      Object.entries(segmentsMap).forEach(([assignmentId, segments]) => {
+        const totalMinutes = calculateSegmentsTotalMinutes(segments);
+        const formattedValue =
+          totalMinutes > 0 ? formatMinutesToHoursLabel(totalMinutes) : "";
+        handleHourChange(assignmentId, dateKey, formattedValue);
+      });
 
       setSegmentModalTarget(null);
     },
@@ -7637,6 +6896,79 @@ export const HoursRegistryPage: React.FC = () => {
     [computeSavePayload]
   );
 
+  const segmentModalCompanyOptions = useMemo(() => {
+    if (!segmentModalTarget) {
+      return [];
+    }
+    if (segmentModalTarget.mode === "multi") {
+      return (
+        segmentModalTarget.multiAssignments?.map((item) => ({
+          assignmentId: item.assignment.id,
+          companyName: item.assignment.companyName,
+          workerName: item.assignment.workerName,
+        })) ?? []
+      );
+    }
+    return segmentModalTarget.assignmentId
+      ? [
+          {
+            assignmentId: segmentModalTarget.assignmentId,
+            companyName: segmentModalTarget.companyName,
+            workerName: segmentModalTarget.workerName,
+          },
+        ]
+      : [];
+  }, [segmentModalTarget]);
+
+  const segmentModalInitialSegments = useMemo(() => {
+    if (!segmentModalTarget) {
+      return [] as HourSegment[];
+    }
+
+    if (segmentModalTarget.mode === "multi") {
+      const dateKey = segmentModalTarget.dateKey;
+      return (
+        segmentModalTarget.multiAssignments?.flatMap((item) => {
+          const stored =
+            segmentsByAssignment[item.assignment.id]?.[dateKey] ?? [];
+          if (stored.length) {
+            return stored.map((segment) => ({
+              ...segment,
+              assignmentId: item.assignment.id,
+            }));
+          }
+          return extractSegmentsFromEntries(
+            item.existingEntries ?? []
+          ).map((segment) => ({
+            ...segment,
+            assignmentId: item.assignment.id,
+          }));
+        }) ?? []
+      );
+    }
+
+    if (!segmentModalTarget.assignmentId) {
+      return [];
+    }
+
+    const stored =
+      segmentsByAssignment[segmentModalTarget.assignmentId]?.[
+        segmentModalTarget.dateKey
+      ] ?? [];
+    if (stored.length) {
+      return stored;
+    }
+
+    return extractSegmentsFromEntries(
+      segmentModalTarget.existingEntries ?? []
+    );
+  }, [segmentModalTarget, segmentsByAssignment]);
+
+  const segmentModalDefaultAssignmentId =
+    segmentModalTarget?.mode === "single"
+      ? segmentModalTarget.assignmentId ?? ""
+      : segmentModalCompanyOptions[0]?.assignmentId ?? "";
+
   const handleSaveAll = useCallback(async () => {
     if (isSavingAll) {
       return;
@@ -7862,8 +7194,8 @@ export const HoursRegistryPage: React.FC = () => {
   const canExport = hasRequestedResults && visibleAssignments.length > 0;
   const exportExcelEnabled = canExport && !hasPendingChanges;
   const exportExcelButtonClassName = exportExcelEnabled
-    ? "bg-green-700 text-white hover:bg-white hover:text-green-700"
-    : "bg-gray-300 text-gray-500 hover:bg-gray-300 hover:text-gray-500 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-400";
+    ? "whitespace-nowrap bg-green-700 text-white hover:bg-white hover:text-green-700"
+    : "whitespace-nowrap bg-gray-300 text-gray-500 hover:bg-gray-300 hover:text-gray-500 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-400";
   const exportExcelButtonTitle = hasPendingChanges
     ? "Guarda los cambios antes de exportar el Excel"
     : undefined;
@@ -8493,6 +7825,9 @@ export const HoursRegistryPage: React.FC = () => {
         viewMode === "worker" || viewMode === "company" ? viewMode : null;
       const canUseBulkDistribution =
         distributionViewMode !== null && group.assignments.length > 0;
+      const allowDayHeaderActions =
+        distributionViewMode === "worker" && group.assignments.length > 0;
+
       return (
         <Card
           key={group.id}
@@ -8569,41 +7904,48 @@ export const HoursRegistryPage: React.FC = () => {
                       <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-300">
                         {viewMode === "company" ? "Trabajador" : "Empresa"}
                       </th>
-                      {visibleDays.map((day) => (
-                        <th
-                          key={`${group.id}-${day.dateKey}-header`}
-                          onDoubleClick={() => {
-                            if (canUseBulkDistribution && distributionViewMode) {
-                              openBulkDistributionModal({
-                                groupId: group.id,
-                                groupName: group.name,
-                                assignmentIds: group.assignments.map(
-                                  (assignment) => assignment.id
-                                ),
-                                day,
-                                viewMode: distributionViewMode,
-                              });
-                            }
-                          }}
-                          title={
-                            canUseBulkDistribution
-                              ? "Doble clic para repartir las horas de este día"
-                              : undefined
-                          }
-                          className={`px-2 py-2 text-center font-medium text-gray-600 dark:text-gray-300 ${
-                            canUseBulkDistribution
-                              ? "cursor-copy select-none"
-                              : ""
-                          }`}
-                        >
-                          <span className="inline max-[1199px]:hidden">
-                            {day.label} {day.dayOfMonth}
-                          </span>
-                          <span className="hidden max-[1199px]:inline">
-                            {`${day.compactLabel}${day.dayOfMonth}`.trim()}
-                          </span>
-                        </th>
-                      ))}
+                      {visibleDays.map((day) => {
+                        const dayLabel = `${day.label} ${day.dayOfMonth}`.trim();
+                        const actionTitle = allowDayHeaderActions
+                          ? "Haz doble clic para ver acciones rápidas de este día."
+                          : undefined;
+                        return (
+                          <th
+                            key={`${group.id}-${day.dateKey}-header`}
+                            className="px-2 py-2 text-center font-medium text-gray-600 dark:text-gray-300"
+                          >
+                            <button
+                              type="button"
+                              title={actionTitle}
+                              className={`w-full rounded-md px-2 py-1 transition ${
+                                allowDayHeaderActions
+                                  ? "cursor-pointer select-none hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:hover:bg-blue-900/30 dark:hover:text-blue-200"
+                                  : ""
+                              }`}
+                              onDoubleClick={() => {
+                                if (!allowDayHeaderActions) {
+                                  return;
+                                }
+                                openDayHeaderActions({
+                                  groupId: group.id,
+                                  groupName: group.name,
+                                  assignments: group.assignments,
+                                  day,
+                                  viewMode: distributionViewMode ?? "worker",
+                                  canDistribute: canUseBulkDistribution,
+                                });
+                              }}
+                            >
+                              <span className="inline max-[1199px]:hidden">
+                                {dayLabel}
+                              </span>
+                              <span className="hidden max-[1199px]:inline">
+                                {`${day.compactLabel}${day.dayOfMonth}`.trim()}
+                              </span>
+                            </button>
+                          </th>
+                        );
+                      })}
                       <th className="px-3 py-2 text-center font-medium text-gray-600 dark:text-gray-300">
                         Total
                       </th>
@@ -8807,6 +8149,7 @@ export const HoursRegistryPage: React.FC = () => {
       openSegmentsModal,
       openBulkDistributionModal,
       openWorkerInfoModal,
+      openDayHeaderActions,
       clearMobileLongPressTimer,
       isCompactLayout,
       resolveDayNotes,
@@ -8990,12 +8333,12 @@ export const HoursRegistryPage: React.FC = () => {
             className="sticky top-0 z-30 gap-3 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/75 shadow-sm dark:bg-gray-900/90"
           >
             <div className="grid w-full grid-cols-1 items-center gap-3 lg:grid-cols-[1fr_auto_1fr] lg:gap-4">
-              <div className="flex items-center justify-center lg:justify-start">
-                <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 shadow-sm dark:bg-gray-800">
+              <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:justify-center sm:text-left lg:justify-start">
+                <div className="inline-flex flex-col items-center gap-2 rounded-full bg-gray-100 px-3 py-2 shadow-sm dark:bg-gray-800 sm:flex-row sm:items-center sm:gap-3">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-gray-500 dark:text-gray-400">
                     Vista
                   </span>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-col items-center gap-1.5 sm:flex-row sm:items-center">
                     {[
                       {
                         value: "worker" as const,
@@ -9017,7 +8360,7 @@ export const HoursRegistryPage: React.FC = () => {
                         key={option.value}
                         type="button"
                         onClick={option.handler}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-full transition ${
+                        className={`px-3 py-1.5 text-sm font-medium text-center rounded-full transition ${
                           viewMode === option.value
                             ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
                             : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
@@ -9030,7 +8373,7 @@ export const HoursRegistryPage: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center justify-center gap-3 lg:justify-self-center">
-                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                <div className="flex flex-wrap items-center justify-center gap-1.5 lg:flex-nowrap">
                   <Button
                     size="sm"
                     variant="primary"
@@ -9055,10 +8398,10 @@ export const HoursRegistryPage: React.FC = () => {
                   </Button>
                 </div>
               </div>
-              <div className="flex items-center justify-center gap-2 lg:justify-end">
+              <div className="flex flex-col items-stretch gap-2 whitespace-nowrap sm:items-center sm:justify-center lg:items-end lg:justify-end 2xl:flex-row 2xl:items-center">
                 <Button
                   size="sm"
-                  className={exportExcelButtonClassName}
+                  className={`w-full sm:w-auto ${exportExcelButtonClassName}`}
                   variant="outline"
                   leftIcon={<FileSpreadsheet size={16} />}
                   onClick={handleExportExcel}
@@ -9074,11 +8417,11 @@ export const HoursRegistryPage: React.FC = () => {
                   leftIcon={<Save size={16} />}
                   variant="primary"
                   isLoading={isSavingAll}
-                  className={
+                  className={`w-full whitespace-nowrap sm:w-auto ${
                     hasPendingChanges
                       ? "!bg-amber-400 !text-white hover:!bg-amber-500 focus:!ring-amber-400 dark:!bg-amber-500 dark:hover:!bg-amber-400"
                       : ""
-                  }
+                  }`}
                 >
                   Guardar Todo
                 </Button>
@@ -9177,11 +8520,11 @@ export const HoursRegistryPage: React.FC = () => {
               leftIcon={<Save size={16} />}
               variant="primary"
               isLoading={isSavingAll}
-              className={
+              className={`whitespace-nowrap ${
                 hasPendingChanges
                   ? "!bg-amber-400 !text-white hover:!bg-amber-500 focus:!ring-amber-400 dark:!bg-amber-500 dark:hover:!bg-amber-400"
                   : ""
-              }
+              }`}
             >
               Guardar Todo
             </Button>
@@ -9235,8 +8578,6 @@ export const HoursRegistryPage: React.FC = () => {
         assignments={bulkDistributionAssignments}
         totalsContext={totalsContext}
         dayKey={bulkDistributionDayKey}
-        assignmentContexts={bulkDistributionAssignmentContexts}
-        onSegmentsApply={handleBulkSegmentsApply}
         resolveAssignmentHourValue={resolveAssignmentHourValue}
         formatHours={formatHours}
         hoursFormatter={hoursFormatter}
@@ -9252,6 +8593,13 @@ export const HoursRegistryPage: React.FC = () => {
         onSelectNotes={handleMobileNotesSelection}
         onSelectSegments={handleMobileSegmentsSelection}
       />
+      <DayHeaderActionsSheet
+        target={dayHeaderActionsTarget}
+        onClose={closeDayHeaderActions}
+        onSelectNotes={handleDayHeaderNotesSelection}
+        onSelectSegments={handleDayHeaderSegmentsSelection}
+        onSelectDistribution={handleDayHeaderDistributionSelection}
+      />
       <DayNotesModal
         isOpen={notesModalTarget !== null}
         workerId={notesModalTarget?.workerId ?? ""}
@@ -9264,22 +8612,28 @@ export const HoursRegistryPage: React.FC = () => {
         onClose={closeNotesModal}
         onSave={handleNotesModalSave}
       />
-      <HourSegmentsModal
-        isOpen={segmentModalTarget !== null}
-        workerName={segmentModalTarget?.workerName ?? ""}
-        companyName={segmentModalTarget?.companyName ?? ""}
-        dayLabel={segmentModalTarget?.dayLabel ?? ""}
-        initialSegments={
-          segmentModalTarget
-            ? segmentsByAssignment[segmentModalTarget.assignmentId]?.[
-                segmentModalTarget.dateKey
-              ] ?? []
-            : []
-        }
-        existingEntries={segmentModalTarget?.existingEntries ?? []}
-        onClose={closeSegmentsModal}
-        onSave={handleSegmentsModalSave}
-      />
+      {segmentModalTarget?.mode === "multi" ? (
+        <MultiHourSegmentsModal
+          isOpen={segmentModalTarget !== null}
+          dayLabel={segmentModalTarget.dayLabel}
+          onClose={closeSegmentsModal}
+          companyOptions={segmentModalCompanyOptions}
+          initialSegments={segmentModalInitialSegments}
+          onSaveByAssignment={handleSegmentsModalMultiSave}
+          defaultAssignmentId={segmentModalDefaultAssignmentId}
+        />
+      ) : (
+        <SingleHourSegmentsModal
+          isOpen={segmentModalTarget !== null}
+          workerName={segmentModalTarget?.workerName ?? ""}
+          companyName={segmentModalTarget?.companyName ?? ""}
+          dayLabel={segmentModalTarget?.dayLabel ?? ""}
+          initialSegments={segmentModalInitialSegments}
+          existingEntries={segmentModalTarget?.existingEntries ?? []}
+          onClose={closeSegmentsModal}
+          onSave={handleSegmentsModalSave}
+        />
+      )}
       {workerInfoModal?.isOpen && (
         <WorkerInfoModal
           state={workerInfoModal}
