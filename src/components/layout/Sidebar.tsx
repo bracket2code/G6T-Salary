@@ -78,6 +78,8 @@ export const Sidebar: React.FC = () => {
             key={item.path}
             to={item.path}
             onClick={handleNavigation}
+            aria-label={item.label}
+            aria-current={isActive(item.path) ? "page" : undefined}
             className={`flex items-center px-3 py-2 text-sm font-medium rounded-md transition-all duration-200
               ${
                 isActive(item.path)

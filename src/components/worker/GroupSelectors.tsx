@@ -330,6 +330,7 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
                     event.stopPropagation();
                     handleRemoveSelected(worker.id);
                   }}
+                  aria-label={`Quitar ${worker.name} de la selección`}
                   className="rounded p-0.5 transition hover:bg-blue-200 hover:text-blue-700 dark:hover:bg-blue-800/60"
                 >
                   <X size={12} />
@@ -355,6 +356,7 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
             <button
               type="button"
               onClick={handleClear}
+              aria-label="Limpiar trabajadores seleccionados"
               className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
             >
               <X size={14} className="text-gray-400" />
@@ -364,6 +366,11 @@ export const WorkerSearchSelect: React.FC<WorkerSearchSelectProps> = ({
             type="button"
             className="p-1"
             onClick={() => setIsOpen((prev) => !prev)}
+            aria-label={
+              isOpen ? "Cerrar lista de trabajadores" : "Abrir lista de trabajadores"
+            }
+            aria-expanded={isOpen}
+            aria-haspopup="listbox"
           >
             <ChevronDown
               size={16}
@@ -808,6 +815,7 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
                     event.stopPropagation();
                     handleRemoveSelected(group.id);
                   }}
+                  aria-label={`Quitar ${group.label} de la selección`}
                   className="rounded p-0.5 transition hover:bg-blue-200 hover:text-blue-700 dark:hover:bg-blue-800/60"
                 >
                   <X size={12} />
@@ -833,6 +841,7 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
             <button
               type="button"
               onClick={handleClear}
+              aria-label="Limpiar grupos seleccionados"
               className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
             >
               <X size={14} className="text-gray-400" />
@@ -842,6 +851,11 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
             type="button"
             className="p-1"
             onClick={() => setIsOpen((prev) => !prev)}
+            aria-label={
+              isOpen ? "Cerrar lista de grupos" : "Abrir lista de grupos"
+            }
+            aria-expanded={isOpen}
+            aria-haspopup="listbox"
           >
             <ChevronDown
               size={16}
@@ -1206,6 +1220,7 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
                     event.stopPropagation();
                     handleRemoveSelected(option.value);
                   }}
+                  aria-label={`Quitar ${option.label} de la selección`}
                   className="rounded p-0.5 transition hover:bg-blue-200 hover:text-blue-700 dark:hover:bg-blue-800/60"
                 >
                   <X size={12} />
@@ -1232,6 +1247,7 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
             <button
               type="button"
               onClick={handleClear}
+              aria-label="Limpiar empresas seleccionadas"
               className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
             >
               <X size={14} className="text-gray-400" />
@@ -1241,6 +1257,11 @@ export const CompanySearchSelect: React.FC<CompanySearchSelectProps> = ({
             type="button"
             className="p-1"
             onClick={() => setIsOpen((prev) => !prev)}
+            aria-label={
+              isOpen ? "Cerrar lista de empresas" : "Abrir lista de empresas"
+            }
+            aria-expanded={isOpen}
+            aria-haspopup="listbox"
           >
             <ChevronDown
               size={16}
