@@ -215,6 +215,18 @@ const WorkerCompaniesAndContracts: React.FC<
     [companyLookup, isLikelyIdentifier]
   );
 
+  const normalizeCompanyKey = useCallback((value: string) => {
+    if (!value) {
+      return "";
+    }
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }, []);
+
   const resolveContractName = useCallback(
     (contract: WorkerCompanyContract) => {
       const detailsLabel =
@@ -317,21 +329,54 @@ const WorkerCompaniesAndContracts: React.FC<
       }
     );
 
-    const result = Array.from(merged.entries())
-      .map(([companyName, data]) => ({
-        companyName,
-        assignmentCount: data.assignmentCount,
-        contractCount: data.contractCount,
-        contracts: buildDisplayContracts(data.contracts),
+    const deduped = new Map<
+      string,
+      {
+        companyName: string;
+        assignmentCount: number;
+        contractCount: number;
+        contracts: WorkerCompanyContract[];
+      }
+    >();
+
+    merged.forEach((data, rawName) => {
+      const resolvedName = resolveCompanyName(rawName);
+      const normalizedKey = normalizeCompanyKey(resolvedName);
+      const existing = deduped.get(normalizedKey);
+
+      if (existing) {
+        existing.assignmentCount = Math.max(
+          existing.assignmentCount,
+          data.assignmentCount
+        );
+        existing.contractCount = Math.max(
+          existing.contractCount,
+          data.contractCount
+        );
+        existing.contracts = existing.contracts.concat(data.contracts ?? []);
+      } else {
+        deduped.set(normalizedKey, {
+          companyName: resolvedName,
+          assignmentCount: data.assignmentCount,
+          contractCount: data.contractCount,
+          contracts: data.contracts ?? [],
+        });
+      }
+    });
+
+    const result = Array.from(deduped.values())
+      .map((entry) => ({
+        companyName: entry.companyName,
+        assignmentCount: entry.assignmentCount,
+        contractCount: entry.contractCount,
+        contracts: buildDisplayContracts(entry.contracts),
       }))
       .filter((entry) => entry.contracts.length > 0);
 
     result.sort((a, b) =>
-      resolveCompanyName(a.companyName).localeCompare(
-        resolveCompanyName(b.companyName),
-        "es",
-        { sensitivity: "base" }
-      )
+      a.companyName.localeCompare(b.companyName, "es", {
+        sensitivity: "base",
+      })
     );
 
     return result;
@@ -340,6 +385,7 @@ const WorkerCompaniesAndContracts: React.FC<
     companies,
     contractsByCompany,
     companyStats,
+    normalizeCompanyKey,
     resolveCompanyName,
   ]);
 
