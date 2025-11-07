@@ -97,6 +97,278 @@ const generateLocalId = (prefix: string) => {
   return `${prefix}-${Math.random().toString(36).slice(2, 11)}`;
 };
 
+const fetchCompaniesLookup = async (
+  apiUrl: string,
+  headers: Record<string, string>
+): Promise<Record<string, string>> => {
+  const companyLookup: Record<string, string> = {};
+
+  try {
+    const companiesResponse = await fetch(`${apiUrl}/parameter/list?types=1`, {
+      method: "GET",
+      headers,
+    });
+
+    if (companiesResponse.ok) {
+      const companiesData = await companiesResponse.json();
+      if (Array.isArray(companiesData)) {
+        companiesData.forEach((company) => {
+          const companyName =
+            pickString(company?.name, company?.label, company?.description) ??
+            undefined;
+          const candidateKeys: Array<string | undefined> = [
+            pickString(company?.id),
+            pickString(company?.parameterId),
+            pickString(company?.parameter_id),
+            pickString(company?.guid),
+            pickString(company?.value),
+          ];
+          if (companyName) {
+            candidateKeys.forEach((key) => {
+              if (!key) {
+                return;
+              }
+              const trimmed = key.trim();
+              if (trimmed.length > 0) {
+                companyLookup[trimmed] = companyName;
+              }
+            });
+          }
+        });
+      }
+    } else {
+      console.warn(
+        `No se pudieron obtener las empresas: ${companiesResponse.status}`
+      );
+    }
+  } catch (error) {
+    console.error("Error fetching companies for worker data", error);
+  }
+
+  return companyLookup;
+};
+
+const fetchWorkerSecondaryEmailLookup = async (
+  apiUrl: string,
+  headers: Record<string, string>
+): Promise<Record<string, string>> => {
+  const lookup: Record<string, string> = {};
+
+  try {
+    let usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+
+    if (!usersResponse.ok) {
+      usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
+        method: "GET",
+        headers,
+      });
+    }
+
+    if (usersResponse.ok) {
+      const usersData = await usersResponse.json();
+      const usersArray = Array.isArray(usersData)
+        ? usersData
+        : Array.isArray(usersData?.data)
+        ? usersData.data
+        : Array.isArray(usersData?.items)
+        ? usersData.items
+        : [];
+
+      usersArray.forEach((user: any) => {
+        const workerRelationId = pickString(
+          user?.workerIdRelation,
+          user?.workerRelationId,
+          user?.workerId,
+          user?.worker_id
+        );
+
+        const emailCandidate = pickString(
+          user?.email,
+          user?.userEmail,
+          user?.contactEmail,
+          user?.secondaryEmail
+        );
+
+        if (workerRelationId && emailCandidate) {
+          lookup[workerRelationId] = emailCandidate;
+        }
+      });
+    } else {
+      console.warn(
+        `No se pudieron obtener usuarios (status ${usersResponse.status})`
+      );
+    }
+  } catch (error) {
+    console.error("Error fetching user email relationships", error);
+  }
+
+  return lookup;
+};
+
+const fetchContractsData = async (
+  apiUrl: string,
+  headers: Record<string, string>
+): Promise<any[]> => {
+  try {
+    const contractsResponse = await fetch(`${apiUrl}/parameter/list?types=7`, {
+      method: "GET",
+      headers,
+    });
+
+    if (contractsResponse.ok) {
+      const contractsData = await contractsResponse.json();
+      return Array.isArray(contractsData) ? contractsData : [];
+    }
+  } catch (error) {
+    console.error("Error fetching contract lookup", error);
+  }
+
+  return [];
+};
+
+const buildContractLookup = (
+  contractsData: any[],
+  companyLookup: Record<string, string>
+) => {
+  return contractsData.reduce(
+    (acc, contract) => {
+      const identifier = pickString(
+        contract?.id,
+        contract?.contractId,
+        contract?.contract_id
+      );
+
+      if (!identifier) {
+        return acc;
+      }
+
+      const companyId = pickString(
+        contract?.companyId,
+        contract?.company_id,
+        contract?.companyIdContract
+      );
+
+      acc[identifier] = {
+        companyId: companyId ?? undefined,
+        companyName:
+          companyId && companyLookup[companyId]
+            ? companyLookup[companyId]
+            : pickString(
+                contract?.companyName,
+                contract?.company,
+                contract?.companyLabel
+              ) ?? undefined,
+        relationType: parseRelationType(
+          contract?.relationType,
+          contract?.type,
+          contract?.contractType
+        ),
+        label:
+          pickString(
+            contract?.name,
+            contract?.contractName,
+            contract?.title,
+            contract?.alias
+          ) ?? undefined,
+        description:
+          pickString(
+            contract?.description,
+            contract?.contractDescription,
+            contract?.notes
+          ) ?? undefined,
+        status:
+          pickString(
+            contract?.status,
+            contract?.state,
+            contract?.contractStatus
+          ) ?? undefined,
+        typeLabel:
+          pickString(
+            contract?.contractTypeName,
+            contract?.typeName,
+            contract?.typeDescription,
+            contract?.contractTypeLabel
+          ) ?? undefined,
+        hourlyRate:
+          parseNumeric(
+            contract?.amount ??
+              contract?.hourlyRate ??
+              contract?.rate ??
+              contract?.price ??
+              contract?.weeklyHours ??
+              contract?.hoursPerWeek ??
+              contract?.hours_week
+          ) ?? undefined,
+        startDate:
+          pickString(
+            contract?.startDate,
+            contract?.contractStartDate,
+            contract?.dateStart,
+            contract?.beginDate
+          ) ?? undefined,
+        endDate:
+          pickString(
+            contract?.endDate,
+            contract?.contractEndDate,
+            contract?.dateEnd,
+            contract?.finishDate
+          ) ?? undefined,
+      };
+
+      return acc;
+    },
+    {} as Record<
+      string,
+      {
+        companyId?: string;
+        companyName?: string;
+        relationType?: number;
+        label?: string;
+        description?: string;
+        status?: string;
+        typeLabel?: string;
+        hourlyRate?: number;
+        startDate?: string;
+        endDate?: string;
+      }
+    >
+  );
+};
+
+const fetchWorkersRaw = async (
+  apiUrl: string,
+  headers: Record<string, string>,
+  includeInactive: boolean
+) => {
+  const workersEndpoint = includeInactive
+    ? `${apiUrl}/parameter/list?types[0]=5&types[1]=4`
+    : `${apiUrl}/parameter/list?types[0]=5&types[1]=4&situation=0`;
+
+  const workersResponse = await fetch(workersEndpoint, {
+    method: "GET",
+    headers,
+  });
+
+  if (!workersResponse.ok) {
+    throw new Error(
+      `Error fetching workers: ${workersResponse.status} - ${workersResponse.statusText}`
+    );
+  }
+
+  const workersRaw = await workersResponse.json();
+  return Array.isArray(workersRaw)
+    ? workersRaw
+    : Array.isArray(workersRaw?.data)
+    ? workersRaw.data
+    : Array.isArray(workersRaw?.items)
+    ? workersRaw.items
+    : [];
+};
+
 export interface WorkerDataResult {
   workers: Worker[];
   companyLookup: Record<string, string>;
@@ -114,256 +386,31 @@ export const fetchWorkersData = async ({
     Accept: "application/json",
   };
 
-  const companyLookup: Record<string, string> = {};
-
-  try {
-    const companiesResponse = await fetch(
-      `${apiUrl}/parameter/list?types=1`,
-      {
-        method: "GET",
-        headers,
-      }
-    );
-
-    if (companiesResponse.ok) {
-      const companiesData = await companiesResponse.json();
-      companiesData.forEach((company: any) => {
-        const companyName =
-          pickString(company?.name, company?.description, company?.label) ??
-          undefined;
-        const candidateKeys: Array<string | undefined> = [
-          pickString(company?.id),
-          pickString(company?.parameterId),
-          pickString(company?.parameter_id),
-          pickString(company?.guid),
-          pickString(company?.value),
-        ];
-        if (companyName) {
-          candidateKeys.forEach((key) => {
-            if (!key) {
-              return;
-            }
-            const trimmed = key.trim();
-            if (trimmed.length > 0) {
-              companyLookup[trimmed] = companyName;
-            }
-          });
-        }
-      });
-    } else {
-      console.warn(
-        `No se pudieron obtener las empresas: ${companiesResponse.status}`
-      );
-    }
-  } catch (error) {
-    console.error("Error fetching companies for worker data", error);
-  }
-
-  let workerSecondaryEmailLookup: Record<string, string> = {};
-
   const enableUsersLookup =
     (import.meta as any).env?.VITE_ENABLE_USERS_LOOKUP === "true";
 
-  if (enableUsersLookup) {
-    try {
-      let usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({}),
-      });
+  const companyLookupPromise = fetchCompaniesLookup(apiUrl, headers);
+  const workerEmailsPromise = enableUsersLookup
+    ? fetchWorkerSecondaryEmailLookup(apiUrl, headers)
+    : Promise.resolve<Record<string, string>>({});
+  const contractsDataPromise = fetchContractsData(apiUrl, headers);
+  const workersArrayPromise = fetchWorkersRaw(apiUrl, headers, includeInactive);
 
-      if (!usersResponse.ok) {
-        usersResponse = await fetch(`${apiUrl}/User/GetAll`, {
-          method: "GET",
-          headers,
-        });
-      }
+  const [
+    companyLookup,
+    workerSecondaryEmailLookup,
+    contractsData,
+    workersArray,
+  ] = await Promise.all([
+    companyLookupPromise,
+    workerEmailsPromise.catch(
+      () => ({} as Record<string, string>)
+    ),
+    contractsDataPromise.catch(() => [] as any[]),
+    workersArrayPromise,
+  ]);
 
-      if (usersResponse.ok) {
-        const usersData = await usersResponse.json();
-        const usersArray = Array.isArray(usersData)
-          ? usersData
-          : Array.isArray(usersData?.data)
-          ? usersData.data
-          : Array.isArray(usersData?.items)
-          ? usersData.items
-          : [];
-
-        usersArray.forEach((user: any) => {
-          const workerRelationId = pickString(
-            user?.workerIdRelation,
-            user?.workerRelationId,
-            user?.workerId,
-            user?.worker_id
-          );
-
-          const emailCandidate = pickString(
-            user?.email,
-            user?.userEmail,
-            user?.contactEmail,
-            user?.secondaryEmail
-          );
-
-          if (workerRelationId && emailCandidate) {
-            workerSecondaryEmailLookup[workerRelationId] = emailCandidate;
-          }
-        });
-      } else {
-        console.warn(
-          `No se pudieron obtener usuarios (status ${usersResponse.status})`
-        );
-      }
-    } catch (error) {
-      console.error("Error fetching user email relationships", error);
-    }
-  }
-
-  let contractLookup: Record<
-    string,
-    {
-      companyId?: string;
-      companyName?: string;
-      relationType?: number;
-      label?: string;
-      description?: string;
-      status?: string;
-      typeLabel?: string;
-      hourlyRate?: number;
-      startDate?: string;
-      endDate?: string;
-    }
-  > = {};
-
-  try {
-    const contractsResponse = await fetch(
-      `${apiUrl}/parameter/list?types=7`,
-      {
-        method: "GET",
-        headers,
-      }
-    );
-
-    if (contractsResponse.ok) {
-      const contractsData = await contractsResponse.json();
-      if (Array.isArray(contractsData)) {
-        contractLookup = contractsData.reduce(
-          (acc, contract) => {
-            const identifier = pickString(
-              contract?.id,
-              contract?.contractId,
-              contract?.contract_id
-            );
-
-            if (!identifier) {
-              return acc;
-            }
-
-            const companyId = pickString(
-              contract?.companyId,
-              contract?.company_id,
-              contract?.companyIdContract
-            );
-
-            acc[identifier] = {
-              companyId: companyId ?? undefined,
-              companyName:
-                companyId && companyLookup[companyId]
-                  ? companyLookup[companyId]
-                  : pickString(
-                      contract?.companyName,
-                      contract?.company,
-                      contract?.companyLabel
-                    ) ?? undefined,
-              relationType: parseRelationType(
-                contract?.relationType,
-                contract?.type,
-                contract?.contractType
-              ),
-              label:
-                pickString(
-                  contract?.name,
-                  contract?.contractName,
-                  contract?.title,
-                  contract?.alias
-                ) ?? undefined,
-              description:
-                pickString(
-                  contract?.description,
-                  contract?.contractDescription,
-                  contract?.notes
-                ) ?? undefined,
-              status:
-                pickString(
-                  contract?.status,
-                  contract?.state,
-                  contract?.contractStatus
-                ) ?? undefined,
-              typeLabel:
-                pickString(
-                  contract?.contractTypeName,
-                  contract?.typeName,
-                  contract?.typeDescription,
-                  contract?.contractTypeLabel
-                ) ?? undefined,
-              hourlyRate:
-                parseNumeric(
-                  contract?.amount ??
-                    contract?.hourlyRate ??
-                    contract?.rate ??
-                    contract?.price ??
-                    contract?.weeklyHours ??
-                    contract?.hoursPerWeek ??
-                    contract?.hours_week
-                ) ?? undefined,
-              startDate:
-                pickString(
-                  contract?.startDate,
-                  contract?.contractStartDate,
-                  contract?.dateStart,
-                  contract?.beginDate
-                ) ?? undefined,
-              endDate:
-                pickString(
-                  contract?.endDate,
-                  contract?.contractEndDate,
-                  contract?.dateEnd,
-                  contract?.finishDate
-                ) ?? undefined,
-            };
-
-            return acc;
-          },
-          {} as typeof contractLookup
-        );
-      }
-    }
-  } catch (error) {
-    console.error("Error fetching contract lookup", error);
-  }
-
-  const workersEndpoint = includeInactive
-    ? `${apiUrl}/parameter/list?types[0]=5&types[1]=4`
-    : `${apiUrl}/parameter/list?types[0]=5&types[1]=4&situation=0`;
-
-  const workersResponse = await fetch(workersEndpoint, {
-    method: "GET",
-    headers,
-  });
-
-  if (!workersResponse.ok) {
-    throw new Error(
-      `Error fetching workers: ${workersResponse.status} - ${workersResponse.statusText}`
-    );
-  }
-
-  const workersRaw = await workersResponse.json();
-  const workersArray = Array.isArray(workersRaw)
-    ? workersRaw
-    : Array.isArray(workersRaw?.data)
-    ? workersRaw.data
-    : Array.isArray(workersRaw?.items)
-    ? workersRaw.items
-    : [];
+  const contractLookup = buildContractLookup(contractsData, companyLookup);
 
   const transformedWorkers: Worker[] = workersArray.map((apiWorker: any) => {
     const workerId =
