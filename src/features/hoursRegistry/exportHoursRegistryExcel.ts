@@ -4,8 +4,15 @@ import type {
   Assignment,
   AssignmentTotalsContext,
   DayDescriptor,
+  WorkerWeeklyDayData,
 } from "../../types/hoursRegistry";
 import type { Worker } from "../../types/salary";
+import {
+  buildDefaultHoursRegistryWorksheet,
+  buildWorkerDailyWorksheet,
+  type WorkerDailyRow,
+  type WorkerTotalsRange,
+} from "./templates/HoursRegistryTemplate";
 
 type CalculateRowTotalFn = (
   assignment: Assignment,
@@ -44,6 +51,145 @@ interface ExportHoursRegistryExcelParams {
   dependencies: ExportDependencies;
 }
 
+const workerSheetDateFormatter = new Intl.DateTimeFormat("es-ES", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+
+const timeValuePattern = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
+
+const parseTimeToMinutes = (value?: string | null): number | null => {
+  if (!value || typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const match = trimmed.match(timeValuePattern);
+  if (match) {
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+      return hours * 60 + minutes;
+    }
+  }
+
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.getHours() * 60 + parsed.getMinutes();
+  }
+
+  return null;
+};
+
+const formatMinutesToTime = (minutes: number): string => {
+  const normalized = Math.max(0, Math.round(minutes));
+  const hrs = Math.floor(normalized / 60);
+  const mins = normalized % 60;
+  return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+};
+
+const resolveShiftBoundaries = (
+  dayData?: WorkerWeeklyDayData
+): { firstStart: string | null; lastEnd: string | null } => {
+  if (!dayData?.entries?.length) {
+    return { firstStart: null, lastEnd: null };
+  }
+
+  let earliest: number | null = null;
+  let latest: number | null = null;
+
+  dayData.entries.forEach((entry) => {
+    entry.workShifts?.forEach((shift) => {
+      const startMinutes = parseTimeToMinutes(shift.startTime);
+      const endMinutes = parseTimeToMinutes(shift.endTime);
+      if (startMinutes !== null) {
+        earliest =
+          earliest === null ? startMinutes : Math.min(earliest, startMinutes);
+      }
+      if (endMinutes !== null) {
+        latest = latest === null ? endMinutes : Math.max(latest, endMinutes);
+      }
+    });
+  });
+
+  return {
+    firstStart: earliest !== null ? formatMinutesToTime(earliest) : null,
+    lastEnd: latest !== null ? formatMinutesToTime(latest) : null,
+  };
+};
+
+const collectDayNotes = (dayData?: WorkerWeeklyDayData): string | null => {
+  if (!dayData?.noteEntries?.length) {
+    return null;
+  }
+  const texts = dayData.noteEntries
+    .map((note) => note.text?.trim())
+    .filter((text): text is string => Boolean(text && text.length > 0));
+  if (!texts.length) {
+    return null;
+  }
+  const uniqueTexts = Array.from(new Set(texts));
+  return uniqueTexts.join(" | ");
+};
+
+const sanitizeSheetName = (value: string): string => {
+  const restrictedChars = /[\\/?*[\]:]/g;
+  const trimmed = value.replace(restrictedChars, " ").trim();
+  return trimmed.slice(0, 31);
+};
+
+const buildUniqueSheetName = (
+  baseName: string,
+  usedNames: Set<string>
+): string => {
+  const fallback = "Trabajador";
+  const sanitizedBase = sanitizeSheetName(baseName) || fallback;
+  const normalizedBase = sanitizedBase || fallback;
+  let candidate = normalizedBase.slice(0, 31);
+  let suffix = 1;
+  while (usedNames.has(candidate)) {
+    const suffixLabel = ` (${suffix})`;
+    const maxBaseLength = 31 - suffixLabel.length;
+    candidate = `${normalizedBase.slice(0, Math.max(maxBaseLength, 0))}${suffixLabel}`;
+    suffix += 1;
+  }
+  usedNames.add(candidate);
+  return candidate;
+};
+
+const buildWorkerDailyRows = (
+  workerId: string,
+  visibleDays: DayDescriptor[],
+  workerWeekData: AssignmentTotalsContext["workerWeekData"],
+  roundToDecimals: RoundToDecimalsFn
+): WorkerDailyRow[] => {
+  const dayRecords = workerWeekData[workerId]?.days ?? {};
+  return visibleDays.map((day) => {
+    const dayData = dayRecords[day.dateKey];
+    const { firstStart, lastEnd } = resolveShiftBoundaries(dayData);
+    const notes = collectDayNotes(dayData);
+    const totalHours =
+      dayData && Number.isFinite(dayData.totalHours)
+        ? roundToDecimals(dayData.totalHours)
+        : null;
+
+    const toUpper = (value: string | null) =>
+      value ? value.toUpperCase() : value;
+
+    return {
+      dateLabel: workerSheetDateFormatter.format(day.date).toUpperCase(),
+      dayLabel: toUpper(day.label) ?? "",
+      entryTime: toUpper(firstStart),
+      exitTime: toUpper(lastEnd),
+      totalHours,
+      notes: toUpper(notes),
+    };
+  });
+};
 export const exportHoursRegistryExcel = ({
   assignments,
   totalsContext,
@@ -157,12 +303,7 @@ export const exportHoursRegistryExcel = ({
   }
 
   const sheetRows: Array<Array<string | number | null>> = [];
-  const workerTotals: Array<{
-    dataStartRow: number;
-    dataEndRow: number;
-    totalRow: number;
-    separatorRow?: number;
-  }> = [];
+  const workerTotals: WorkerTotalsRange[] = [];
 
   sheetRows.push(["CONTROL HORARIO POR EMPRESA"]);
   sheetRows.push([`Del ${rangeLabel}`]);
@@ -170,11 +311,16 @@ export const exportHoursRegistryExcel = ({
   const tableHeaderRowNumber = sheetRows.length + 1;
   sheetRows.push(["EMPLEADO", "UBICACIÓN", "HORAS", "€/HORA", "IMPORTE €"]);
 
-  const sortedWorkers = Array.from(workerAggregates.values()).sort((a, b) =>
-    a.workerName.localeCompare(b.workerName, "es", {
-      sensitivity: "base",
-    })
-  );
+  const sortedWorkers = Array.from(workerAggregates.entries())
+    .map(([workerId, aggregate]) => ({
+      workerId,
+      ...aggregate,
+    }))
+    .sort((a, b) =>
+      a.workerName.localeCompare(b.workerName, "es", {
+        sensitivity: "base",
+      })
+    );
 
   sortedWorkers.forEach((worker) => {
     const rowsWithHours = worker.rows
@@ -249,416 +395,46 @@ export const exportHoursRegistryExcel = ({
     (company) => company.companyName
   );
 
-  const worksheet = XLSXUtils.aoa_to_sheet(sheetRows);
-  let companySummaryLastRow: number | null = null;
-  const ensureCell = (address: string) => {
-    const cell = (worksheet[address] ?? {
-      t: "s",
-      v: "",
-    }) as Record<string, unknown>;
-    worksheet[address] = cell as any;
-    return cell;
-  };
-  const setCellFormula = (address: string, formula: string) => {
-    const cell = (worksheet[address] ?? {}) as Record<string, unknown>;
-    cell.f = formula;
-    delete cell.v;
-    delete cell.w;
-    worksheet[address] = cell as any;
-  };
-  const applyCurrencyFormat = (address: string) => {
-    const cell = (worksheet[address] ?? {}) as Record<string, unknown>;
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      numFmt: '"€"#,##0.00',
-    };
-    worksheet[address] = cell as any;
-  };
-  const applyCenterAlignment = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    const existingAlignment =
-      (existingStyle.alignment as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      alignment: {
-        ...existingAlignment,
-        horizontal: "center",
-        vertical: "center",
-      },
-    };
-  };
-  const applyLeftAlignment = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    const existingAlignment =
-      (existingStyle.alignment as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      alignment: {
-        ...existingAlignment,
-        horizontal: "left",
-        vertical: "center",
-      },
-    };
-  };
-  const applyHeaderTheme = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    const existingFont =
-      (existingStyle.font as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      font: {
-        ...existingFont,
-        color: { rgb: "FFFFFFFF" },
-        bold: true,
-      },
-      fill: {
-        patternType: "solid",
-        fgColor: { rgb: "FF4F81BD" },
-        bgColor: { rgb: "FF4F81BD" },
-      },
-    };
-  };
-  const applySeparatorFill = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      fill: {
-        patternType: "solid",
-        fgColor: { rgb: "FFD9D9D9" },
-        bgColor: { rgb: "FFD9D9D9" },
-      },
-    };
-  };
-  const applyTotalHighlight = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      fill: {
-        patternType: "solid",
-        fgColor: { rgb: "FFE3ECF8" },
-        bgColor: { rgb: "FFE3ECF8" },
-      },
-    };
-  };
-  const applyWorkerNameFill = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    const existingFont =
-      (existingStyle.font as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      font: {
-        ...existingFont,
-        bold: true,
-      },
-      fill: {
-        patternType: "solid",
-        fgColor: { rgb: "FFE3ECF8" },
-        bgColor: { rgb: "FFE3ECF8" },
-      },
-    };
-  };
-  const applyBoldStyle = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    const existingFont =
-      (existingStyle.font as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      font: {
-        ...existingFont,
-        bold: true,
-      },
-    };
-  };
-  const applyCompanySummaryTitleTheme = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    const existingFont =
-      (existingStyle.font as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      font: {
-        ...existingFont,
-        color: { rgb: "FFFFFFFF" },
-        bold: true,
-        sz: 16,
-      },
-      alignment: {
-        horizontal: "center",
-        vertical: "center",
-      },
-      fill: {
-        patternType: "solid",
-        fgColor: { rgb: "FFB85450" },
-        bgColor: { rgb: "FFB85450" },
-      },
-    };
-  };
-  const applyCompanySummaryHeaderTheme = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    const existingFont =
-      (existingStyle.font as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      font: {
-        ...existingFont,
-        color: { rgb: "FFFFFFFF" },
-        bold: true,
-      },
-      alignment: {
-        horizontal: "center",
-        vertical: "center",
-      },
-      fill: {
-        patternType: "solid",
-        fgColor: { rgb: "FFC0504D" },
-        bgColor: { rgb: "FFC0504D" },
-      },
-    };
-  };
-  const applyCompanySummaryRowFill = (address: string) => {
-    const cell = ensureCell(address);
-    const existingStyle =
-      (cell.s as Record<string, unknown> | undefined) ?? {};
-    cell.s = {
-      ...existingStyle,
-      fill: {
-        patternType: "solid",
-        fgColor: { rgb: "FFF2DCDB" },
-        bgColor: { rgb: "FFF2DCDB" },
-      },
-    };
-  };
-  const buildRange = (column: string, startRow: number, endRow: number) =>
-    `${column}${startRow}:${column}${endRow}`;
-  const buildAbsoluteRange = (
-    column: string,
-    startRow: number,
-    endRow: number
-  ) => `$${column}$${startRow}:$${column}$${endRow}`;
-  const merges = worksheet["!merges"] ?? [];
-
-  workerTotals.forEach(
-    ({ dataStartRow, dataEndRow, totalRow, separatorRow }, index) => {
-      if (dataEndRow < dataStartRow) {
-        return;
-      }
-      const hoursRange = buildRange("C", dataStartRow, dataEndRow);
-      const rateRange = buildRange("D", dataStartRow, dataEndRow);
-      const amountRange = buildRange("E", dataStartRow, dataEndRow);
-      for (
-        let rowIndex = dataStartRow;
-        rowIndex <= dataEndRow;
-        rowIndex += 1
-      ) {
-        setCellFormula(
-          `E${rowIndex}`,
-          `IF(OR(C${rowIndex}="",D${rowIndex}=""),"",C${rowIndex}*D${rowIndex})`
-        );
-        applyCurrencyFormat(`E${rowIndex}`);
-        applyCenterAlignment(`C${rowIndex}`);
-        applyCenterAlignment(`D${rowIndex}`);
-      }
-      const amountWithRateExpr = `SUMIFS(${amountRange},${rateRange},"<>")`;
-      const hoursWithRateExpr = `SUMIFS(${hoursRange},${rateRange},"<>")`;
-
-      setCellFormula(`C${totalRow}`, `SUM(${hoursRange})`);
-      setCellFormula(
-        `D${totalRow}`,
-        `IF(${hoursWithRateExpr}=0,"",ROUND(${amountWithRateExpr}/${hoursWithRateExpr},2))`
-      );
-      setCellFormula(
-        `E${totalRow}`,
-        `IF(${amountWithRateExpr}=0,"",${amountWithRateExpr})`
-      );
-      applyCurrencyFormat(`E${totalRow}`);
-      applyCenterAlignment(`C${totalRow}`);
-      applyCenterAlignment(`D${totalRow}`);
-      applyBoldStyle(`B${totalRow}`);
-      ["A", "B", "C", "D", "E"].forEach((column) =>
-        applyTotalHighlight(`${column}${totalRow}`)
-      );
-      if (totalRow > dataStartRow) {
-        merges.push({
-          s: { r: dataStartRow - 1, c: 0 },
-          e: { r: totalRow - 1, c: 0 },
-        });
-        applyLeftAlignment(`A${dataStartRow}`);
-        applyWorkerNameFill(`A${dataStartRow}`);
-      }
-      if (separatorRow && index < workerTotals.length - 1) {
-        ["A", "B", "C", "D", "E"].forEach((column) =>
-          applySeparatorFill(`${column}${separatorRow}`)
-        );
-      }
-    }
-  );
-
-  const tableDataStartRow = tableHeaderRowNumber + 1;
-  const tableDataEndRow = tableLastDataRowNumber;
-  ["A", "B", "C", "D", "E"].forEach((column) =>
-    applyHeaderTheme(`${column}${tableHeaderRowNumber}`)
-  );
-  applyLeftAlignment(`C${tableHeaderRowNumber}`);
-  applyLeftAlignment(`D${tableHeaderRowNumber}`);
-  if (tableDataEndRow >= tableDataStartRow) {
-    const companyRangeAbs = buildAbsoluteRange(
-      "B",
-      tableDataStartRow,
-      tableDataEndRow
-    );
-    const hoursRangeAbs = buildAbsoluteRange(
-      "C",
-      tableDataStartRow,
-      tableDataEndRow
-    );
-    const rateRangeAbs = buildAbsoluteRange(
-      "D",
-      tableDataStartRow,
-      tableDataEndRow
-    );
-    const amountRangeAbs = buildAbsoluteRange(
-      "E",
-      tableDataStartRow,
-      tableDataEndRow
-    );
-
-    const companySummaryTitleRow = 4;
-    const companySummaryHeaderRow = companySummaryTitleRow + 1;
-    const companySummaryDataStartRow = companySummaryHeaderRow + 1;
-    const companySummaryColumns = ["H", "I"] as const;
-
-    companySummaryColumns.forEach((column) => {
-      applyCompanySummaryHeaderTheme(`${column}${companySummaryHeaderRow}`);
-    });
-
-    companySummaryColumns.forEach((column, index) => {
-      const headerCell = ensureCell(`${column}${companySummaryHeaderRow}`);
-      headerCell.t = "s";
-      headerCell.v = index === 0 ? "EMPRESAS" : "IMPORTES";
-    });
-
-    companySummaryColumns.forEach((column) => {
-      applyCompanySummaryTitleTheme(`${column}${companySummaryTitleRow}`);
-    });
-    const companySummaryTitleCell = ensureCell(
-      `${companySummaryColumns[0]}${companySummaryTitleRow}`
-    );
-    companySummaryTitleCell.t = "s";
-    companySummaryTitleCell.v = "TOTAL POR EMPRESAS";
-    merges.push({
-      s: { r: companySummaryTitleRow - 1, c: 7 },
-      e: { r: companySummaryTitleRow - 1, c: 8 },
-    });
-
-    summaryCompanies.forEach((companyName, index) => {
-      const rowNumber = companySummaryDataStartRow + index;
-      const escapedCompanyName = companyName.replace(/"/g, '""');
-      const companyCell = ensureCell(`H${rowNumber}`);
-      companyCell.t = "s";
-      companyCell.v = companyName;
-      applyCompanySummaryRowFill(`H${rowNumber}`);
-      applyCompanySummaryRowFill(`I${rowNumber}`);
-      applyLeftAlignment(`H${rowNumber}`);
-
-      const amountSumExpr = `SUMIFS(${amountRangeAbs},${companyRangeAbs},"${escapedCompanyName}",${rateRangeAbs},"<>")`;
-      setCellFormula(`I${rowNumber}`, `IF(${amountSumExpr}=0,"",${amountSumExpr})`);
-      applyCurrencyFormat(`I${rowNumber}`);
-    });
-
-    const companySummaryTotalRow =
-      companySummaryDataStartRow + summaryCompanies.length;
-    const companyTotalLabelCell = ensureCell(`H${companySummaryTotalRow}`);
-    companyTotalLabelCell.t = "s";
-    companyTotalLabelCell.v = "TOTAL";
-    applyBoldStyle(`H${companySummaryTotalRow}`);
-    applyCompanySummaryRowFill(`H${companySummaryTotalRow}`);
-    applyCompanySummaryRowFill(`I${companySummaryTotalRow}`);
-    const companyAmountSummaryRange = buildRange(
-      "I",
-      companySummaryDataStartRow,
-      Math.max(companySummaryDataStartRow, companySummaryTotalRow - 1)
-    );
-    setCellFormula(
-      `I${companySummaryTotalRow}`,
-      summaryCompanies.length === 0
-        ? '""'
-        : `IF(SUM(${companyAmountSummaryRange})=0,"",SUM(${companyAmountSummaryRange}))`
-    );
-    applyCurrencyFormat(`I${companySummaryTotalRow}`);
-    applyBoldStyle(`I${companySummaryTotalRow}`);
-    companySummaryLastRow = companySummaryTotalRow;
-  }
-
-  worksheet["!autofilter"] = {
-    ref: `A${tableHeaderRowNumber}:E${tableLastDataRowNumber}`,
-  };
-  worksheet["!cols"] = [
-    { wch: 28 },
-    { wch: 22 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 16 },
-    { wch: 2 },
-    { wch: 2 },
-    { wch: 28 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 16 },
-  ];
-  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } });
-  merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 4 } });
-  worksheet["!merges"] = merges;
-
-  const lastUsedRow =
-    Math.max(tableLastDataRowNumber, companySummaryLastRow ?? 0) ||
-    tableLastDataRowNumber;
-  const lastUsedColumn = summaryCompanies.length > 0 ? 8 : 4;
-  worksheet["!ref"] = XLSXUtils.encode_range({
-    s: { r: 0, c: 0 },
-    e: { r: Math.max(lastUsedRow - 1, 0), c: lastUsedColumn },
+  const worksheet = buildDefaultHoursRegistryWorksheet({
+    sheetRows,
+    workerTotals,
+    tableHeaderRowNumber,
+    tableLastDataRowNumber,
+    summaryCompanies,
   });
-
-  const titleStyle = {
-    font: { sz: 24, bold: true },
-    alignment: { horizontal: "center", vertical: "center" },
-  } as const;
-  ["A1", "B1", "C1", "D1", "E1"].forEach((cell) => {
-    ensureCell(cell).s = { ...titleStyle };
-  });
-
-  const subtitleStyle = {
-    font: { sz: 18 },
-    alignment: { horizontal: "center", vertical: "center" },
-  } as const;
-  ["A2", "B2", "C2", "D2", "E2"].forEach((cell) => {
-    ensureCell(cell).s = { ...subtitleStyle };
-  });
-
-  worksheet["!rows"] = worksheet["!rows"] ?? [];
-  worksheet["!rows"][0] = { hpt: 36 };
-  worksheet["!rows"][1] = { hpt: 28 };
 
   const workbook = XLSXUtils.book_new();
-  XLSXUtils.book_append_sheet(workbook, worksheet, "Resumen");
+  const usedSheetNames = new Set<string>();
+  const summarySheetName = buildUniqueSheetName("Resumen", usedSheetNames);
+  XLSXUtils.book_append_sheet(workbook, worksheet, summarySheetName);
+
+  const workerWeekData = totalsContext.workerWeekData ?? {};
+  sortedWorkers.forEach((worker) => {
+    const dailyRows = buildWorkerDailyRows(
+      worker.workerId,
+      visibleDays,
+      workerWeekData,
+      roundToDecimals
+    );
+    const hasTrackedHours = dailyRows.some(
+      (row) =>
+        typeof row.totalHours === "number" &&
+        Math.abs(row.totalHours) >= hoursComparisonEpsilon
+    );
+    const hasNotes = dailyRows.some(
+      (row) => typeof row.notes === "string" && row.notes.trim().length > 0
+    );
+    if (!hasTrackedHours && !hasNotes) {
+      return;
+    }
+    const workerWorksheet = buildWorkerDailyWorksheet({
+      workerName: worker.workerName,
+      rangeLabel,
+      rows: dailyRows,
+    });
+    const sheetName = buildUniqueSheetName(worker.workerName, usedSheetNames);
+    XLSXUtils.book_append_sheet(workbook, workerWorksheet, sheetName);
+  });
 
   const fileName = `control-horario-${formatLocalDateKey(
     selectedRange.start

@@ -1035,27 +1035,25 @@ const MultipleCalculatorPage: React.FC = () => {
           <Card>
             <CardHeader className="gap-3">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-center justify-center lg:justify-start">
-                  <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 shadow-sm dark:bg-gray-800">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-gray-500 dark:text-gray-400">
-                      Vista
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {CALCULATOR_VIEW_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setViewMode(option.value)}
-                          className={`px-3 py-1.5 text-sm font-medium rounded-full transition ${
-                            viewMode === option.value
-                              ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
-                              : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
+                <div className="flex flex-col items-center gap-2 text-center sm:w-full sm:max-w-md sm:self-center lg:flex-row lg:items-center lg:gap-3 lg:text-left lg:w-auto lg:max-w-none">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-gray-500 dark:text-gray-400 lg:self-center">
+                    Vista
+                  </span>
+                  <div className="flex w-full min-w-[260px] items-center gap-1 rounded-full bg-gray-100 p-1 shadow-sm dark:bg-gray-800 sm:min-w-[320px] lg:w-auto lg:min-w-0 lg:flex-none">
+                    {CALCULATOR_VIEW_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setViewMode(option.value)}
+                        className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-medium transition lg:flex-initial ${
+                          viewMode === option.value
+                            ? "bg-white text-blue-600 shadow-sm dark:bg-gray-900 dark:text-blue-300"
+                            : "text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <p className="text-center text-sm text-gray-500 dark:text-gray-400 lg:text-right">
