@@ -9,6 +9,7 @@ export interface WorkerDailyRow {
   totalHours: number | null;
   amount: number | null;
   notes: string | null;
+  isNotesOnly?: boolean;
 }
 
 interface BuildWorkerDailyWorksheetParams {
@@ -561,7 +562,7 @@ export const buildWorkerDailyWorksheet = ({
       ...existingStyle,
       alignment: {
         ...existingAlignment,
-        horizontal: "left",
+        horizontal: "center",
         vertical: "center",
         wrapText: true,
       },
@@ -585,6 +586,22 @@ export const buildWorkerDailyWorksheet = ({
       numFmt: '#,##0.00 "€"',
     };
   };
+  const applyNotesTextAlignment = (address: string) => {
+    const cell = ensureCell(address);
+    const existingStyle =
+      (cell.s as Record<string, unknown> | undefined) ?? {};
+    const existingAlignment =
+      (existingStyle.alignment as Record<string, unknown> | undefined) ?? {};
+    cell.s = {
+      ...existingStyle,
+      alignment: {
+        ...existingAlignment,
+        horizontal: "left",
+        vertical: "center",
+        wrapText: true,
+      },
+    };
+  };
 
   const applyTotalsRowTheme = (address: string) => {
     const cell = ensureCell(address);
@@ -603,6 +620,20 @@ export const buildWorkerDailyWorksheet = ({
         patternType: "solid",
         fgColor: { rgb: "FFE3ECF8" },
         bgColor: { rgb: "FFE3ECF8" },
+      },
+    };
+  };
+
+  const applyNotesFill = (address: string) => {
+    const cell = ensureCell(address);
+    const existingStyle =
+      (cell.s as Record<string, unknown> | undefined) ?? {};
+    cell.s = {
+      ...existingStyle,
+      fill: {
+        patternType: "solid",
+        fgColor: { rgb: "FFFFF9C4" },
+        bgColor: { rgb: "FFFFF9C4" },
       },
     };
   };
@@ -643,15 +674,24 @@ export const buildWorkerDailyWorksheet = ({
     ? headerRowNumber + rows.length
     : headerRowNumber;
   for (let rowIndex = dataStartRow; rowIndex <= totalRows; rowIndex++) {
-    applyLeftAlignment(`A${rowIndex}`);
+    applyCenterAlignment(`A${rowIndex}`);
     applyCenterAlignment(`B${rowIndex}`);
-    applyLeftAlignment(`C${rowIndex}`);
+    applyCenterAlignment(`C${rowIndex}`);
     ["D", "E"].forEach((column) => applyCenterAlignment(`${column}${rowIndex}`));
     applyCenterAlignment(`F${rowIndex}`);
     applyNumberFormat(`F${rowIndex}`, "0.00");
     applyCurrencyFormatCell(`G${rowIndex}`);
-    applyLeftAlignment(`H${rowIndex}`);
+    applyNotesTextAlignment(`H${rowIndex}`);
+
   }
+  rows.forEach((dataRow, index) => {
+    const rowNumber = headerRowNumber + 1 + index;
+    if (dataRow?.isNotesOnly) {
+      ["A", "B", "C", "D", "E", "F", "G", "H"].forEach((column) =>
+        applyNotesFill(`${column}${rowNumber}`)
+      );
+    }
+  });
   if (totalsRow) {
     const totalsRowNumber = headerRowNumber + rows.length + 1;
     ["A", "B", "C", "D", "E", "F", "G", "H"].forEach((column) =>
@@ -667,7 +707,7 @@ export const buildWorkerDailyWorksheet = ({
     { wch: 14 },
     { wch: 12 },
     { wch: 16 },
-    { wch: 48 },
+    { wch: 96 },
   ];
 
   worksheet["!autofilter"] = {

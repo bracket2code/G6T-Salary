@@ -1,5 +1,6 @@
 import { utils as XLSXUtils, writeFile as writeXLSXFile } from "xlsx-js-style";
 import { formatLocalDateKey } from "../../lib/timezone";
+import { extractShiftDescription } from "../../lib/segmentDescriptions";
 import type {
   Assignment,
   AssignmentTotalsContext,
@@ -85,43 +86,6 @@ const parseTimeToMinutes = (value?: string | null): number | null => {
   return null;
 };
 
-const formatMinutesToTime = (minutes: number): string => {
-  const normalized = Math.max(0, Math.round(minutes));
-  const hrs = Math.floor(normalized / 60);
-  const mins = normalized % 60;
-  return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
-};
-
-const resolveShiftBoundaries = (
-  dayData?: WorkerWeeklyDayData
-): { firstStart: string | null; lastEnd: string | null } => {
-  if (!dayData?.entries?.length) {
-    return { firstStart: null, lastEnd: null };
-  }
-
-  let earliest: number | null = null;
-  let latest: number | null = null;
-
-  dayData.entries.forEach((entry) => {
-    entry.workShifts?.forEach((shift) => {
-      const startMinutes = parseTimeToMinutes(shift.startTime);
-      const endMinutes = parseTimeToMinutes(shift.endTime);
-      if (startMinutes !== null) {
-        earliest =
-          earliest === null ? startMinutes : Math.min(earliest, startMinutes);
-      }
-      if (endMinutes !== null) {
-        latest = latest === null ? endMinutes : Math.max(latest, endMinutes);
-      }
-    });
-  });
-
-  return {
-    firstStart: earliest !== null ? formatMinutesToTime(earliest) : null,
-    lastEnd: latest !== null ? formatMinutesToTime(latest) : null,
-  };
-};
-
 const collectDayNotes = (dayData?: WorkerWeeklyDayData): string | null => {
   if (!dayData?.noteEntries?.length) {
     return null;
@@ -161,33 +125,313 @@ const buildUniqueSheetName = (
   return candidate;
 };
 
+const buildCompanyIdentityKey = (
+  companyId?: string | null,
+  companyName?: string | null
+) => {
+  const normalizedId = companyId
+    ? companyId.trim().toLowerCase()
+    : "";
+  const normalizedName = companyName
+    ? companyName.trim().toLowerCase()
+    : "";
+  if (!normalizedId && !normalizedName) {
+    return "__unknown__";
+  }
+  return `${normalizedId}::${normalizedName}`;
+};
+
+type WorkerHourlyRateLookup = Map<string, Map<string, number>>;
+
+const ensureWorkerRateMap = (
+  lookup: WorkerHourlyRateLookup,
+  workerId: string
+) => {
+  if (!lookup.has(workerId)) {
+    lookup.set(workerId, new Map());
+  }
+  return lookup.get(workerId)!;
+};
+
+const registerWorkerHourlyRate = (
+  lookup: WorkerHourlyRateLookup,
+  workerId: string,
+  companyId?: string | null,
+  companyName?: string | null,
+  hourlyRate?: number | null
+) => {
+  if (hourlyRate === undefined || hourlyRate === null) {
+    return;
+  }
+  if (!Number.isFinite(hourlyRate)) {
+    return;
+  }
+  const rateMap = ensureWorkerRateMap(lookup, workerId);
+  const keys = new Set<string>();
+  keys.add(buildCompanyIdentityKey(companyId, companyName));
+  if (companyId) {
+    keys.add(buildCompanyIdentityKey(companyId, null));
+  }
+  if (companyName) {
+    keys.add(buildCompanyIdentityKey(null, companyName));
+  }
+  keys.forEach((key) => rateMap.set(key, hourlyRate));
+};
+
+const resolveWorkerHourlyRate = (
+  workerRateMap: Map<string, number> | undefined,
+  companyId?: string | null,
+  companyName?: string | null
+): number | null => {
+  if (!workerRateMap) {
+    return null;
+  }
+  const candidates = [
+    buildCompanyIdentityKey(companyId, companyName),
+    companyId ? buildCompanyIdentityKey(companyId, null) : null,
+    companyName ? buildCompanyIdentityKey(null, companyName) : null,
+  ];
+  for (const key of candidates) {
+    if (!key) {
+      continue;
+    }
+    const rate = workerRateMap.get(key);
+    if (typeof rate === "number" && Number.isFinite(rate)) {
+      return rate;
+    }
+  }
+  return null;
+};
+
 const buildWorkerDailyRows = (
   workerId: string,
   visibleDays: DayDescriptor[],
   workerWeekData: AssignmentTotalsContext["workerWeekData"],
-  roundToDecimals: RoundToDecimalsFn
+  roundToDecimals: RoundToDecimalsFn,
+  workerHourlyRates: WorkerHourlyRateLookup
 ): WorkerDailyRow[] => {
   const dayRecords = workerWeekData[workerId]?.days ?? {};
-  return visibleDays.map((day) => {
+  const dayRows = visibleDays.flatMap((day) => {
     const dayData = dayRecords[day.dateKey];
-    const { firstStart, lastEnd } = resolveShiftBoundaries(dayData);
     const notes = collectDayNotes(dayData);
-    const totalHours =
-      dayData && Number.isFinite(dayData.totalHours)
-        ? roundToDecimals(dayData.totalHours)
-        : null;
+    const dateLabel = workerSheetDateFormatter
+      .format(day.date)
+      .toUpperCase();
+    const dayLabel = (day.label ?? "").toUpperCase();
+    const toUpper = (value: string | null | undefined) =>
+      value ? value.toUpperCase() : null;
 
-    const toUpper = (value: string | null) =>
-      value ? value.toUpperCase() : value;
-
-    return {
-      dateLabel: workerSheetDateFormatter.format(day.date).toUpperCase(),
-      dayLabel: toUpper(day.label) ?? "",
-      entryTime: toUpper(firstStart),
-      exitTime: toUpper(lastEnd),
-      totalHours,
-      notes: toUpper(notes),
+    const rows: WorkerDailyRow[] = [];
+    const workerRateMap = workerHourlyRates.get(workerId);
+    const coveredCompanyKeys = new Set<string>();
+    let pendingNotes = toUpper(notes);
+    const takeNotesValue = () => {
+      if (pendingNotes) {
+        const value = pendingNotes;
+        pendingNotes = null;
+        return value;
+      }
+      return null;
     };
+
+    const registerCompanyCoverage = (
+      companyId?: string | null,
+      companyName?: string | null
+    ) => {
+      coveredCompanyKeys.add(buildCompanyIdentityKey(companyId, companyName));
+    };
+
+    const pushRow = (params: {
+      companyId?: string | null;
+      companyName?: string | null;
+      entryTime?: string | null;
+      exitTime?: string | null;
+      totalHours?: number | null;
+      notes?: string | null;
+      description?: string | null;
+      isNotesOnly?: boolean;
+    }) => {
+      const resolvedNotes =
+        params.notes !== undefined
+          ? params.notes
+          : rows.length === 0
+          ? takeNotesValue()
+          : null;
+      const descriptionText = toUpper(params.description ?? null);
+      const normalizedHours =
+        typeof params.totalHours === "number" && Number.isFinite(params.totalHours)
+          ? roundToDecimals(params.totalHours)
+          : null;
+      const hourlyRate = resolveWorkerHourlyRate(
+        workerRateMap,
+        params.companyId,
+        params.companyName
+      );
+      const amount =
+        normalizedHours !== null && hourlyRate !== null
+          ? roundToDecimals(normalizedHours * hourlyRate)
+          : null;
+      const combinedNotes = [resolvedNotes, descriptionText]
+        .filter((value): value is string => Boolean(value && value.trim()))
+        .join(" | ");
+
+      rows.push({
+        dateLabel,
+        dayLabel,
+        companyName: (params.companyName ?? "SIN EMPRESA").toUpperCase(),
+        entryTime: toUpper(params.entryTime),
+        exitTime: toUpper(params.exitTime),
+        totalHours: normalizedHours,
+        amount,
+        notes: combinedNotes ? combinedNotes : null,
+        isNotesOnly: Boolean(params.isNotesOnly),
+      });
+    };
+
+    const buildShiftHours = (shift: {
+      hours?: number | null;
+      startTime?: string | null;
+      endTime?: string | null;
+    }): number | null => {
+      if (
+        typeof shift.hours === "number" &&
+        Number.isFinite(shift.hours)
+      ) {
+        return roundToDecimals(shift.hours);
+      }
+      const startMinutes = parseTimeToMinutes(shift.startTime);
+      const endMinutes = parseTimeToMinutes(shift.endTime);
+      if (
+        startMinutes !== null &&
+        endMinutes !== null &&
+        endMinutes >= startMinutes
+      ) {
+        return roundToDecimals((endMinutes - startMinutes) / 60);
+      }
+      return null;
+    };
+
+    const companyEntries = dayData?.entries ?? [];
+    companyEntries.forEach((entry) => {
+      registerCompanyCoverage(entry.companyId, entry.companyName);
+      const companyLabel =
+        entry.companyName ?? entry.companyId ?? "SIN EMPRESA";
+
+      if (Array.isArray(entry.workShifts) && entry.workShifts.length > 0) {
+        entry.workShifts.forEach((shift) => {
+          pushRow({
+            companyId: entry.companyId ?? null,
+            companyName: companyLabel,
+            entryTime: shift.startTime ?? null,
+            exitTime: shift.endTime ?? null,
+            totalHours: buildShiftHours(shift),
+            description:
+              extractShiftDescription(shift, entry.description ?? undefined) ??
+              entry.description ??
+              null,
+          });
+        });
+        return;
+      }
+
+      pushRow({
+        companyId: entry.companyId ?? null,
+        companyName: companyLabel,
+        entryTime: null,
+        exitTime: null,
+        totalHours:
+          typeof entry.hours === "number" && Number.isFinite(entry.hours)
+            ? roundToDecimals(entry.hours)
+            : null,
+        description: entry.description ?? null,
+      });
+    });
+
+    const companyHourRecords = Object.values(
+      dayData?.companyHours ?? {}
+    );
+    const uniqueCompanyRecords = new Map<
+      string,
+      WorkerWeeklyDayData["companyHours"][string]
+    >();
+    companyHourRecords.forEach((record) => {
+      const key = buildCompanyIdentityKey(record?.companyId, record?.name);
+      if (!uniqueCompanyRecords.has(key)) {
+        uniqueCompanyRecords.set(key, record);
+      }
+    });
+
+    uniqueCompanyRecords.forEach((record, key) => {
+      if (coveredCompanyKeys.has(key)) {
+        return;
+      }
+      const hours =
+        typeof record?.hours === "number" && Number.isFinite(record.hours)
+          ? roundToDecimals(record.hours)
+          : null;
+      if (hours === null || hours === 0) {
+        return;
+      }
+      const companyLabel = record?.name ?? record?.companyId ?? "SIN EMPRESA";
+      pushRow({
+        companyId: record?.companyId,
+        companyName: companyLabel,
+        entryTime: null,
+        exitTime: null,
+        totalHours: hours,
+      });
+      registerCompanyCoverage(record?.companyId, record?.name);
+    });
+
+    if (!rows.length && pendingNotes) {
+      rows.push({
+        dateLabel,
+        dayLabel,
+        companyName: "NOTAS",
+        entryTime: null,
+        exitTime: null,
+        totalHours: null,
+        amount: null,
+        notes: pendingNotes,
+        isNotesOnly: true,
+      });
+      pendingNotes = null;
+    } else if (pendingNotes && rows.length > 0) {
+      rows[0].notes = rows[0].notes ?? pendingNotes;
+      pendingNotes = null;
+    }
+
+    return rows;
+  });
+  const parseSortableTime = (value?: string | null) => {
+    if (!value) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+    const match = value.match(timeValuePattern);
+    if (match) {
+      const hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      return hours * 60 + minutes;
+    }
+    return Number.MAX_SAFE_INTEGER;
+  };
+  const parseSortableDate = (value: string) => {
+    const [day, month, year] = value.split("/");
+    return new Date(Number(year), Number(month) - 1, Number(day)).getTime();
+  };
+  return dayRows.sort((a, b) => {
+    const dateDiff = parseSortableDate(a.dateLabel) - parseSortableDate(b.dateLabel);
+    if (dateDiff !== 0) {
+      return dateDiff;
+    }
+    const timeDiff =
+      parseSortableTime(a.entryTime) - parseSortableTime(b.entryTime);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return (a.companyName ?? "").localeCompare(b.companyName ?? "", "es", {
+      sensitivity: "base",
+    });
   });
 };
 export const exportHoursRegistryExcel = ({
@@ -225,6 +469,8 @@ export const exportHoursRegistryExcel = ({
       hoursWithRate: number;
     }
   >();
+
+  const workerHourlyRates: WorkerHourlyRateLookup = new Map();
 
   const companyAggregates = new Map<
     string,
@@ -273,6 +519,14 @@ export const exportHoursRegistryExcel = ({
       workerEntry.hoursWithRate += totalHours;
     }
 
+    registerWorkerHourlyRate(
+      workerHourlyRates,
+      assignment.workerId,
+      assignment.companyId,
+      assignment.companyName,
+      hourlyRate
+    );
+
     const companyKey =
       normalizeKeyPart(assignment.companyId) ??
       normalizeCompanyLabel(assignment.companyName) ??
@@ -305,7 +559,7 @@ export const exportHoursRegistryExcel = ({
   const sheetRows: Array<Array<string | number | null>> = [];
   const workerTotals: WorkerTotalsRange[] = [];
 
-  sheetRows.push(["CONTROL HORARIO POR EMPRESA"]);
+  sheetRows.push(["INFORME CONTROL HORARIO"]);
   sheetRows.push([`Del ${rangeLabel}`]);
   sheetRows.push([]);
   const tableHeaderRowNumber = sheetRows.length + 1;
@@ -414,7 +668,8 @@ export const exportHoursRegistryExcel = ({
       worker.workerId,
       visibleDays,
       workerWeekData,
-      roundToDecimals
+      roundToDecimals,
+      workerHourlyRates
     );
     const hasTrackedHours = dailyRows.some(
       (row) =>
