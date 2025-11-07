@@ -6342,7 +6342,7 @@ export const HoursRegistryPage: React.FC = () => {
         <Card className="overflow-visible">
           <CardHeader className="sticky top-0 z-30 gap-3 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/75 shadow-sm dark:bg-gray-900/90">
             <div className="grid w-full grid-cols-1 items-center gap-3 lg:grid-cols-[1fr_auto_1fr] lg:gap-4">
-              <div className="flex flex-col items-center gap-2 text-center sm:w-full sm:max-w-md sm:self-center lg:flex-row lg:items-center lg:gap-3 lg:text-left lg:w-auto lg:max-w-none">
+              <div className="mx-auto flex w-full max-w-lg flex-col items-center justify-center gap-2 text-center sm:self-center lg:mx-0 lg:items-center lg:justify-start lg:text-left lg:flex-row lg:gap-3">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-gray-700 dark:text-gray-200 lg:self-center">
                   Vista
                 </span>

@@ -1035,7 +1035,7 @@ const MultipleCalculatorPage: React.FC = () => {
           <Card>
             <CardHeader className="gap-3">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-col items-center gap-2 text-center sm:w-full sm:max-w-md sm:self-center lg:flex-row lg:items-center lg:gap-3 lg:text-left lg:w-auto lg:max-w-none">
+                <div className="mx-auto flex w-full max-w-lg flex-col items-center justify-center gap-2 text-center sm:self-center lg:mx-0 lg:items-center lg:justify-start lg:text-left lg:flex-row lg:gap-3">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-gray-500 dark:text-gray-400 lg:self-center">
                     Vista
                   </span>
