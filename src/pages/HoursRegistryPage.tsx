@@ -6407,7 +6407,7 @@ export const HoursRegistryPage: React.FC = () => {
                   </Button>
                 </div>
               </div>
-              <div className="flex flex-col items-stretch gap-2 whitespace-nowrap sm:items-center sm:justify-center lg:items-end lg:justify-end 2xl:flex-row 2xl:items-center">
+              <div className="flex flex-col items-stretch gap-2 whitespace-nowrap sm:flex-row sm:items-center sm:justify-center lg:items-end lg:justify-end">
                 <Button
                   size="sm"
                   className={`w-full sm:w-auto ${exportExcelButtonClassName}`}
