@@ -76,6 +76,7 @@ import {
   WorkerSearchSelect,
 } from "../components/worker/GroupSelectors";
 import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
+import { countWorkersByActivity } from "../lib/workerStatus";
 import { DateRangePicker } from "../components/ui/DateRangePicker";
 import { FeedbackDialog } from "../components/ui/FeedbackDialog";
 import {
@@ -2856,6 +2857,8 @@ export const HoursRegistryPage: React.FC = () => {
       label: "Trabajadores",
       description: "Incluye todas las categorías",
       memberCount: initialAssignmentWorkerIds.length,
+      activeCount: initialAssignmentWorkerIds.length,
+      inactiveCount: 0,
     },
   ]);
   const [groupMembersById, setGroupMembersById] = useState<
@@ -4406,22 +4409,22 @@ export const HoursRegistryPage: React.FC = () => {
             (trimToNull(rawName)
               ? createGroupId(rawName)
               : `company-${companyAggregates.size + 1}`);
-        const displayName = trimToNull(rawName) ?? normalizedId;
-        const safeCount = Math.max(count ?? 1, 1);
-        const existing = companyAggregates.get(normalizedId);
-        if (existing) {
-          existing.count = Math.max(existing.count, safeCount);
-          if (
-            displayName &&
-            (isLikelyIdentifier(existing.name) ||
-              (!isLikelyIdentifier(displayName) &&
-                existing.name !== displayName))
-          ) {
-            existing.name = displayName;
-          }
-        } else {
-          companyAggregates.set(normalizedId, {
-            id: normalizedId,
+          const displayName = trimToNull(rawName) ?? normalizedId;
+          const safeCount = Math.max(count ?? 1, 1);
+          const existing = companyAggregates.get(normalizedId);
+          if (existing) {
+            existing.count = Math.max(existing.count, safeCount);
+            if (
+              displayName &&
+              (isLikelyIdentifier(existing.name) ||
+                (!isLikelyIdentifier(displayName) &&
+                  existing.name !== displayName))
+            ) {
+              existing.name = displayName;
+            }
+          } else {
+            companyAggregates.set(normalizedId, {
+              id: normalizedId,
               name: displayName,
               count: safeCount,
             });
@@ -4471,18 +4474,16 @@ export const HoursRegistryPage: React.FC = () => {
         }
 
         if (baseInfo?.contractsByCompany) {
-          Object.entries(baseInfo.contractsByCompany).forEach(
-            ([key, list]) => {
-              if (!list?.length) {
-                return;
-              }
-              registerContractsForKeys([key], list);
-              const normalizedKey = normalizeKeyPart(key);
-              if (normalizedKey && !companyAggregates.has(normalizedKey)) {
-                seedCompanyAggregate(normalizedKey, key, list.length);
-              }
+          Object.entries(baseInfo.contractsByCompany).forEach(([key, list]) => {
+            if (!list?.length) {
+              return;
             }
-          );
+            registerContractsForKeys([key], list);
+            const normalizedKey = normalizeKeyPart(key);
+            if (normalizedKey && !companyAggregates.has(normalizedKey)) {
+              seedCompanyAggregate(normalizedKey, key, list.length);
+            }
+          });
         }
 
         if (parameterRelations.length > 0) {
@@ -4637,10 +4638,7 @@ export const HoursRegistryPage: React.FC = () => {
           });
         };
 
-        const mergedContractsMap = new Map<
-          string,
-          WorkerCompanyContract[]
-        >();
+        const mergedContractsMap = new Map<string, WorkerCompanyContract[]>();
         Object.entries(contractsByCompany).forEach(([rawKey, list]) => {
           const normalizedKey = normalizeKeyPart(rawKey);
           const aggregateEntry = normalizedKey
@@ -4685,8 +4683,7 @@ export const HoursRegistryPage: React.FC = () => {
         });
 
         const infoData: WorkerInfoData = {
-          id:
-            trimToNull(payload?.id ?? baseInfo?.id ?? workerId) ?? workerId,
+          id: trimToNull(payload?.id ?? baseInfo?.id ?? workerId) ?? workerId,
           name:
             trimToNull(payload?.name ?? baseInfo?.name ?? workerName) ??
             workerName,
@@ -4718,14 +4715,12 @@ export const HoursRegistryPage: React.FC = () => {
             undefined,
           birthDate:
             trimToNull(birthDateValue) ?? baseInfo?.birthDate ?? undefined,
-          address:
-            trimToNull(addressValue) ?? baseInfo?.address ?? undefined,
+          address: trimToNull(addressValue) ?? baseInfo?.address ?? undefined,
           iban:
             trimToNull(ibanValue?.toUpperCase() ?? null) ??
             baseInfo?.iban ??
             undefined,
-          category:
-            trimToNull(categoryName) ?? baseInfo?.category ?? undefined,
+          category: trimToNull(categoryName) ?? baseInfo?.category ?? undefined,
           categoryId:
             trimToNull(categoryIdValue) ?? baseInfo?.categoryId ?? undefined,
           subcategory:
@@ -4941,6 +4936,8 @@ export const HoursRegistryPage: React.FC = () => {
           label: "Trabajadores",
           description: "Incluye todas las categorías",
           memberCount: initialAssignmentWorkerIds.length,
+          activeCount: initialAssignmentWorkerIds.length,
+          inactiveCount: 0,
         },
       ]);
       setGroupMembersById({ all: initialAssignmentWorkerIds });
@@ -5001,6 +4998,10 @@ export const HoursRegistryPage: React.FC = () => {
         setAssignments(initialAssignments.map(withNormalizedCompany));
       }
 
+      const workersById = new Map(
+        compactWorkers.map((worker) => [worker.id, worker])
+      );
+
       try {
         const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt, {
           preloadedWorkers: rawWorkers,
@@ -5016,6 +5017,11 @@ export const HoursRegistryPage: React.FC = () => {
         });
         sanitizedMembers.all = compactWorkers.map((worker) => worker.id);
 
+        const allActivityCounts = countWorkersByActivity(
+          sanitizedMembers.all,
+          workersById
+        );
+
         const options: WorkerGroupOption[] = [
           {
             id: "all",
@@ -5024,6 +5030,8 @@ export const HoursRegistryPage: React.FC = () => {
               ? "Incluye todos los grupos"
               : "No hay grupos disponibles",
             memberCount: compactWorkers.length,
+            activeCount: allActivityCounts.active,
+            inactiveCount: allActivityCounts.inactive,
           },
           ...grouping.groups
             .map((group) => {
@@ -5032,13 +5040,20 @@ export const HoursRegistryPage: React.FC = () => {
                 ? group.description
                 : memberCount === 1
                 ? "1 trabajador asignado"
-                : `${memberCount} trabajadores asignados`;
+                : `${memberCount} trabajadores`;
+
+              const activityCounts = countWorkersByActivity(
+                sanitizedMembers[group.id],
+                workersById
+              );
 
               return {
                 id: group.id,
                 label: group.label,
                 description,
                 memberCount,
+                activeCount: activityCounts.active,
+                inactiveCount: activityCounts.inactive,
               };
             })
             .sort((a, b) =>
@@ -5055,6 +5070,7 @@ export const HoursRegistryPage: React.FC = () => {
           groupError
         );
         const fallbackIds = compactWorkers.map((worker) => worker.id);
+        const fallbackCounts = countWorkersByActivity(fallbackIds, workersById);
         setGroupOptions([
           {
             id: "all",
@@ -5063,6 +5079,8 @@ export const HoursRegistryPage: React.FC = () => {
               ? "Incluye todas las categorías"
               : "No hay grupos disponibles",
             memberCount: compactWorkers.length,
+            activeCount: fallbackCounts.active,
+            inactiveCount: fallbackCounts.inactive,
           },
         ]);
         setGroupMembersById({ all: fallbackIds });
@@ -5082,6 +5100,8 @@ export const HoursRegistryPage: React.FC = () => {
           label: "Trabajadores",
           description: "Incluye todas las categorías",
           memberCount: initialAssignmentWorkerIds.length,
+          activeCount: initialAssignmentWorkerIds.length,
+          inactiveCount: 0,
         },
       ]);
       setGroupMembersById({ all: initialAssignmentWorkerIds });

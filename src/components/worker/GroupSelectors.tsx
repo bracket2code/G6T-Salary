@@ -14,6 +14,8 @@ export interface WorkerGroupOption {
   label: string;
   description?: string;
   memberCount: number;
+  activeCount: number;
+  inactiveCount: number;
 }
 
 export interface WorkerSearchSelectProps {
@@ -920,12 +922,29 @@ export const GroupSearchSelect: React.FC<GroupSearchSelectProps> = ({
                           </p>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                        <Users
-                          size={14}
-                          className="text-gray-400 dark:text-gray-500"
-                        />
-                        <span>{group.memberCount}</span>
+                      <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                        <div
+                          className="flex items-center gap-1"
+                          aria-label={`${group.activeCount ?? 0} trabajadores de alta`}
+                        >
+                          <Users
+                            size={14}
+                            className="text-green-600 dark:text-green-400"
+                            aria-hidden="true"
+                          />
+                          <span>{group.activeCount ?? 0}</span>
+                        </div>
+                        <div
+                          className="flex items-center gap-1"
+                          aria-label={`${group.inactiveCount ?? 0} trabajadores de baja`}
+                        >
+                          <Users
+                            size={14}
+                            className="text-red-500 dark:text-red-400"
+                            aria-hidden="true"
+                          />
+                          <span>{group.inactiveCount ?? 0}</span>
+                        </div>
                       </div>
                       {isSelected && (
                         <Check

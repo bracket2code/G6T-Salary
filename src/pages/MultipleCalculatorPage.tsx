@@ -13,6 +13,7 @@ import { Worker } from "../types/salary";
 import { useAuthStore } from "../store/authStore";
 import { fetchWorkersData } from "../lib/salaryData";
 import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
+import { countWorkersByActivity, isWorkerActive } from "../lib/workerStatus";
 import WorkerCalculationModule, {
   CalculationResult,
 } from "../components/multiple/WorkerCalculationModule";
@@ -118,6 +119,7 @@ const normalizeCompanyLookupMap = (
   return normalized;
 };
 
+
 const getEffectiveCompanyIds = (ids: string[]): string[] => {
   if (!ids.length) {
     return ids;
@@ -188,6 +190,8 @@ const MultipleCalculatorPage: React.FC = () => {
       label: "Trabajadores",
       description: "Incluye todas las categorías",
       memberCount: 0,
+      activeCount: 0,
+      inactiveCount: 0,
     },
   ]);
   const [groupMembersById, setGroupMembersById] = useState<
@@ -241,6 +245,8 @@ const MultipleCalculatorPage: React.FC = () => {
           label: "Trabajadores",
           description: "Incluye todas las categorías",
           memberCount: 0,
+          activeCount: 0,
+          inactiveCount: 0,
         },
       ]);
       setGroupMembersById({ all: [] });
@@ -282,6 +288,14 @@ const MultipleCalculatorPage: React.FC = () => {
         });
         sanitizedMembers.all = workers.map((worker) => worker.id);
 
+        const workersById = new Map(
+          workers.map((worker) => [worker.id, worker])
+        );
+        const allActivityCounts = countWorkersByActivity(
+          sanitizedMembers.all,
+          workersById
+        );
+
         const options: WorkerGroupOption[] = [
           {
             id: "all",
@@ -290,6 +304,8 @@ const MultipleCalculatorPage: React.FC = () => {
               ? "Incluye todos los grupos"
               : "No hay grupos disponibles",
             memberCount: workers.length,
+            activeCount: allActivityCounts.active,
+            inactiveCount: allActivityCounts.inactive,
           },
           ...grouping.groups
             .map((group) => {
@@ -300,11 +316,18 @@ const MultipleCalculatorPage: React.FC = () => {
                 ? "1 trabajador asignado"
                 : `${memberCount} trabajadores asignados`;
 
+              const activityCounts = countWorkersByActivity(
+                sanitizedMembers[group.id],
+                workersById
+              );
+
               return {
                 id: group.id,
                 label: group.label,
                 description,
                 memberCount,
+                activeCount: activityCounts.active,
+                inactiveCount: activityCounts.inactive,
               };
             })
             .sort((a, b) =>
@@ -321,6 +344,8 @@ const MultipleCalculatorPage: React.FC = () => {
           groupError
         );
         const fallbackIds = workers.map((worker) => worker.id);
+        const totalActiveWorkers = workers.filter(isWorkerActive).length;
+        const totalInactiveWorkers = workers.length - totalActiveWorkers;
         setGroupOptions([
           {
             id: "all",
@@ -329,6 +354,8 @@ const MultipleCalculatorPage: React.FC = () => {
               ? "Incluye todas las categorías"
               : "No hay grupos disponibles",
             memberCount: workers.length,
+            activeCount: totalActiveWorkers,
+            inactiveCount: totalInactiveWorkers,
           },
         ]);
         setGroupMembersById({ all: fallbackIds });
@@ -344,6 +371,8 @@ const MultipleCalculatorPage: React.FC = () => {
           label: "Trabajadores",
           description: "Incluye todas las categorías",
           memberCount: 0,
+          activeCount: 0,
+          inactiveCount: 0,
         },
       ]);
       setGroupMembersById({ all: [] });

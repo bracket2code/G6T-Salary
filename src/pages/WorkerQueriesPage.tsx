@@ -30,6 +30,7 @@ import {
   WorkerSearchSelect,
 } from "../components/worker/GroupSelectors";
 import { createGroupId, fetchWorkerGroupsData } from "../lib/workerGroups";
+import { countWorkersByActivity } from "../lib/workerStatus";
 
 const sanitizeTelHref = (phone: string) => {
   const sanitized = phone.replace(/[^+\d]/g, "");
@@ -143,6 +144,8 @@ export const WorkerQueriesPage: React.FC = () => {
       label: "Trabajadores",
       description: "Incluye todas las categorías",
       memberCount: 0,
+      activeCount: 0,
+      inactiveCount: 0,
     },
   ]);
   const [groupMembersById, setGroupMembersById] = useState<
@@ -334,6 +337,9 @@ export const WorkerQueriesPage: React.FC = () => {
         includeInactive: true,
       });
       let workersWithGroups = workers;
+      const workersById = new Map(
+        workers.map((worker) => [worker.id, worker])
+      );
 
       try {
         const grouping = await fetchWorkerGroupsData(apiUrl, externalJwt, {
@@ -354,6 +360,11 @@ export const WorkerQueriesPage: React.FC = () => {
 
         sanitizedMembers.all = workers.map((worker) => worker.id);
 
+        const allActivityCounts = countWorkersByActivity(
+          sanitizedMembers.all,
+          workersById
+        );
+
         const options: WorkerGroupOption[] = [
           {
             id: "all",
@@ -362,6 +373,8 @@ export const WorkerQueriesPage: React.FC = () => {
               ? "Incluye todos los grupos"
               : "No hay grupos disponibles",
             memberCount: workers.length,
+            activeCount: allActivityCounts.active,
+            inactiveCount: allActivityCounts.inactive,
           },
           ...grouping.groups
             .map((group) => {
@@ -372,11 +385,18 @@ export const WorkerQueriesPage: React.FC = () => {
                 ? "1 trabajador asignado"
                 : `${memberCount} trabajadores asignados`;
 
+              const activityCounts = countWorkersByActivity(
+                sanitizedMembers[group.id],
+                workersById
+              );
+
               return {
                 id: group.id,
                 label: group.label,
                 description,
                 memberCount,
+                activeCount: activityCounts.active,
+                inactiveCount: activityCounts.inactive,
               };
             })
             .sort((a, b) =>
@@ -444,6 +464,11 @@ export const WorkerQueriesPage: React.FC = () => {
         });
         fallbackMembers.all = workers.map((worker) => worker.id);
 
+        const fallbackAllCounts = countWorkersByActivity(
+          fallbackMembers.all,
+          workersById
+        );
+
         const fallbackOptions: WorkerGroupOption[] = [
           {
             id: "all",
@@ -452,16 +477,26 @@ export const WorkerQueriesPage: React.FC = () => {
               ? "Incluye todas las categorías"
               : "No hay categorías disponibles",
             memberCount: workers.length,
+            activeCount: fallbackAllCounts.active,
+            inactiveCount: fallbackAllCounts.inactive,
           },
-          ...fallbackGroups.map((group) => ({
-            id: group.id,
-            label: group.label,
-            description:
-              group.memberIds.length === 1
-                ? "1 trabajador asignado"
-                : `${group.memberIds.length} trabajadores asignados`,
-            memberCount: group.memberIds.length,
-          })),
+          ...fallbackGroups.map((group) => {
+            const activityCounts = countWorkersByActivity(
+              group.memberIds,
+              workersById
+            );
+            return {
+              id: group.id,
+              label: group.label,
+              description:
+                group.memberIds.length === 1
+                  ? "1 trabajador asignado"
+                  : `${group.memberIds.length} trabajadores asignados`,
+              memberCount: group.memberIds.length,
+              activeCount: activityCounts.active,
+              inactiveCount: activityCounts.inactive,
+            };
+          }),
         ];
 
         setGroupOptions(fallbackOptions);
