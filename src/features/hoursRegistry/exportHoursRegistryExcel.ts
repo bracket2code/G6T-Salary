@@ -250,6 +250,7 @@ export const exportHoursRegistryExcel = ({
   );
 
   const worksheet = XLSXUtils.aoa_to_sheet(sheetRows);
+  let companySummaryLastRow: number | null = null;
   const ensureCell = (address: string) => {
     const cell = (worksheet[address] ?? {
       t: "s",
@@ -384,6 +385,68 @@ export const exportHoursRegistryExcel = ({
       },
     };
   };
+  const applyCompanySummaryTitleTheme = (address: string) => {
+    const cell = ensureCell(address);
+    const existingStyle =
+      (cell.s as Record<string, unknown> | undefined) ?? {};
+    const existingFont =
+      (existingStyle.font as Record<string, unknown> | undefined) ?? {};
+    cell.s = {
+      ...existingStyle,
+      font: {
+        ...existingFont,
+        color: { rgb: "FFFFFFFF" },
+        bold: true,
+        sz: 16,
+      },
+      alignment: {
+        horizontal: "center",
+        vertical: "center",
+      },
+      fill: {
+        patternType: "solid",
+        fgColor: { rgb: "FFB85450" },
+        bgColor: { rgb: "FFB85450" },
+      },
+    };
+  };
+  const applyCompanySummaryHeaderTheme = (address: string) => {
+    const cell = ensureCell(address);
+    const existingStyle =
+      (cell.s as Record<string, unknown> | undefined) ?? {};
+    const existingFont =
+      (existingStyle.font as Record<string, unknown> | undefined) ?? {};
+    cell.s = {
+      ...existingStyle,
+      font: {
+        ...existingFont,
+        color: { rgb: "FFFFFFFF" },
+        bold: true,
+      },
+      alignment: {
+        horizontal: "center",
+        vertical: "center",
+      },
+      fill: {
+        patternType: "solid",
+        fgColor: { rgb: "FFC0504D" },
+        bgColor: { rgb: "FFC0504D" },
+      },
+    };
+  };
+  const applyCompanySummaryRowFill = (address: string) => {
+    const cell = ensureCell(address);
+    const existingStyle =
+      (cell.s as Record<string, unknown> | undefined) ?? {};
+    cell.s = {
+      ...existingStyle,
+      fill: {
+        patternType: "solid",
+        fgColor: { rgb: "FFF2DCDB" },
+        bgColor: { rgb: "FFF2DCDB" },
+      },
+    };
+  };
   const buildRange = (column: string, startRow: number, endRow: number) =>
     `${column}${startRow}:${column}${endRow}`;
   const buildAbsoluteRange = (
@@ -478,116 +541,71 @@ export const exportHoursRegistryExcel = ({
       tableDataEndRow
     );
 
-    const summaryTitleRow = 4;
-    const summaryHeaderRow = summaryTitleRow + 1;
-    const summaryDataStartRow = summaryHeaderRow + 1;
+    const companySummaryTitleRow = 4;
+    const companySummaryHeaderRow = companySummaryTitleRow + 1;
+    const companySummaryDataStartRow = companySummaryHeaderRow + 1;
+    const companySummaryColumns = ["H", "I"] as const;
 
-    const summaryHeaderColumns = ["H", "I", "J", "K"] as const;
-    summaryHeaderColumns.forEach((column) => {
-      applyHeaderTheme(`${column}${summaryTitleRow}`);
-      applyHeaderTheme(`${column}${summaryHeaderRow}`);
+    companySummaryColumns.forEach((column) => {
+      applyCompanySummaryHeaderTheme(`${column}${companySummaryHeaderRow}`);
     });
 
-    const summaryHeaders = [
-      "UBICACIÓN",
-      "TOTAL HORAS",
-      "€/HORA MEDIO",
-      "TOTAL IMPORTE €",
-    ] as const;
-    summaryHeaders.forEach((header, index) => {
-      const column = summaryHeaderColumns[index];
-      const headerCell = ensureCell(`${column}${summaryHeaderRow}`);
+    companySummaryColumns.forEach((column, index) => {
+      const headerCell = ensureCell(`${column}${companySummaryHeaderRow}`);
       headerCell.t = "s";
-      headerCell.v = header;
-      if (column === "I" || column === "J") {
-        applyLeftAlignment(`${column}${summaryHeaderRow}`);
-      } else {
-        applyCenterAlignment(`${column}${summaryHeaderRow}`);
-      }
+      headerCell.v = index === 0 ? "EMPRESAS" : "IMPORTES";
     });
 
-    const summaryTitleCell = ensureCell(`H${summaryTitleRow}`);
-    summaryTitleCell.t = "s";
-    summaryTitleCell.v = "RESUMEN GENERAL";
-    const summaryTitleExistingStyle =
-      (summaryTitleCell.s as Record<string, unknown> | undefined) ?? {};
-    const summaryTitleFont =
-      (summaryTitleExistingStyle.font as
-        | Record<string, unknown>
-        | undefined) ?? {};
-    const summaryTitleAlignment =
-      (summaryTitleExistingStyle.alignment as
-        | Record<string, unknown>
-        | undefined) ?? {};
-    summaryTitleCell.s = {
-      ...summaryTitleExistingStyle,
-      font: {
-        ...summaryTitleFont,
-        bold: true,
-        sz: 16,
-      },
-      alignment: {
-        ...summaryTitleAlignment,
-        horizontal: "center",
-      },
-    };
-    merges.push({
-      s: { r: summaryTitleRow - 1, c: 7 },
-      e: { r: summaryTitleRow - 1, c: 10 },
+    companySummaryColumns.forEach((column) => {
+      applyCompanySummaryTitleTheme(`${column}${companySummaryTitleRow}`);
     });
-    worksheet["!merges"] = merges;
+    const companySummaryTitleCell = ensureCell(
+      `${companySummaryColumns[0]}${companySummaryTitleRow}`
+    );
+    companySummaryTitleCell.t = "s";
+    companySummaryTitleCell.v = "TOTAL POR EMPRESAS";
+    merges.push({
+      s: { r: companySummaryTitleRow - 1, c: 7 },
+      e: { r: companySummaryTitleRow - 1, c: 8 },
+    });
 
     summaryCompanies.forEach((companyName, index) => {
-      const rowNumber = summaryDataStartRow + index;
+      const rowNumber = companySummaryDataStartRow + index;
       const escapedCompanyName = companyName.replace(/"/g, '""');
       const companyCell = ensureCell(`H${rowNumber}`);
       companyCell.t = "s";
       companyCell.v = companyName;
+      applyCompanySummaryRowFill(`H${rowNumber}`);
+      applyCompanySummaryRowFill(`I${rowNumber}`);
+      applyLeftAlignment(`H${rowNumber}`);
 
-      const hoursSumExpr = `SUMIFS(${hoursRangeAbs},${companyRangeAbs},"${escapedCompanyName}")`;
       const amountSumExpr = `SUMIFS(${amountRangeAbs},${companyRangeAbs},"${escapedCompanyName}",${rateRangeAbs},"<>")`;
-      const hoursWithRateExpr = `SUMIFS(${hoursRangeAbs},${companyRangeAbs},"${escapedCompanyName}",${rateRangeAbs},"<>")`;
-
-      setCellFormula(`I${rowNumber}`, `${hoursSumExpr}`);
-      setCellFormula(
-        `J${rowNumber}`,
-        `IF(${hoursWithRateExpr}=0,"",ROUND(${amountSumExpr}/${hoursWithRateExpr},2))`
-      );
-      setCellFormula(
-        `K${rowNumber}`,
-        `IF(${amountSumExpr}=0,"",${amountSumExpr})`
-      );
-      applyCenterAlignment(`I${rowNumber}`);
-      applyCenterAlignment(`J${rowNumber}`);
-      applyCurrencyFormat(`K${rowNumber}`);
+      setCellFormula(`I${rowNumber}`, `IF(${amountSumExpr}=0,"",${amountSumExpr})`);
+      applyCurrencyFormat(`I${rowNumber}`);
     });
 
-    const summaryTotalRow = summaryDataStartRow + summaryCompanies.length;
-    const totalLabelCell = ensureCell(`H${summaryTotalRow}`);
-    totalLabelCell.t = "s";
-    totalLabelCell.v = "TOTAL GENERAL";
-    applyBoldStyle(`H${summaryTotalRow}`);
-    applyTotalHighlight(`H${summaryTotalRow}`);
-
-    const totalHoursExpr = `SUMIFS(${hoursRangeAbs},${companyRangeAbs},"<>TOTAL",${companyRangeAbs},"<>")`;
-    const totalAmountExpr = `SUMIFS(${amountRangeAbs},${rateRangeAbs},"<>")`;
-    const totalHoursWithRateExpr = `SUMIFS(${hoursRangeAbs},${rateRangeAbs},"<>")`;
-
-    setCellFormula(`I${summaryTotalRow}`, `${totalHoursExpr}`);
-    setCellFormula(
-      `J${summaryTotalRow}`,
-      `IF(${totalHoursWithRateExpr}=0,"",ROUND(${totalAmountExpr}/${totalHoursWithRateExpr},2))`
+    const companySummaryTotalRow =
+      companySummaryDataStartRow + summaryCompanies.length;
+    const companyTotalLabelCell = ensureCell(`H${companySummaryTotalRow}`);
+    companyTotalLabelCell.t = "s";
+    companyTotalLabelCell.v = "TOTAL";
+    applyBoldStyle(`H${companySummaryTotalRow}`);
+    applyCompanySummaryRowFill(`H${companySummaryTotalRow}`);
+    applyCompanySummaryRowFill(`I${companySummaryTotalRow}`);
+    const companyAmountSummaryRange = buildRange(
+      "I",
+      companySummaryDataStartRow,
+      Math.max(companySummaryDataStartRow, companySummaryTotalRow - 1)
     );
     setCellFormula(
-      `K${summaryTotalRow}`,
-      `IF(${totalAmountExpr}=0,"",${totalAmountExpr})`
+      `I${companySummaryTotalRow}`,
+      summaryCompanies.length === 0
+        ? '""'
+        : `IF(SUM(${companyAmountSummaryRange})=0,"",SUM(${companyAmountSummaryRange}))`
     );
-    ["I", "J", "K"].forEach((column) => {
-      applyBoldStyle(`${column}${summaryTotalRow}`);
-      applyCenterAlignment(`${column}${summaryTotalRow}`);
-      applyTotalHighlight(`${column}${summaryTotalRow}`);
-    });
-    applyCurrencyFormat(`K${summaryTotalRow}`);
+    applyCurrencyFormat(`I${companySummaryTotalRow}`);
+    applyBoldStyle(`I${companySummaryTotalRow}`);
+    companySummaryLastRow = companySummaryTotalRow;
   }
 
   worksheet["!autofilter"] = {
@@ -609,6 +627,15 @@ export const exportHoursRegistryExcel = ({
   merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } });
   merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 4 } });
   worksheet["!merges"] = merges;
+
+  const lastUsedRow =
+    Math.max(tableLastDataRowNumber, companySummaryLastRow ?? 0) ||
+    tableLastDataRowNumber;
+  const lastUsedColumn = summaryCompanies.length > 0 ? 8 : 4;
+  worksheet["!ref"] = XLSXUtils.encode_range({
+    s: { r: 0, c: 0 },
+    e: { r: Math.max(lastUsedRow - 1, 0), c: lastUsedColumn },
+  });
 
   const titleStyle = {
     font: { sz: 24, bold: true },
