@@ -139,7 +139,7 @@ export const fetchWorkerGroupsData = async (
   };
 
   const groupsResponse = await fetch(
-    `${apiUrl}/Parameter/List?Parent=${GROUPS_PARENT_ID}`,
+    `${apiUrl}/Parameter/List?Parent=${GROUPS_PARENT_ID}&Types=0`,
     {
       method: "GET",
       headers,

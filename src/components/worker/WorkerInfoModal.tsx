@@ -161,6 +161,11 @@ interface WorkerCompaniesAndContractsProps {
   companyLookup?: Record<string, string>;
 }
 
+interface DisplayContract {
+  label: string;
+  rate: number;
+}
+
 const WorkerCompaniesAndContracts: React.FC<
   WorkerCompaniesAndContractsProps
 > = ({ companies, contractsByCompany, companyStats, companyLookup }) => {
@@ -243,25 +248,28 @@ const WorkerCompaniesAndContracts: React.FC<
     [isLikelyIdentifier]
   );
 
-  const dedupeContracts = useCallback(
-    (contracts: WorkerCompanyContract[] = []) => {
+  const buildDisplayContracts = useCallback(
+    (contracts: WorkerCompanyContract[] = []): DisplayContract[] => {
       const seen = new Set<string>();
-      return contracts.filter((contract) => {
-        const labelKey =
-          resolveContractName(contract)?.toLowerCase() ??
-          trimToNull(contract.label)?.toLowerCase() ??
-          "";
-        const rateKey =
-          typeof contract.hourlyRate === "number"
-            ? contract.hourlyRate.toFixed(4)
-            : "";
-        const fingerprint = `${labelKey}|${rateKey}`;
+      const display: DisplayContract[] = [];
+      contracts.forEach((contract) => {
+        const label = resolveContractName(contract);
+        if (!label) {
+          return;
+        }
+        if (typeof contract.hourlyRate !== "number") {
+          return;
+        }
+        const fingerprint = `${label.toLowerCase()}|${contract.hourlyRate.toFixed(
+          4
+        )}`;
         if (seen.has(fingerprint)) {
-          return false;
+          return;
         }
         seen.add(fingerprint);
-        return true;
+        display.push({ label, rate: contract.hourlyRate });
       });
+      return display;
     },
     [resolveContractName]
   );
@@ -291,7 +299,7 @@ const WorkerCompaniesAndContracts: React.FC<
       ([companyName, contracts]) => {
         const existing = merged.get(companyName);
         if (existing) {
-          existing.contracts = dedupeContracts(contracts ?? []);
+          existing.contracts = contracts ?? [];
           if (typeof existing.contractCount !== "number") {
             existing.contractCount = contracts?.length ?? 0;
           } else {
@@ -303,25 +311,37 @@ const WorkerCompaniesAndContracts: React.FC<
           merged.set(companyName, {
             assignmentCount: stats?.assignmentCount ?? 0,
             contractCount: stats?.contractCount ?? contracts?.length ?? 0,
-            contracts: dedupeContracts(contracts ?? []),
+            contracts: contracts ?? [],
           });
         }
       }
     );
 
-    const result = Array.from(merged.entries()).map(([companyName, data]) => ({
-      companyName,
-      assignmentCount: data.assignmentCount,
-      contractCount: data.contractCount,
-      contracts: dedupeContracts(data.contracts),
-    }));
+    const result = Array.from(merged.entries())
+      .map(([companyName, data]) => ({
+        companyName,
+        assignmentCount: data.assignmentCount,
+        contractCount: data.contractCount,
+        contracts: buildDisplayContracts(data.contracts),
+      }))
+      .filter((entry) => entry.contracts.length > 0);
 
     result.sort((a, b) =>
-      a.companyName.localeCompare(b.companyName, "es", { sensitivity: "base" })
+      resolveCompanyName(a.companyName).localeCompare(
+        resolveCompanyName(b.companyName),
+        "es",
+        { sensitivity: "base" }
+      )
     );
 
     return result;
-  }, [companies, contractsByCompany, companyStats, dedupeContracts]);
+  }, [
+    buildDisplayContracts,
+    companies,
+    contractsByCompany,
+    companyStats,
+    resolveCompanyName,
+  ]);
 
   const flattenedLines = useMemo(() => {
     const lines: Array<{ key: string; text: string }> = [];
@@ -329,45 +349,20 @@ const WorkerCompaniesAndContracts: React.FC<
       return lines;
     }
     entries.forEach((entry) => {
-      const companyLabel = resolveCompanyName(entry.companyName);
-      const contracts = dedupeContracts(entry.contracts);
-      if (!contracts.length) {
-        if ((entry.assignmentCount ?? 0) > 0) {
-          lines.push({
-            key: `${companyLabel}-assignment`,
-            text: `${companyLabel} · Sin contrato`,
-          });
-        } else {
-          lines.push({
-            key: `${companyLabel}-no-contract`,
-            text: `${companyLabel} · Sin contrato registrado`,
-          });
-        }
-        return;
-      }
-
-      contracts.forEach((contract, index) => {
-        const label =
-          resolveContractName(contract) ?? `Contrato ${index + 1}`;
-        let text = `${companyLabel} · ${label}`;
-        if (typeof contract.hourlyRate === "number") {
-          text += ` · ${contract.hourlyRate.toFixed(2)} €/h`;
-        }
-
+      const companyLabel = resolveCompanyName(entry.companyName).toUpperCase();
+      entry.contracts.forEach((contract, index) => {
+        const text = `${companyLabel} · ${contract.label} · ${contract.rate.toFixed(
+          2
+        )} €/h`;
         lines.push({
-          key: `${companyLabel}-${label}-${index}`,
+          key: `${companyLabel}-${contract.label}-${index}`,
           text,
         });
       });
     });
 
     return lines;
-  }, [
-    dedupeContracts,
-    entries,
-    resolveCompanyName,
-    resolveContractName,
-  ]);
+  }, [entries, resolveCompanyName]);
 
   if (!flattenedLines.length) {
     return null;
