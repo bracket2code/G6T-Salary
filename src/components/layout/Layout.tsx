@@ -183,7 +183,7 @@ export const Layout: React.FC = () => {
           </div>
         </div>
         <main className="flex-1 w-full min-w-0 overflow-y-auto">
-          <div className="max-w-[125rem] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 h-full">
+          <div className="max-w-[115rem] mx-auto px-4 sm:px-6 lg:px-8 xl:px-6 h-full">
             <Outlet />
           </div>
         </main>
