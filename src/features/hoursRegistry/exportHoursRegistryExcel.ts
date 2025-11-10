@@ -118,7 +118,10 @@ const buildUniqueSheetName = (
   while (usedNames.has(candidate)) {
     const suffixLabel = ` (${suffix})`;
     const maxBaseLength = 31 - suffixLabel.length;
-    candidate = `${normalizedBase.slice(0, Math.max(maxBaseLength, 0))}${suffixLabel}`;
+    candidate = `${normalizedBase.slice(
+      0,
+      Math.max(maxBaseLength, 0)
+    )}${suffixLabel}`;
     suffix += 1;
   }
   usedNames.add(candidate);
@@ -129,12 +132,8 @@ const buildCompanyIdentityKey = (
   companyId?: string | null,
   companyName?: string | null
 ) => {
-  const normalizedId = companyId
-    ? companyId.trim().toLowerCase()
-    : "";
-  const normalizedName = companyName
-    ? companyName.trim().toLowerCase()
-    : "";
+  const normalizedId = companyId ? companyId.trim().toLowerCase() : "";
+  const normalizedName = companyName ? companyName.trim().toLowerCase() : "";
   if (!normalizedId && !normalizedName) {
     return "__unknown__";
   }
@@ -214,9 +213,7 @@ const buildWorkerDailyRows = (
   const dayRows = visibleDays.flatMap((day) => {
     const dayData = dayRecords[day.dateKey];
     const notes = collectDayNotes(dayData);
-    const dateLabel = workerSheetDateFormatter
-      .format(day.date)
-      .toUpperCase();
+    const dateLabel = workerSheetDateFormatter.format(day.date).toUpperCase();
     const dayLabel = (day.label ?? "").toUpperCase();
     const toUpper = (value: string | null | undefined) =>
       value ? value.toUpperCase() : null;
@@ -259,7 +256,8 @@ const buildWorkerDailyRows = (
           : null;
       const descriptionText = toUpper(params.description ?? null);
       const normalizedHours =
-        typeof params.totalHours === "number" && Number.isFinite(params.totalHours)
+        typeof params.totalHours === "number" &&
+        Number.isFinite(params.totalHours)
           ? roundToDecimals(params.totalHours)
           : null;
       const hourlyRate = resolveWorkerHourlyRate(
@@ -293,10 +291,7 @@ const buildWorkerDailyRows = (
       startTime?: string | null;
       endTime?: string | null;
     }): number | null => {
-      if (
-        typeof shift.hours === "number" &&
-        Number.isFinite(shift.hours)
-      ) {
+      if (typeof shift.hours === "number" && Number.isFinite(shift.hours)) {
         return roundToDecimals(shift.hours);
       }
       const startMinutes = parseTimeToMinutes(shift.startTime);
@@ -347,9 +342,7 @@ const buildWorkerDailyRows = (
       });
     });
 
-    const companyHourRecords = Object.values(
-      dayData?.companyHours ?? {}
-    );
+    const companyHourRecords = Object.values(dayData?.companyHours ?? {});
     const uniqueCompanyRecords = new Map<
       string,
       WorkerWeeklyDayData["companyHours"][string]
@@ -420,7 +413,8 @@ const buildWorkerDailyRows = (
     return new Date(Number(year), Number(month) - 1, Number(day)).getTime();
   };
   return dayRows.sort((a, b) => {
-    const dateDiff = parseSortableDate(a.dateLabel) - parseSortableDate(b.dateLabel);
+    const dateDiff =
+      parseSortableDate(a.dateLabel) - parseSortableDate(b.dateLabel);
     if (dateDiff !== 0) {
       return dateDiff;
     }
@@ -485,7 +479,11 @@ export const exportHoursRegistryExcel = ({
   assignments.forEach((assignment) => {
     const workerName =
       workerNameById[assignment.workerId] ?? assignment.workerName;
-    const totalHours = calculateRowTotal(assignment, totalsContext, visibleDays);
+    const totalHours = calculateRowTotal(
+      assignment,
+      totalsContext,
+      visibleDays
+    );
 
     const hourlyRate = resolveHourlyRateFromWorker(
       workerLookupById[assignment.workerId],
@@ -617,7 +615,11 @@ export const exportHoursRegistryExcel = ({
   });
 
   const tableLastDataRowNumber = (() => {
-    for (let index = sheetRows.length; index > tableHeaderRowNumber; index -= 1) {
+    for (
+      let index = sheetRows.length;
+      index > tableHeaderRowNumber;
+      index -= 1
+    ) {
       const row = sheetRows[index - 1];
       const hasValue = row.some((value) => {
         if (value === null || value === undefined) {
@@ -636,9 +638,7 @@ export const exportHoursRegistryExcel = ({
   })();
 
   const sortedCompanies = Array.from(companyAggregates.values())
-    .filter(
-      (company) => Math.abs(company.totalHours) >= hoursComparisonEpsilon
-    )
+    .filter((company) => Math.abs(company.totalHours) >= hoursComparisonEpsilon)
     .sort((a, b) =>
       a.companyName.localeCompare(b.companyName, "es", {
         sensitivity: "base",
@@ -659,7 +659,7 @@ export const exportHoursRegistryExcel = ({
 
   const workbook = XLSXUtils.book_new();
   const usedSheetNames = new Set<string>();
-  const summarySheetName = buildUniqueSheetName("Resumen", usedSheetNames);
+  const summarySheetName = buildUniqueSheetName("RESUMEN", usedSheetNames);
   XLSXUtils.book_append_sheet(workbook, worksheet, summarySheetName);
 
   const workerWeekData = totalsContext.workerWeekData ?? {};
